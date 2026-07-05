@@ -1,0 +1,28 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.py]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{yaml,yml}]
+indent_size = 2
+
+# README contains ASCII architecture diagrams whose alignment is fixed-width
+# art, not source indentation. Relax indent enforcement here so editorconfig-
+# checker doesn't fight the diagram spacing.
+[README.md]
+indent_size = unset
+indent_style = unset

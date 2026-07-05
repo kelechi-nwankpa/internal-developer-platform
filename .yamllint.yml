@@ -1,0 +1,52 @@
+# yamllint configuration
+# https://yamllint.readthedocs.io/en/stable/configuration.html
+
+extends: default
+
+# Files to skip. cdk.out is CDK-synthesised output; node_modules is vendored.
+ignore: |
+  node_modules/
+  cdk.out/
+  .yarn/
+  dist/
+  build/
+
+rules:
+  # Long lines are common in K8s manifests (image digests, annotations, PVC configs).
+  # Warn but don't fail — style, not correctness.
+  line-length:
+    max: 140
+    level: warning
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # `---` at the top of every file is more noise than signal for us.
+  document-start: disable
+
+  # GitHub Actions uses `on:` as a key. Default yamllint flags this as truthy.
+  # Ignoring key names is the standard mitigation.
+  truthy:
+    check-keys: false
+
+  # Allow single-line comments at column 0 (common for section banners).
+  comments-indentation: disable
+
+  comments:
+    min-spaces-from-content: 1
+
+  # `indent-sequences: consistent` means either style is fine so long as one
+  # file doesn't mix both.
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+    check-multi-line-strings: false
+
+  # Trailing spaces are handled by pre-commit-hooks; disable here to avoid
+  # duplicate errors.
+  trailing-spaces: disable
+
+  # Empty lines are style; two consecutive blank lines are the ceiling.
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1

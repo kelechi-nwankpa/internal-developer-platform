@@ -1,0 +1,24 @@
+# Dependabot configuration
+#
+# Weekly PRs to keep our GitHub Actions versions current. As other ecosystems
+# arrive (npm in Phase 5, docker in Phase 6, pip in Phase 8 for cdk-nag),
+# their ecosystems will be added here.
+#
+# Reason: supply-chain hygiene is a first-class concern. Pinned but stale
+# action versions accumulate known CVEs; unpinned versions expose us to
+# compromise. Weekly Dependabot PRs keep us moving without manual work.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"

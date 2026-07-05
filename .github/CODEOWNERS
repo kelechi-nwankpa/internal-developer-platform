@@ -1,0 +1,59 @@
+# CODEOWNERS
+#
+# GitHub uses this file to auto-request reviews when PRs touch matching paths.
+# In a real organisation these entries would map to team handles like
+# @acme/platform-team or @acme/security. On this solo project every rule points
+# to the project owner — but the *pattern* is what matters, and it lets us
+# demonstrate how ownership scales to a real team.
+#
+# TODO: Replace @nwankpa-D-boy with your actual GitHub username before pushing.
+# Unresolved usernames silently disable review auto-request.
+
+# ─────────────────────────────────────────────────────────────
+# Default owner for everything not otherwise specified
+# ─────────────────────────────────────────────────────────────
+*                              @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Architecture decisions — protects the "no decision without a WHY" rule.
+# Any change here forces reviewer eyes on architectural intent.
+# ─────────────────────────────────────────────────────────────
+/docs/adr/                     @nwankpa-D-boy
+/docs/architecture/            @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Infrastructure — high blast radius, needs deliberate review
+# ─────────────────────────────────────────────────────────────
+/infra/                        @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Platform (in-cluster components — ArgoCD, Crossplane, observability)
+# ─────────────────────────────────────────────────────────────
+/platform/                     @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Developer portal (Backstage)
+# ─────────────────────────────────────────────────────────────
+/portal/                       @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Golden path templates — a change here affects every new service
+# ─────────────────────────────────────────────────────────────
+/templates/                    @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# CI/CD — a change here affects every PR
+# ─────────────────────────────────────────────────────────────
+/.github/workflows/            @nwankpa-D-boy
+/.pre-commit-config.yaml       @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Cost tracking — budget discipline is a team concern
+# ─────────────────────────────────────────────────────────────
+/docs/COST.md                  @nwankpa-D-boy
+
+# ─────────────────────────────────────────────────────────────
+# Non-negotiables — CLAUDE.md changes affect all future contributors and
+# should be reviewed with extra care.
+# ─────────────────────────────────────────────────────────────
+/CLAUDE.md                     @nwankpa-D-boy

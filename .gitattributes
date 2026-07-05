@@ -1,0 +1,34 @@
+# Default to LF line endings for all text files.
+# Prevents Windows contributors from accidentally committing CRLF.
+* text=auto eol=lf
+
+# Explicit text
+*.md       text
+*.yaml     text
+*.yml      text
+*.json     text
+*.ts       text
+*.tsx      text
+*.js       text
+*.jsx      text
+*.sh       text eol=lf
+Makefile   text eol=lf
+Dockerfile text eol=lf
+
+# Binaries — do not attempt to diff or LF-normalise
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.pdf      binary
+*.woff     binary
+*.woff2    binary
+*.ttf      binary
+*.eot      binary
+*.zip      binary
+*.tar.gz   binary
+
+# GitHub linguist hints (keeps language stats accurate)
+docs/**     linguist-documentation
+*.md        linguist-documentation

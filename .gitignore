@@ -1,0 +1,125 @@
+# ─────────────────────────────────────────────────────────────
+# Dependencies
+# ─────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# ─────────────────────────────────────────────────────────────
+# Build output
+# ─────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+*.tsbuildinfo
+.next/
+.turbo/
+
+# ─────────────────────────────────────────────────────────────
+# AWS CDK
+# ─────────────────────────────────────────────────────────────
+.cdk.staging/
+cdk.out/
+cdk.context.json
+
+# ─────────────────────────────────────────────────────────────
+# Secrets and credentials — anything that leaks costs real money
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*credentials*
+!*credentials*.example
+.aws/
+aws-exports.js
+sops.yaml
+.sops.yaml
+
+# ─────────────────────────────────────────────────────────────
+# Kubernetes
+# ─────────────────────────────────────────────────────────────
+kubeconfig
+kubeconfig.yaml
+*.kubeconfig
+!kubeconfig.example.yaml
+
+# ─────────────────────────────────────────────────────────────
+# Terraform (may appear via Crossplane docs / experiments)
+# ─────────────────────────────────────────────────────────────
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# ─────────────────────────────────────────────────────────────
+# Testing / coverage
+# ─────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+junit.xml
+
+# ─────────────────────────────────────────────────────────────
+# Logs
+# ─────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─────────────────────────────────────────────────────────────
+# IDE / editor
+# ─────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.history/
+
+# ─────────────────────────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─────────────────────────────────────────────────────────────
+# Python (helper scripts, pre-commit hooks)
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ─────────────────────────────────────────────────────────────
+# Local scratch
+# ─────────────────────────────────────────────────────────────
+tmp/
+temp/
+scratch/
+*.tmp
+*.local

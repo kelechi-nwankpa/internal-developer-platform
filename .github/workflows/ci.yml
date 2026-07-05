@@ -1,0 +1,59 @@
+# CI — runs on every pull request and every push to main.
+#
+# Phase 0.5 scope: everything the local pre-commit hooks run, re-run in a
+# trusted environment. Same config file (.pre-commit-config.yaml) drives both
+# — one source of truth for what "green" means.
+#
+# Design principles:
+#   - `pull_request` runs are advisory. `push` runs on main are authoritative.
+#   - Least-privilege token — only `contents: read`. If a compromised action
+#     tries to push to the repo, it can't.
+#   - Cancel in-flight runs on the same ref when a new commit arrives — saves
+#     CI minutes on force-pushes and rapid iteration.
+#
+# Growth plan by phase:
+#   Phase 1 (CDK)         → add `cdk synth`, `cdk-nag`, snapshot tests
+#   Phase 2 (add-ons)     → add helm-lint, kube-linter
+#   Phase 5 (Backstage)   → add yarn tests, tsc typecheck
+#   Phase 6 (templates)   → template snapshot tests
+#   Phase 8 (security)    → SAST (semgrep), image scan (trivy), SBOM (syft)
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    name: Pre-commit checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history for gitleaks to scan every commit, not just the tip.
+          fetch-depth: 0
+
+      - name: Setup Python (for pre-commit itself)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Setup Node (for markdownlint and future JS/TS hooks)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Run pre-commit against all files
+        uses: pre-commit/action@v3.0.1
