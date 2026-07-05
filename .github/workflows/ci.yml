@@ -48,7 +48,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
+          # No `cache: 'pip'` here: this repo has no requirements.txt / pyproject.toml
+          # for setup-python to key the cache against. The pre-commit hooks
+          # themselves are cached by pre-commit/action@v3, which is what we
+          # actually want to cache anyway.
 
       - name: Setup Node (for markdownlint and future JS/TS hooks)
         uses: actions/setup-node@v4

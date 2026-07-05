@@ -4,5 +4,5 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Documentation
-    url: https://github.com/nwankpa-D-boy/internal-developer-platform/tree/main/docs
+    url: https://github.com/kelechi-nwankpa/internal-developer-platform/tree/main/docs
     about: Check the ADRs, runbooks, and phase logs first — most questions are answered there.
