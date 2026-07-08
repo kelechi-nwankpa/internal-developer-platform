@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Aspects } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import { CostStack } from '../lib/cost-stack';
+import { VpcStack } from '../lib/vpc-stack';
 
 const app = new cdk.App();
 
@@ -33,6 +34,11 @@ new CostStack(app, 'CostStack', {
   projectTag: 'idp',
 });
 
-// Stacks land here from Task 1.3 onward (VpcStack, KmsStack, IamStack, ...).
+// Network foundation — VPC with no NAT, VPC endpoints only (ADR-0007).
+new VpcStack(app, 'VpcStack', {
+  env,
+});
+
+// Stacks land here from Task 1.4 onward (KmsStack, IamStack, ClusterStack, ...).
 
 app.synth();

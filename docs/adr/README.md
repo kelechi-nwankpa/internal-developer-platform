@@ -40,6 +40,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0004](0004-single-region-with-multi-region-readiness.md) | Single region deployment, multi-region-ready design | Accepted | 2026-07-03 |
 | [0005](0005-local-first-development-with-kind.md) | Local-first development with kind | Accepted | 2026-07-03 |
 | [0006](0006-gitignore-cdk-context-json.md) | Git-ignore `cdk.context.json` | Accepted | 2026-07-03 |
+| [0007](0007-vpc-endpoints-instead-of-nat-gateway.md) | VPC Interface endpoints instead of a NAT Gateway | Accepted | 2026-07-08 |
 
 ## References
 
