@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Aspects } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import { CostStack } from '../lib/cost-stack';
+import { KmsStack } from '../lib/kms-stack';
 import { VpcStack } from '../lib/vpc-stack';
 
 const app = new cdk.App();
@@ -39,6 +40,11 @@ new VpcStack(app, 'VpcStack', {
   env,
 });
 
-// Stacks land here from Task 1.4 onward (KmsStack, IamStack, ClusterStack, ...).
+// Customer-managed KMS keys, one per data domain (ADR-0008).
+new KmsStack(app, 'KmsStack', {
+  env,
+});
+
+// Stacks land here from Task 1.5 onward (IamStack, ClusterStack, ...).
 
 app.synth();
