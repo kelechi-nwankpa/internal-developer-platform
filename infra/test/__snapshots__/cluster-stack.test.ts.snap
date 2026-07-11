@@ -1,0 +1,961 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`ClusterStack matches the snapshot 1`] = `
+{
+  "Conditions": {
+    "ClusterHasEcrPublic8EE1114E": {
+      "Fn::Equals": [
+        {
+          "Ref": "AWS::Partition",
+        },
+        "aws",
+      ],
+    },
+  },
+  "Outputs": {
+    "ClusterAdminRoleArn": {
+      "Description": "Assume this role to run kubectl. Example: aws eks update-kubeconfig --name idp --role-arn <this-arn> --region <region>",
+      "Export": {
+        "Name": "TestClusterStack-ClusterAdminRoleArn",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "ClusterAdminRole047D4FCA",
+          "Arn",
+        ],
+      },
+    },
+    "ClusterConfigCommand43AAE40F": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "aws eks update-kubeconfig --name ",
+            {
+              "Ref": "Cluster9EE0221C",
+            },
+            " --region eu-west-1 --role-arn ",
+            {
+              "Fn::GetAtt": [
+                "ClusterAdminRole047D4FCA",
+                "Arn",
+              ],
+            },
+          ],
+        ],
+      },
+    },
+    "ClusterGetTokenCommand06AE992E": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "aws eks get-token --cluster-name ",
+            {
+              "Ref": "Cluster9EE0221C",
+            },
+            " --region eu-west-1 --role-arn ",
+            {
+              "Fn::GetAtt": [
+                "ClusterAdminRole047D4FCA",
+                "Arn",
+              ],
+            },
+          ],
+        ],
+      },
+    },
+    "ClusterName": {
+      "Description": "EKS cluster name (use for \`aws eks update-kubeconfig\`)",
+      "Export": {
+        "Name": "TestClusterStack-ClusterName",
+      },
+      "Value": {
+        "Ref": "Cluster9EE0221C",
+      },
+    },
+    "OidcProviderArn": {
+      "Description": "IRSA OIDC provider ARN (used by later stacks to bind K8s SAs to IAM roles)",
+      "Export": {
+        "Name": "TestClusterStack-OidcProviderArn",
+      },
+      "Value": {
+        "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "Cluster9EE0221C": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "ClusterCreationRoleDefaultPolicyE8BDFC7B",
+        "ClusterCreationRole360249B6",
+      ],
+      "Properties": {
+        "AssumeRoleArn": {
+          "Fn::GetAtt": [
+            "ClusterCreationRole360249B6",
+            "Arn",
+          ],
+        },
+        "AttributesRevision": 5,
+        "Config": {
+          "accessConfig": {},
+          "encryptionConfig": [
+            {
+              "provider": {
+                "keyArn": {
+                  "Fn::ImportValue": "ScaffoldStack:ExportsOutputFnGetAttHarnessKey15F489AEArn55F827AE",
+                },
+              },
+              "resources": [
+                "secrets",
+              ],
+            },
+          ],
+          "kubernetesNetworkConfig": {
+            "ipFamily": "ipv4",
+          },
+          "logging": {
+            "clusterLogging": [
+              {
+                "enabled": true,
+                "types": [
+                  "api",
+                  "audit",
+                  "authenticator",
+                  "controllerManager",
+                  "scheduler",
+                ],
+              },
+            ],
+          },
+          "name": "idp",
+          "resourcesVpcConfig": {
+            "endpointPrivateAccess": true,
+            "endpointPublicAccess": true,
+            "securityGroupIds": [
+              {
+                "Fn::GetAtt": [
+                  "ClusterControlPlaneSecurityGroupD274242C",
+                  "GroupId",
+                ],
+              },
+            ],
+            "subnetIds": [
+              {
+                "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessVpcpSubnet1SubnetE5D1A6E0FCDCDF9A",
+              },
+              {
+                "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessVpcpSubnet2SubnetCFC3C86B04687CB2",
+              },
+              {
+                "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessVpcpSubnet3Subnet66101A8539AA7EA1",
+              },
+            ],
+          },
+          "roleArn": {
+            "Fn::GetAtt": [
+              "ClusterRoleFA261979",
+              "Arn",
+            ],
+          },
+          "version": "1.31",
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454",
+            "Outputs.TestClusterStackawscdkawseksClusterResourceProviderframeworkonEventD698C5A2Arn",
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDK-EKS-Cluster",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ClusterAdminRole047D4FCA": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":iam::123456789012:root",
+                    ],
+                  ],
+                },
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Description": "Role for local kubectl access to the idp EKS cluster",
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "ClusterAwsAuthmanifestFE51F8AE": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "ClusterKubectlReadyBarrier200052AF",
+      ],
+      "Properties": {
+        "ClusterName": {
+          "Ref": "Cluster9EE0221C",
+        },
+        "Manifest": {
+          "Fn::Join": [
+            "",
+            [
+              "[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"aws-auth","namespace":"kube-system","labels":{"aws.cdk.eks/prune-c83c8de0cb9da9204e7664031093d20092033f7a1a":""}},"data":{"mapRoles":"[{\\"rolearn\\":\\"",
+              {
+                "Fn::GetAtt": [
+                  "ClusterAdminRole047D4FCA",
+                  "Arn",
+                ],
+              },
+              "\\",\\"username\\":\\"",
+              {
+                "Fn::GetAtt": [
+                  "ClusterAdminRole047D4FCA",
+                  "Arn",
+                ],
+              },
+              "\\",\\"groups\\":[\\"system:masters\\"]},{\\"rolearn\\":\\"",
+              {
+                "Fn::GetAtt": [
+                  "ClusterfargateprofileKubeSystemPodExecutionRoleDB2B391E",
+                  "Arn",
+                ],
+              },
+              "\\",\\"username\\":\\"system:node:{{SessionName}}\\",\\"groups\\":[\\"system:bootstrappers\\",\\"system:nodes\\",\\"system:node-proxier\\"]},{\\"rolearn\\":\\"",
+              {
+                "Fn::GetAtt": [
+                  "ClusterfargateprofileDefaultPodExecutionRoleF407FA0F",
+                  "Arn",
+                ],
+              },
+              "\\",\\"username\\":\\"system:node:{{SessionName}}\\",\\"groups\\":[\\"system:bootstrappers\\",\\"system:nodes\\",\\"system:node-proxier\\"]}]","mapUsers":"[]","mapAccounts":"[]"}}]",
+            ],
+          ],
+        },
+        "Overwrite": true,
+        "PruneLabel": "aws.cdk.eks/prune-c83c8de0cb9da9204e7664031093d20092033f7a1a",
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "ClusterCreationRole360249B6",
+            "Arn",
+          ],
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "awscdkawseksKubectlProviderNestedStackawscdkawseksKubectlProviderNestedStackResourceA7AEBA6B",
+            "Outputs.TestClusterStackawscdkawseksKubectlProviderframeworkonEventECE71660Arn",
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDK-EKS-KubernetesResource",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ClusterControlPlaneSecurityGroupD274242C": {
+      "Properties": {
+        "GroupDescription": "EKS Control Plane Security Group",
+        "SecurityGroupEgress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Allow all outbound traffic by default",
+            "IpProtocol": "-1",
+          },
+        ],
+        "VpcId": {
+          "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessVpc77FD6DD86C65DD85",
+        },
+      },
+      "Type": "AWS::EC2::SecurityGroup",
+    },
+    "ClusterCreationRole360249B6": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454",
+                    "Outputs.TestClusterStackawscdkawseksClusterResourceProviderOnEventHandlerServiceRole799FF331Arn",
+                  ],
+                },
+              },
+            },
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454",
+                    "Outputs.TestClusterStackawscdkawseksClusterResourceProviderIsCompleteHandlerServiceRole65024753Arn",
+                  ],
+                },
+              },
+            },
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "ClusterKubectlHandlerRole94549F93",
+                    "Arn",
+                  ],
+                },
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "ClusterCreationRoleDefaultPolicyE8BDFC7B": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "iam:PassRole",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ClusterRoleFA261979",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "eks:CreateCluster",
+                "eks:DescribeCluster",
+                "eks:DescribeUpdate",
+                "eks:DeleteCluster",
+                "eks:UpdateClusterVersion",
+                "eks:UpdateClusterConfig",
+                "eks:CreateFargateProfile",
+                "eks:TagResource",
+                "eks:UntagResource",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":eks:eu-west-1:123456789012:cluster/idp",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":eks:eu-west-1:123456789012:cluster/idp/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "eks:DescribeFargateProfile",
+                "eks:DeleteFargateProfile",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":eks:eu-west-1:123456789012:fargateprofile/idp/*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": [
+                "iam:GetRole",
+                "iam:listAttachedRolePolicies",
+              ],
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": "iam:CreateServiceLinkedRole",
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": [
+                "ec2:DescribeInstances",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeRouteTables",
+                "ec2:DescribeDhcpOptions",
+                "ec2:DescribeVpcs",
+              ],
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:DescribeKey",
+                "kms:CreateGrant",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::ImportValue": "ScaffoldStack:ExportsOutputFnGetAttHarnessKey15F489AEArn55F827AE",
+              },
+            },
+            {
+              "Action": "iam:PassRole",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ClusterfargateprofileKubeSystemPodExecutionRoleDB2B391E",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": "iam:PassRole",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ClusterfargateprofileDefaultPodExecutionRoleF407FA0F",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "ClusterCreationRoleDefaultPolicyE8BDFC7B",
+        "Roles": [
+          {
+            "Ref": "ClusterCreationRole360249B6",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "ClusterKubectlHandlerRole94549F93": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+              ],
+            ],
+          },
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/AmazonEC2ContainerRegistryPullOnly",
+              ],
+            ],
+          },
+          {
+            "Fn::If": [
+              "ClusterHasEcrPublic8EE1114E",
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly",
+                  ],
+                ],
+              },
+              {
+                "Ref": "AWS::NoValue",
+              },
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "ClusterKubectlHandlerRoleDefaultPolicyE44083DD": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "eks:DescribeCluster",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "Cluster9EE0221C",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ClusterCreationRole360249B6",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "ClusterKubectlHandlerRoleDefaultPolicyE44083DD",
+        "Roles": [
+          {
+            "Ref": "ClusterKubectlHandlerRole94549F93",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "ClusterKubectlReadyBarrier200052AF": {
+      "DependsOn": [
+        "ClusterfargateprofileDefaultPodExecutionRoleF407FA0F",
+        "ClusterfargateprofileDefault0A7614E3",
+        "ClusterfargateprofileKubeSystemPodExecutionRoleDB2B391E",
+        "ClusterfargateprofileKubeSystem07E21E31",
+        "ClusterCreationRoleDefaultPolicyE8BDFC7B",
+        "ClusterCreationRole360249B6",
+        "Cluster9EE0221C",
+      ],
+      "Properties": {
+        "Type": "String",
+        "Value": "aws:cdk:eks:kubectl-ready",
+      },
+      "Type": "AWS::SSM::Parameter",
+    },
+    "ClusterOpenIdConnectProviderE7EB0530": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "ClientIDList": [
+          "sts.amazonaws.com",
+        ],
+        "CodeHash": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d",
+        "RejectUnauthorized": false,
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderHandlerF2C543E0",
+            "Arn",
+          ],
+        },
+        "Url": {
+          "Fn::GetAtt": [
+            "Cluster9EE0221C",
+            "OpenIdConnectIssuerUrl",
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDKOpenIdConnectProvider",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ClusterRoleFA261979": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "eks.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/AmazonEKSClusterPolicy",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "ClusterfargateprofileDefault0A7614E3": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "ClusterfargateprofileKubeSystemPodExecutionRoleDB2B391E",
+        "ClusterfargateprofileKubeSystem07E21E31",
+      ],
+      "Properties": {
+        "AssumeRoleArn": {
+          "Fn::GetAtt": [
+            "ClusterCreationRole360249B6",
+            "Arn",
+          ],
+        },
+        "Config": {
+          "clusterName": {
+            "Ref": "Cluster9EE0221C",
+          },
+          "podExecutionRoleArn": {
+            "Fn::GetAtt": [
+              "ClusterfargateprofileDefaultPodExecutionRoleF407FA0F",
+              "Arn",
+            ],
+          },
+          "selectors": [
+            {
+              "namespace": "default",
+            },
+          ],
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454",
+            "Outputs.TestClusterStackawscdkawseksClusterResourceProviderframeworkonEventD698C5A2Arn",
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDK-EKS-FargateProfile",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ClusterfargateprofileDefaultPodExecutionRoleF407FA0F": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "eks-fargate-pods.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "ClusterfargateprofileKubeSystem07E21E31": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "AssumeRoleArn": {
+          "Fn::GetAtt": [
+            "ClusterCreationRole360249B6",
+            "Arn",
+          ],
+        },
+        "Config": {
+          "clusterName": {
+            "Ref": "Cluster9EE0221C",
+          },
+          "podExecutionRoleArn": {
+            "Fn::GetAtt": [
+              "ClusterfargateprofileKubeSystemPodExecutionRoleDB2B391E",
+              "Arn",
+            ],
+          },
+          "selectors": [
+            {
+              "namespace": "kube-system",
+            },
+          ],
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454",
+            "Outputs.TestClusterStackawscdkawseksClusterResourceProviderframeworkonEventD698C5A2Arn",
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDK-EKS-FargateProfile",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "ClusterfargateprofileKubeSystemPodExecutionRoleDB2B391E": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "eks-fargate-pods.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderHandlerF2C543E0": {
+      "DependsOn": [
+        "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderRole517FED65",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": "cdk-hnb659fds-assets-123456789012-eu-west-1",
+          "S3Key": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d.zip",
+        },
+        "Handler": "__entrypoint__.handler",
+        "MemorySize": 128,
+        "Role": {
+          "Fn::GetAtt": [
+            "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderRole517FED65",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs24.x",
+        "Timeout": 900,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderRole517FED65": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:\${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+          },
+        ],
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "iam:CreateOpenIDConnectProvider",
+                    "iam:DeleteOpenIDConnectProvider",
+                    "iam:UpdateOpenIDConnectProviderThumbprint",
+                    "iam:AddClientIDToOpenIDConnectProvider",
+                    "iam:RemoveClientIDFromOpenIDConnectProvider",
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*",
+                },
+              ],
+              "Version": "2012-10-17",
+            },
+            "PolicyName": "Inline",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "KubectlLayer600207B5": {
+      "Properties": {
+        "Content": {
+          "S3Bucket": "cdk-hnb659fds-assets-123456789012-eu-west-1",
+          "S3Key": "77675805670406a68c1baf43392c7e699bee435fe9b667ef4f9f1134b8c41d0e.zip",
+        },
+        "Description": "/opt/kubectl/kubectl 1.31.9; /opt/helm/helm 3.17.3",
+        "LicenseInfo": "Apache-2.0",
+      },
+      "Type": "AWS::Lambda::LayerVersion",
+    },
+    "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "TemplateURL": {
+          "Fn::Join": [
+            "",
+            [
+              "https://s3.eu-west-1.",
+              {
+                "Ref": "AWS::URLSuffix",
+              },
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/89ec28451ee244fbd7f4578d7372c4daa864a1001625d148dd95eee6d373c7e9.json",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::CloudFormation::Stack",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "awscdkawseksKubectlProviderNestedStackawscdkawseksKubectlProviderNestedStackResourceA7AEBA6B": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "ClusterKubectlHandlerRoleDefaultPolicyE44083DD",
+        "ClusterKubectlHandlerRole94549F93",
+      ],
+      "Properties": {
+        "Parameters": {
+          "referencetoTestClusterStackCluster8552E50AClusterSecurityGroupId": {
+            "Fn::GetAtt": [
+              "Cluster9EE0221C",
+              "ClusterSecurityGroupId",
+            ],
+          },
+          "referencetoTestClusterStackClusterKubectlHandlerRoleC26A0E56Arn": {
+            "Fn::GetAtt": [
+              "ClusterKubectlHandlerRole94549F93",
+              "Arn",
+            ],
+          },
+          "referencetoTestClusterStackKubectlLayer1172F138Ref": {
+            "Ref": "KubectlLayer600207B5",
+          },
+        },
+        "TemplateURL": {
+          "Fn::Join": [
+            "",
+            [
+              "https://s3.eu-west-1.",
+              {
+                "Ref": "AWS::URLSuffix",
+              },
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/08b1ba1c566d1f6393cd8fb67aaeab3bbf61b3a91dcc56952ab6cd6a54470816.json",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::CloudFormation::Stack",
+      "UpdateReplacePolicy": "Delete",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;

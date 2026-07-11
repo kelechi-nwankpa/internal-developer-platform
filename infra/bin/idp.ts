@@ -1,7 +1,9 @@
 import * as cdk from 'aws-cdk-lib';
 import { Aspects } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
+import { ClusterStack } from '../lib/cluster-stack';
 import { CostStack } from '../lib/cost-stack';
+import { IamStack } from '../lib/iam-stack';
 import { KmsStack } from '../lib/kms-stack';
 import { VpcStack } from '../lib/vpc-stack';
 
@@ -36,15 +38,30 @@ new CostStack(app, 'CostStack', {
 });
 
 // Network foundation — VPC with no NAT, VPC endpoints only (ADR-0007).
-new VpcStack(app, 'VpcStack', {
+const vpcStack = new VpcStack(app, 'VpcStack', {
   env,
 });
 
 // Customer-managed KMS keys, one per data domain (ADR-0008).
-new KmsStack(app, 'KmsStack', {
+const kmsStack = new KmsStack(app, 'KmsStack', {
   env,
 });
 
-// Stacks land here from Task 1.5 onward (IamStack, ClusterStack, ...).
+// IAM baseline — GitHub OIDC provider + deploy role (ADR-0009).
+new IamStack(app, 'IamStack', {
+  env,
+  githubOrg: 'kelechi-nwankpa',
+  githubRepo: 'internal-developer-platform',
+});
+
+// EKS control plane — Fargate-only (ADR-0010). Consumes the VPC and the
+// EKS secrets key via cross-stack references.
+new ClusterStack(app, 'ClusterStack', {
+  env,
+  vpc: vpcStack.vpc,
+  eksSecretsKey: kmsStack.eksSecretsKey,
+});
+
+// Stacks land here from Task 1.7 onward (RegistryStack, DnsStack).
 
 app.synth();
