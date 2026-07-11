@@ -1,0 +1,104 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`DnsStack matches the snapshot 1`] = `
+{
+  "Outputs": {
+    "HostedZoneArn": {
+      "Description": "Route53 hosted zone ARN — used to scope IAM policies to this zone specifically",
+      "Export": {
+        "Name": "TestDnsStack-HostedZoneArn",
+      },
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition",
+            },
+            ":route53:::hostedzone/",
+            {
+              "Ref": "HostedZoneDB99F866",
+            },
+          ],
+        ],
+      },
+    },
+    "HostedZoneId": {
+      "Description": "Route53 hosted zone ID — consumed by ExternalDNS IAM policy in Phase 2",
+      "Export": {
+        "Name": "TestDnsStack-HostedZoneId",
+      },
+      "Value": {
+        "Ref": "HostedZoneDB99F866",
+      },
+    },
+    "NameServers": {
+      "Description": "Comma-separated list of the 4 Route53 nameservers. Copy each one into Namecheap Advanced DNS as an NS record for the \`idp\` label. See docs/runbooks/dns-delegation.md.",
+      "Export": {
+        "Name": "TestDnsStack-NameServers",
+      },
+      "Value": {
+        "Fn::Join": [
+          ",",
+          {
+            "Fn::GetAtt": [
+              "HostedZoneDB99F866",
+              "NameServers",
+            ],
+          },
+        ],
+      },
+    },
+    "ZoneName": {
+      "Description": "The zone name (redundant with the stack parameter, but convenient for scripts)",
+      "Value": "idp.seniormankelz.dev",
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "HostedZoneDB99F866": {
+      "Properties": {
+        "HostedZoneConfig": {
+          "Comment": "Public hosted zone for idp.seniormankelz.dev. Subdomain delegated from the apex at Namecheap. See docs/runbooks/dns-delegation.md.",
+        },
+        "Name": "idp.seniormankelz.dev.",
+      },
+      "Type": "AWS::Route53::HostedZone",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;

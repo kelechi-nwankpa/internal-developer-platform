@@ -44,6 +44,8 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0008](0008-customer-managed-kms-keys.md) | Customer-managed KMS keys, one per data domain | Accepted | 2026-07-09 |
 | [0009](0009-github-oidc-federation.md) | GitHub Actions authenticates to AWS via OIDC, not long-lived keys | Accepted | 2026-07-09 |
 | [0010](0010-fargate-only-eks-cluster.md) | Fargate-only EKS cluster (no managed node group) | Accepted | 2026-07-11 |
+| [0011](0011-ecr-immutable-tags-per-domain-repos.md) | ECR with immutable tags and per-domain repositories | Accepted | 2026-07-11 |
+| [0012](0012-subdomain-delegation-for-idp.md) | Subdomain delegation for `idp.seniormankelz.dev` | Accepted | 2026-07-11 |
 
 ## References
 

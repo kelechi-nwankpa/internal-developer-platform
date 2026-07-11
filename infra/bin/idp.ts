@@ -3,8 +3,10 @@ import { Aspects } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import { ClusterStack } from '../lib/cluster-stack';
 import { CostStack } from '../lib/cost-stack';
+import { DnsStack } from '../lib/dns-stack';
 import { IamStack } from '../lib/iam-stack';
 import { KmsStack } from '../lib/kms-stack';
+import { RegistryStack } from '../lib/registry-stack';
 import { VpcStack } from '../lib/vpc-stack';
 
 const app = new cdk.App();
@@ -62,6 +64,17 @@ new ClusterStack(app, 'ClusterStack', {
   eksSecretsKey: kmsStack.eksSecretsKey,
 });
 
-// Stacks land here from Task 1.7 onward (RegistryStack, DnsStack).
+// Container image registries — 2 seed repos with immutable tags (ADR-0011).
+new RegistryStack(app, 'RegistryStack', {
+  env,
+  ecrKey: kmsStack.ecrKey,
+});
+
+// Public Route53 zone for the platform subdomain (ADR-0012). Namecheap
+// NS delegation happens post-deploy — see docs/runbooks/dns-delegation.md.
+new DnsStack(app, 'DnsStack', {
+  env,
+  zoneName: 'idp.seniormankelz.dev',
+});
 
 app.synth();

@@ -19,7 +19,7 @@ Every runbook in this directory follows the same shape:
 
 | Runbook | Introduced in | Trigger |
 |---|---|---|
-| _(placeholder — runbooks land from Phase 8 onwards)_ | Phase 8 | — |
+| [dns-delegation.md](dns-delegation.md) | Phase 1 (Task 1.8) | After every `cdk deploy DnsStack` — copy Route53 nameservers into Namecheap |
 
 ## References
 
