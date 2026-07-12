@@ -18,6 +18,17 @@ SHELL       := /bin/bash
 # ─────────────────────────────────────────────────────────────
 NODE_VERSION := $(shell cat .nvmrc 2>/dev/null || echo unknown)
 
+# AWS region and CDK app location — override on the command line if needed:
+#   make aws-up AWS_REGION=us-east-1
+AWS_REGION ?= eu-west-1
+CDK_DIR    := infra
+
+# List of stacks we destroy when tearing down between sessions. CostStack is
+# deliberately EXCLUDED — its Budgets + Cost Anomaly monitors are free and
+# stand between us and a surprise $200 bill. Use `make aws-nuke` when even
+# CostStack should go.
+WORKLOAD_STACKS := VpcStack KmsStack IamStack ClusterStack RegistryStack DnsStack
+
 # ANSI colours for readability in `make help`.
 BLUE   := \033[1;34m
 GREEN  := \033[1;32m
@@ -89,19 +100,72 @@ clean: ## remove generated artefacts (cdk.out, dist, build, node_modules)
 # AWS lifecycle (implemented in Phase 1)
 # ─────────────────────────────────────────────────────────────
 .PHONY: aws-up
-aws-up: ## [Phase 1+] deploy the AWS baseline (CDK)
-	@printf "$(RED)Not yet implemented — arrives in Phase 1.$(RESET)\n"
-	@exit 1
+aws-up: ## deploy every CDK stack to $(AWS_REGION) in dependency order
+	@printf "$(BLUE)==> Verifying AWS credentials$(RESET)\n"
+	@aws sts get-caller-identity >/dev/null 2>&1 \
+		|| { printf "$(RED)AWS credentials not set. Run 'aws configure' or 'aws sso login'.$(RESET)\n"; exit 1; }
+	@printf "$(BLUE)==> Bootstrapping CDK in $(AWS_REGION) (idempotent)$(RESET)\n"
+	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk bootstrap
+	@printf "$(BLUE)==> Deploying all stacks to $(AWS_REGION)$(RESET)\n"
+	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk deploy --all --require-approval broadening
+	@printf "$(GREEN)==> aws-up complete. Run 'make aws-down' at session end to stop billing.$(RESET)\n"
+
+.PHONY: aws-diff
+aws-diff: ## show what CDK would change without deploying
+	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk diff
+
+.PHONY: aws-status
+aws-status: ## list every CloudFormation stack in $(AWS_REGION) and its state
+	@aws cloudformation list-stacks \
+		--region $(AWS_REGION) \
+		--stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE CREATE_IN_PROGRESS UPDATE_IN_PROGRESS DELETE_IN_PROGRESS ROLLBACK_IN_PROGRESS \
+		--query 'StackSummaries[*].[StackName,StackStatus,LastUpdatedTime||CreationTime]' \
+		--output table
 
 .PHONY: aws-down
-aws-down: ## [Phase 1+] destroy every AWS resource for this project
-	@printf "$(RED)Not yet implemented — arrives in Phase 1.$(RESET)\n"
-	@exit 1
+aws-down: ## destroy every workload stack (KEEPS CostStack — Budgets stay armed)
+	@printf "$(YELLOW)==> This will destroy: $(WORKLOAD_STACKS)$(RESET)\n"
+	@printf "$(YELLOW)    CostStack is preserved (free; keeps Budgets armed).$(RESET)\n"
+	@printf "$(YELLOW)    KMS keys enter a 7-day pending-deletion window.$(RESET)\n"
+	@printf "$(YELLOW)    Route53 zone will be replaced with new NS on next deploy.$(RESET)\n"
+	@printf "$(YELLOW)    Continue? [y/N] $(RESET)"
+	@read confirm && [ "$$confirm" = "y" ] || { printf "$(RED)==> Aborted.$(RESET)\n"; exit 1; }
+	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk destroy $(WORKLOAD_STACKS) --force
+	@printf "$(GREEN)==> aws-down complete. CostStack still up; billing dropping.$(RESET)\n"
+
+.PHONY: aws-nuke
+aws-nuke: ## destroy EVERYTHING including CostStack. Use only when tearing down for good
+	@printf "$(RED)==> This will destroy EVERY stack INCLUDING CostStack (guardrails).$(RESET)\n"
+	@printf "$(RED)    You will lose Budgets alarms and Cost Anomaly monitoring.$(RESET)\n"
+	@printf "$(RED)    Continue? Type 'nuke' to confirm: $(RESET)"
+	@read confirm && [ "$$confirm" = "nuke" ] || { printf "$(RED)==> Aborted.$(RESET)\n"; exit 1; }
+	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk destroy --all --force
+	@printf "$(GREEN)==> aws-nuke complete. Account back to bootstrap state.$(RESET)\n"
 
 .PHONY: cost
-cost: ## [Phase 1+] show current AWS spend for this project
-	@printf "$(RED)Not yet implemented — arrives in Phase 1.$(RESET)\n"
-	@exit 1
+cost: ## show current AWS spend for Project=idp resources (month-to-date)
+	@START=$$(date +'%Y-%m-01'); \
+	END=$$(date +'%Y-%m-%d'); \
+	printf "$(BLUE)==> Project=idp spend from $$START to $$END, by service$(RESET)\n"; \
+	aws ce get-cost-and-usage \
+		--time-period Start=$$START,End=$$END \
+		--granularity MONTHLY \
+		--metrics BlendedCost \
+		--group-by Type=DIMENSION,Key=SERVICE \
+		--filter '{"Tags":{"Key":"Project","Values":["idp"]}}' \
+		--region us-east-1 \
+		--query 'ResultsByTime[0].Groups[*].[Keys[0],Metrics.BlendedCost.Amount]' \
+		--output table
+	@START=$$(date +'%Y-%m-01'); \
+	END=$$(date +'%Y-%m-%d'); \
+	printf "\n$(BLUE)==> Total ACCOUNT spend from $$START to $$END$(RESET)\n"; \
+	aws ce get-cost-and-usage \
+		--time-period Start=$$START,End=$$END \
+		--granularity MONTHLY \
+		--metrics BlendedCost \
+		--region us-east-1 \
+		--query 'ResultsByTime[0].Total.BlendedCost.[Amount,Unit]' \
+		--output text
 
 # ─────────────────────────────────────────────────────────────
 # Local Kubernetes (implemented in Phase 2)
