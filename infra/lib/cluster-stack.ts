@@ -13,6 +13,7 @@ import {
 } from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import { KubectlV31Layer } from '@aws-cdk/lambda-layer-kubectl-v31';
+import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
 
 /**
@@ -150,5 +151,77 @@ export class ClusterStack extends Stack {
     // doesn't emit an unused-import error since we could reference it
     // in a follow-up patch.
     void ManagedPolicy;
+
+    // -----------------------------------------------------------------
+    // cdk-nag suppressions. See docs/adr/0013-cdk-nag-suppression-policy.md
+    // for the meta-decision on when to fix vs suppress.
+    //
+    // Every suppression below is either:
+    //   (a) an AWS-mandated managed policy attached by CDK on our behalf, or
+    //   (b) an artefact of CDK's Provider Framework custom-resource plumbing
+    //       that we don't own and can't reshape without vendoring the L2, or
+    //   (c) one deliberate architectural choice (public API endpoint) that
+    //       is documented in ADR-0010 with a Phase 8 hardening path.
+    //
+    // No suppression here hides a bug in our own code.
+    // -----------------------------------------------------------------
+    NagSuppressions.addResourceSuppressions(
+      this.cluster,
+      [
+        {
+          id: 'AwsSolutions-EKS1',
+          reason:
+            'Cluster endpoint is PUBLIC_AND_PRIVATE by design so we can run kubectl from a ' +
+            'developer laptop without a bastion or SSM session. Hardening to PRIVATE_ONLY is ' +
+            'documented as a Phase 8 concern in ADR-0010. Blast radius today is bounded by ' +
+            'IAM: the cluster admin role trusts only AccountRootPrincipal.',
+        },
+        {
+          id: 'AwsSolutions-IAM4',
+          reason:
+            'Managed policies flagged here are AWS-required and attached by CDK aws-eks L2 ' +
+            'or Provider Framework: AmazonEKSClusterPolicy (cluster service role), ' +
+            'AmazonEKSFargatePodExecutionRolePolicy (Fargate profile execution role), ' +
+            'AmazonEC2ContainerRegistryPullOnly and AmazonElasticContainerRegistryPublicReadOnly ' +
+            '(image pulls, conditionally attached based on ECR type), ' +
+            'AWSLambdaBasicExecutionRole and AWSLambdaVPCAccessExecutionRole (CDK custom-resource ' +
+            'handler lambdas). None can be replaced without breaking the underlying AWS API contract.',
+        },
+        {
+          id: 'AwsSolutions-IAM5',
+          reason:
+            'Wildcards flagged here are all inside CDK-generated custom-resource plumbing: ' +
+            '<lambda-arn>:* patterns are needed to invoke any published version of the CDK ' +
+            'Provider Framework lambdas (OnEventHandler, IsCompleteHandler, ' +
+            'framework.isComplete, framework.onTimeout, Handler). ' +
+            'eks:cluster/idp/* and eks:fargateprofile/idp/* wildcards scope permissions to ' +
+            'sub-resources of our specific cluster (nodegroups, addons, tags) rather than to ' +
+            'all clusters in the account. Resource::* is on the Provider Framework log-writing ' +
+            'policy — bounded by the cluster subtree.',
+        },
+        {
+          id: 'AwsSolutions-L1',
+          reason:
+            'Runtime pinned by CDK (@aws-cdk/lambda-layer-kubectl-v31 and the aws-eks L2). ' +
+            'Overriding the runtime would break the kubectl layer contract. Runtime bumps ' +
+            'arrive via Dependabot on those packages.',
+        },
+        {
+          id: 'AwsSolutions-SF1',
+          reason:
+            'Step Function is part of CDK Provider Framework machinery for EKS cluster ' +
+            'lifecycle. CDK does not expose ALL-event CloudWatch Logs configuration on this ' +
+            'construct. Not a user-facing workflow.',
+        },
+        {
+          id: 'AwsSolutions-SF2',
+          reason:
+            'Same Step Function as SF1 — X-Ray tracing on internal CDK plumbing adds no ' +
+            'operational value. Failure modes surface in CloudFormation events and the ' +
+            'underlying Lambda handler logs.',
+        },
+      ],
+      true, // applyToChildren — cascades into the Provider Framework nested stack
+    );
   }
 }

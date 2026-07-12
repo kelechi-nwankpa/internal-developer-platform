@@ -46,6 +46,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0010](0010-fargate-only-eks-cluster.md) | Fargate-only EKS cluster (no managed node group) | Accepted | 2026-07-11 |
 | [0011](0011-ecr-immutable-tags-per-domain-repos.md) | ECR with immutable tags and per-domain repositories | Accepted | 2026-07-11 |
 | [0012](0012-subdomain-delegation-for-idp.md) | Subdomain delegation for `idp.seniormankelz.dev` | Accepted | 2026-07-11 |
+| [0013](0013-cdk-nag-suppression-policy.md) | cdk-nag suppression policy | Accepted | 2026-07-12 |
 
 ## References
 
