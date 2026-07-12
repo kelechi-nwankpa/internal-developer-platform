@@ -164,9 +164,14 @@ export class ClusterStack extends Stack {
     //       is documented in ADR-0010 with a Phase 8 hardening path.
     //
     // No suppression here hides a bug in our own code.
+    //
+    // We use `addStackSuppressions` with `applyToNestedStacks: true` because
+    // CDK's aws-eks L2 creates a separate nested stack for the Provider
+    // Framework Lambda handlers + Step Function. `addResourceSuppressions`
+    // with `applyToChildren: true` does NOT cross nested-stack boundaries.
     // -----------------------------------------------------------------
-    NagSuppressions.addResourceSuppressions(
-      this.cluster,
+    NagSuppressions.addStackSuppressions(
+      this,
       [
         {
           id: 'AwsSolutions-EKS1',
@@ -221,7 +226,7 @@ export class ClusterStack extends Stack {
             'underlying Lambda handler logs.',
         },
       ],
-      true, // applyToChildren — cascades into the Provider Framework nested stack
+      true, // applyToNestedStacks — cascades into the Provider Framework nested stack
     );
   }
 }

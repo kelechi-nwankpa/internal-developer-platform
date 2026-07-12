@@ -70,6 +70,18 @@ Every suppression's `reason` field must:
 
 `appliesTo` should be used when the rule is granular. If the resulting string list would be unstable (e.g., contains CDK-generated logical IDs), scope the suppression to a specific construct via `addResourceSuppressions(construct, ...)` instead of naming individual policies.
 
+### Nested-stack gotcha (learned the hard way)
+
+CDK's aws-eks L2 construct places its Provider Framework Lambda handlers + Step Function in a **separate nested stack**. `NagSuppressions.addResourceSuppressions(construct, ..., applyToChildren: true)` does **not** cross nested-stack boundaries — the recursion stops at the nested-stack construct.
+
+The fix, for any construct whose L2 uses nested stacks (`Cluster`, `Bucket` with deployments, etc.):
+
+```typescript
+NagSuppressions.addStackSuppressions(this, [...], true /* applyToNestedStacks */);
+```
+
+`addStackSuppressions` with the third arg set to `true` cascades into every nested stack the current stack owns. Prefer this over `addResourceSuppressions` whenever the flagged resource lives inside CDK's Provider Framework or any construct that provisions a nested stack.
+
 ## Consequences
 
 - **Positive:** Every finding is either fixed or explained. Reviewers can audit the security posture by scanning suppression reasons. Future edits that introduce fresh violations still get flagged.
