@@ -280,6 +280,42 @@ exports[`VpcStack matches the snapshot 1`] = `
       },
       "Type": "AWS::EC2::VPCEndpoint",
     },
+    "VpcEc2Endpoint0B1E4FC7": {
+      "Properties": {
+        "PrivateDnsEnabled": true,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "EndpointSecurityGroupF840B798",
+              "GroupId",
+            ],
+          },
+        ],
+        "ServiceName": "com.amazonaws.eu-west-1.ec2",
+        "SubnetIds": [
+          {
+            "Ref": "VpcprivateSubnet1SubnetCEAD3716",
+          },
+          {
+            "Ref": "VpcprivateSubnet2Subnet2DE7549C",
+          },
+          {
+            "Ref": "VpcprivateSubnet3SubnetA5AC68D9",
+          },
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestVpcStack/Vpc",
+          },
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": {
+          "Ref": "Vpc8378EB38",
+        },
+      },
+      "Type": "AWS::EC2::VPCEndpoint",
+    },
     "VpcEcrApiEndpoint25D60339": {
       "Properties": {
         "PrivateDnsEnabled": true,
@@ -352,6 +388,78 @@ exports[`VpcStack matches the snapshot 1`] = `
       },
       "Type": "AWS::EC2::VPCEndpoint",
     },
+    "VpcEksEndpoint8FF08D77": {
+      "Properties": {
+        "PrivateDnsEnabled": true,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "EndpointSecurityGroupF840B798",
+              "GroupId",
+            ],
+          },
+        ],
+        "ServiceName": "com.amazonaws.eu-west-1.eks",
+        "SubnetIds": [
+          {
+            "Ref": "VpcprivateSubnet1SubnetCEAD3716",
+          },
+          {
+            "Ref": "VpcprivateSubnet2Subnet2DE7549C",
+          },
+          {
+            "Ref": "VpcprivateSubnet3SubnetA5AC68D9",
+          },
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestVpcStack/Vpc",
+          },
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": {
+          "Ref": "Vpc8378EB38",
+        },
+      },
+      "Type": "AWS::EC2::VPCEndpoint",
+    },
+    "VpcElbEndpointD7248D5C": {
+      "Properties": {
+        "PrivateDnsEnabled": true,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "EndpointSecurityGroupF840B798",
+              "GroupId",
+            ],
+          },
+        ],
+        "ServiceName": "com.amazonaws.eu-west-1.elasticloadbalancing",
+        "SubnetIds": [
+          {
+            "Ref": "VpcprivateSubnet1SubnetCEAD3716",
+          },
+          {
+            "Ref": "VpcprivateSubnet2Subnet2DE7549C",
+          },
+          {
+            "Ref": "VpcprivateSubnet3SubnetA5AC68D9",
+          },
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestVpcStack/Vpc",
+          },
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": {
+          "Ref": "Vpc8378EB38",
+        },
+      },
+      "Type": "AWS::EC2::VPCEndpoint",
+    },
     "VpcIGWD7BA715C": {
       "Properties": {
         "Tags": [
@@ -375,6 +483,42 @@ exports[`VpcStack matches the snapshot 1`] = `
           },
         ],
         "ServiceName": "com.amazonaws.eu-west-1.kms",
+        "SubnetIds": [
+          {
+            "Ref": "VpcprivateSubnet1SubnetCEAD3716",
+          },
+          {
+            "Ref": "VpcprivateSubnet2Subnet2DE7549C",
+          },
+          {
+            "Ref": "VpcprivateSubnet3SubnetA5AC68D9",
+          },
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestVpcStack/Vpc",
+          },
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": {
+          "Ref": "Vpc8378EB38",
+        },
+      },
+      "Type": "AWS::EC2::VPCEndpoint",
+    },
+    "VpcLambdaEndpointB3C850C4": {
+      "Properties": {
+        "PrivateDnsEnabled": true,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "EndpointSecurityGroupF840B798",
+              "GroupId",
+            ],
+          },
+        ],
+        "ServiceName": "com.amazonaws.eu-west-1.lambda",
         "SubnetIds": [
           {
             "Ref": "VpcprivateSubnet1SubnetCEAD3716",

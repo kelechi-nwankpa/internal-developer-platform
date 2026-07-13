@@ -87,3 +87,34 @@ We accept that a workload later in the project might legitimately need a node gr
 - [AWS docs — Amazon EKS on AWS Fargate](https://docs.aws.amazon.com/eks/latest/userguide/fargate.html)
 - [Fargate profile selectors](https://docs.aws.amazon.com/eks/latest/userguide/fargate-profile.html)
 - [AWS blog — Fargate pod startup optimization](https://aws.amazon.com/blogs/containers/reducing-aws-fargate-startup-times-with-zstd-compressed-container-images/)
+
+## Postscript — the coredns deadlock (learned the hard way)
+
+EKS ships the `coredns` Deployment with an annotation:
+
+```yaml
+metadata:
+  annotations:
+    eks.amazonaws.com/compute-type: ec2
+```
+
+That annotation tells the EKS scheduler: *"only schedule me on an EC2-managed node group; never on Fargate."* In a Fargate-only cluster there is no EC2 node group, so the pods refuse Fargate and sit `Pending` indefinitely. With no scheduled pods, no Fargate nodes are provisioned, and `kubectl get nodes` returns `No resources found`. Cluster is technically healthy but functionally dead.
+
+CDK's `Cluster` construct exposes `coreDnsComputeType`:
+
+- `CoreDnsComputeType.EC2` (default) — leaves the ec2 annotation in place.
+- `CoreDnsComputeType.FARGATE` — CDK patches the Deployment to strip the annotation as part of provisioning.
+
+**We set it to FARGATE.** Without this, every fresh deploy of ClusterStack requires a manual `kubectl patch` before the cluster is usable — an easy-to-forget footgun for the next platform engineer.
+
+**Manual recovery (if the code is missing the setting on an already-deployed cluster):**
+
+```bash
+kubectl patch deployment coredns \
+  --namespace kube-system \
+  --type=json \
+  --patch='[{"op": "remove", "path": "/spec/template/metadata/annotations/eks.amazonaws.com~1compute-type"}]'
+kubectl rollout restart -n kube-system deployment coredns
+```
+
+**Interview framing:** *"EKS Fargate-only clusters have a subtle bootstrap dependency: coredns ships with an annotation that pins it to EC2, so pods deadlock on a Fargate-only cluster. CDK's coreDnsComputeType prop patches this at provisioning time. Missing it is one of the top 'why isn't my Fargate cluster working' issues."*

@@ -12,6 +12,38 @@ exports[`ClusterStack matches the snapshot 1`] = `
       ],
     },
   },
+  "Metadata": {
+    "cdk_nag": {
+      "rules_to_suppress": [
+        {
+          "id": "AwsSolutions-EKS1",
+          "reason": "Cluster endpoint is PUBLIC_AND_PRIVATE by design so we can run kubectl from a developer laptop without a bastion or SSM session. Hardening to PRIVATE_ONLY is documented as a Phase 8 concern in ADR-0010. Blast radius today is bounded by IAM: the cluster admin role trusts only AccountRootPrincipal.",
+        },
+        {
+          "id": "AwsSolutions-IAM4",
+          "reason": "Managed policies flagged here are AWS-required and attached by CDK aws-eks L2 or Provider Framework: AmazonEKSClusterPolicy (cluster service role), AmazonEKSFargatePodExecutionRolePolicy (Fargate profile execution role), AmazonEC2ContainerRegistryPullOnly and AmazonElasticContainerRegistryPublicReadOnly (image pulls, conditionally attached based on ECR type), AWSLambdaBasicExecutionRole and AWSLambdaVPCAccessExecutionRole (CDK custom-resource handler lambdas). None can be replaced without breaking the underlying AWS API contract.",
+        },
+        {
+          "id": "AwsSolutions-IAM5",
+          "is_reason_encoded": true,
+          "reason": "V2lsZGNhcmRzIGZsYWdnZWQgaGVyZSBhcmUgYWxsIGluc2lkZSBDREstZ2VuZXJhdGVkIGN1c3RvbS1yZXNvdXJjZSBwbHVtYmluZzogPGxhbWJkYS1hcm4+OiogcGF0dGVybnMgYXJlIG5lZWRlZCB0byBpbnZva2UgYW55IHB1Ymxpc2hlZCB2ZXJzaW9uIG9mIHRoZSBDREsgUHJvdmlkZXIgRnJhbWV3b3JrIGxhbWJkYXMgKE9uRXZlbnRIYW5kbGVyLCBJc0NvbXBsZXRlSGFuZGxlciwgZnJhbWV3b3JrLmlzQ29tcGxldGUsIGZyYW1ld29yay5vblRpbWVvdXQsIEhhbmRsZXIpLiBla3M6Y2x1c3Rlci9pZHAvKiBhbmQgZWtzOmZhcmdhdGVwcm9maWxlL2lkcC8qIHdpbGRjYXJkcyBzY29wZSBwZXJtaXNzaW9ucyB0byBzdWItcmVzb3VyY2VzIG9mIG91ciBzcGVjaWZpYyBjbHVzdGVyIChub2RlZ3JvdXBzLCBhZGRvbnMsIHRhZ3MpIHJhdGhlciB0aGFuIHRvIGFsbCBjbHVzdGVycyBpbiB0aGUgYWNjb3VudC4gUmVzb3VyY2U6OiogaXMgb24gdGhlIFByb3ZpZGVyIEZyYW1ld29yayBsb2ctd3JpdGluZyBwb2xpY3kg4oCUIGJvdW5kZWQgYnkgdGhlIGNsdXN0ZXIgc3VidHJlZS4=",
+        },
+        {
+          "id": "AwsSolutions-L1",
+          "reason": "Runtime pinned by CDK (@aws-cdk/lambda-layer-kubectl-v31 and the aws-eks L2). Overriding the runtime would break the kubectl layer contract. Runtime bumps arrive via Dependabot on those packages.",
+        },
+        {
+          "id": "AwsSolutions-SF1",
+          "reason": "Step Function is part of CDK Provider Framework machinery for EKS cluster lifecycle. CDK does not expose ALL-event CloudWatch Logs configuration on this construct. Not a user-facing workflow.",
+        },
+        {
+          "id": "AwsSolutions-SF2",
+          "is_reason_encoded": true,
+          "reason": "U2FtZSBTdGVwIEZ1bmN0aW9uIGFzIFNGMSDigJQgWC1SYXkgdHJhY2luZyBvbiBpbnRlcm5hbCBDREsgcGx1bWJpbmcgYWRkcyBubyBvcGVyYXRpb25hbCB2YWx1ZS4gRmFpbHVyZSBtb2RlcyBzdXJmYWNlIGluIENsb3VkRm9ybWF0aW9uIGV2ZW50cyBhbmQgdGhlIHVuZGVybHlpbmcgTGFtYmRhIGhhbmRsZXIgbG9ncy4=",
+        },
+      ],
+    },
+  },
   "Outputs": {
     "ClusterAdminRoleArn": {
       "Description": "Assume this role to run kubectl. Example: aws eks update-kubeconfig --name idp --role-arn <this-arn> --region <region>",
@@ -286,6 +318,36 @@ exports[`ClusterStack matches the snapshot 1`] = `
         },
       },
       "Type": "AWS::EC2::SecurityGroup",
+    },
+    "ClusterCoreDnsComputeTypePatch37F4F125": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "ClusterKubectlReadyBarrier200052AF",
+      ],
+      "Properties": {
+        "ApplyPatchJson": "{"spec":{"template":{"metadata":{"annotations":{"eks.amazonaws.com/compute-type":"fargate"}}}}}",
+        "ClusterName": {
+          "Ref": "Cluster9EE0221C",
+        },
+        "PatchType": "strategic",
+        "ResourceName": "deployment/coredns",
+        "ResourceNamespace": "kube-system",
+        "RestorePatchJson": "{"spec":{"template":{"metadata":{"annotations":{"eks.amazonaws.com/compute-type":"ec2"}}}}}",
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "ClusterCreationRole360249B6",
+            "Arn",
+          ],
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "awscdkawseksKubectlProviderNestedStackawscdkawseksKubectlProviderNestedStackResourceA7AEBA6B",
+            "Outputs.TestClusterStackawscdkawseksKubectlProviderframeworkonEventECE71660Arn",
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDK-EKS-KubernetesPatch",
+      "UpdateReplacePolicy": "Delete",
     },
     "ClusterCreationRole360249B6": {
       "Properties": {
@@ -881,7 +943,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               {
                 "Ref": "AWS::URLSuffix",
               },
-              "/cdk-hnb659fds-assets-123456789012-eu-west-1/89ec28451ee244fbd7f4578d7372c4daa864a1001625d148dd95eee6d373c7e9.json",
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/cff3a88bbfbd09eaa1a4d98058aa9a8c7562212aa0b1f1b84ff6412ed1f8fee1.json",
             ],
           ],
         },
@@ -921,7 +983,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               {
                 "Ref": "AWS::URLSuffix",
               },
-              "/cdk-hnb659fds-assets-123456789012-eu-west-1/08b1ba1c566d1f6393cd8fb67aaeab3bbf61b3a91dcc56952ab6cd6a54470816.json",
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/2e1153ae7267f1569f4ef9c9993f98e8dab66832db053ce6d10ab9e8be168b29.json",
             ],
           ],
         },

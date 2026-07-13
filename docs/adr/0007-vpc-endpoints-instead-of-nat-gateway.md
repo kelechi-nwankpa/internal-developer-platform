@@ -74,6 +74,32 @@ We explicitly note that in a shared-tenancy production account where the stack r
 - If AWS drops Interface endpoint pricing meaningfully.
 - If the platform ever runs always-on (production posture) — reconsider Option D.
 
+## Postscript — the deploy-time endpoints (learned the hard way)
+
+The first `make aws-up` failed because we deployed with only 5 Interface endpoints (ECR api, ECR dkr, Logs, STS, KMS) — the ones our Fargate *pods* need to run. The CDK aws-eks L2 places its **KubectlHandler Lambda** in the same isolated subnets, and *that* Lambda needs a wider set of endpoints to complete deployment operations.
+
+Concrete failure: `Cluster/AwsAuth/manifest/Resource/Default` timed out with:
+
+```text
+TimeoutError at waitUntilFunctionActiveV2 (@aws-sdk/client-lambda)
+```
+
+The Provider Framework was calling Lambda's `GetFunction` API to wait for a downstream Lambda to become `Active`. From an isolated subnet with no NAT and no Lambda VPC endpoint, that call reaches nothing and times out after ~6 minutes.
+
+**Required deploy-time endpoints for CDK aws-eks L2 with isolated subnets:**
+
+- `ec2` — Lambda ENI provisioning + `Describe*` calls the KubectlHandler makes.
+- `eks` — `eks:DescribeCluster` + IAM auth token vending for `kubectl`.
+- `lambda` — the `waitUntilFunctionActive` SDK waiter that took us down.
+
+Added ahead of Phase 2 to avoid a subsequent redeploy:
+
+- `elasticloadbalancing` — AWS Load Balancer Controller.
+
+**Total: 9 Interface endpoints + 2 Gateway endpoints (S3, DynamoDB).** Cost per session (~4h): about `9 × 3 AZs × $0.01 × 4h = $1.08`, plus ~$0.02 for gateway (free). Still well within the $30 phase budget.
+
+**Lesson for the interview corpus:** *"The CDK synth warning about isolated-subnet kubectl handlers is not decorative. If your VPC endpoints are only sized for the workload plane, EKS deploys will time out on the aws-auth ConfigMap step. Root-caused by reading the SDK method name in the timeout stack trace back to Lambda's control-plane API."*
+
 ## Related decisions
 
 - [ADR-0004](0004-single-region-with-multi-region-readiness.md) — the single-region context this decision lives within.

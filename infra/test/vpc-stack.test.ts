@@ -39,11 +39,14 @@ describe('VpcStack', () => {
     expect(Object.keys(endpoints)).toHaveLength(2);
   });
 
-  it('creates the 5 required Interface endpoints', () => {
+  it('creates the 9 required Interface endpoints (Fargate + kubectl handler + Phase 2 ALB)', () => {
+    // 5 runtime endpoints (Fargate pod ops): ECR api, ECR dkr, Logs, STS, KMS
+    // 3 deploy-time endpoints (CDK kubectl handler in isolated subnets): EC2, EKS, Lambda
+    // 1 Phase 2 anticipation: ELB
     const endpoints = template.findResources('AWS::EC2::VPCEndpoint', {
       Properties: { VpcEndpointType: 'Interface' },
     });
-    expect(Object.keys(endpoints)).toHaveLength(5);
+    expect(Object.keys(endpoints)).toHaveLength(9);
   });
 
   it('scopes the endpoint security group to the VPC CIDR only (no wildcard)', () => {

@@ -3,6 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import {
   Cluster,
   ClusterLoggingTypes,
+  CoreDnsComputeType,
   EndpointAccess,
   KubernetesVersion,
 } from 'aws-cdk-lib/aws-eks';
@@ -100,6 +101,12 @@ export class ClusterStack extends Stack {
       endpointAccess: EndpointAccess.PUBLIC_AND_PRIVATE,
       mastersRole: this.clusterAdminRole,
       secretsEncryptionKey: props.eksSecretsKey,   // envelope encryption via CMK
+      // Without this, EKS ships coredns with an `eks.amazonaws.com/compute-type: ec2`
+      // annotation that prevents scheduling on Fargate. In a Fargate-only cluster
+      // that annotation deadlocks the pods forever. `CoreDnsComputeType.FARGATE`
+      // tells CDK to patch the annotation as part of cluster provisioning.
+      // See ADR-0010 postscript.
+      coreDnsComputeType: CoreDnsComputeType.FARGATE,
       clusterLogging: [
         ClusterLoggingTypes.API,
         ClusterLoggingTypes.AUDIT,

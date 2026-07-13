@@ -114,12 +114,26 @@ export class VpcStack extends Stack {
 
     // -----------------------------------------------------------------
     // Interface endpoints — one ENI per AZ per endpoint.
-    // Minimum required for Fargate + EKS + IRSA + CloudWatch:
+    //
+    // Runtime endpoints (Fargate + IRSA + CloudWatch):
     //   - ecr.api  : image manifest / auth flow
     //   - ecr.dkr  : image layer downloads (rides on the S3 Gateway endpoint)
     //   - logs     : Fargate log shipping
     //   - sts      : IRSA token vending
     //   - kms      : EKS secrets envelope encryption, ECR image layer decryption
+    //
+    // Deploy-time endpoints (CDK's aws-eks L2 kubectl handler runs in these
+    // isolated subnets; without these, the Provider Framework's SDK calls to
+    // waitUntilFunctionActive / describeCluster / ENI provisioning time out
+    // — this exact failure took ClusterStack down on our first deploy):
+    //   - ec2      : Lambda ENI provisioning + describe operations
+    //   - eks      : eks:DescribeCluster + token vending for kubectl auth
+    //   - lambda   : waitUntilFunctionActive waiter that reaches Lambda API
+    //
+    // Phase 2 anticipation — added now to avoid another VpcStack redeploy:
+    //   - elb      : AWS Load Balancer Controller (ALB provisioning)
+    //
+    // See ADR-0007 for the trade-off (per-AZ endpoint cost vs no-NAT posture).
     // -----------------------------------------------------------------
     const interfaceServices: Record<string, ec2.InterfaceVpcEndpointAwsService> = {
       EcrApiEndpoint: ec2.InterfaceVpcEndpointAwsService.ECR,
@@ -127,6 +141,10 @@ export class VpcStack extends Stack {
       LogsEndpoint: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
       StsEndpoint: ec2.InterfaceVpcEndpointAwsService.STS,
       KmsEndpoint: ec2.InterfaceVpcEndpointAwsService.KMS,
+      Ec2Endpoint: ec2.InterfaceVpcEndpointAwsService.EC2,
+      EksEndpoint: ec2.InterfaceVpcEndpointAwsService.EKS,
+      LambdaEndpoint: ec2.InterfaceVpcEndpointAwsService.LAMBDA,
+      ElbEndpoint: ec2.InterfaceVpcEndpointAwsService.ELASTIC_LOAD_BALANCING,
     };
 
     for (const [id, service] of Object.entries(interfaceServices)) {
