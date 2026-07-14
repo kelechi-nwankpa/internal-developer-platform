@@ -6,8 +6,8 @@ Each phase of this project ships a discrete slice of the platform, with a writte
 
 | # | Phase | Status | Log |
 |---|---|---|---|
-| 0 | Foundations & docs | 🔄 in progress | [phase-0-foundations.md](phase-0-foundations.md) |
-| 1 | AWS baseline via CDK | ⏳ pending | — |
+| 0 | Foundations & docs | ✅ shipped | [phase-0-foundations.md](phase-0-foundations.md) |
+| 1 | AWS baseline via CDK | ✅ shipped | [phase-1-baseline.md](phase-1-baseline.md) |
 | 2 | Cluster add-ons (GitOps'd) | ⏳ pending | — |
 | 3 | Observability stack | ⏳ pending | — |
 | 4 | Crossplane + AWS provider + compositions | ⏳ pending | — |

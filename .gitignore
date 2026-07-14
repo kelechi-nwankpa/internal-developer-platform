@@ -123,3 +123,6 @@ temp/
 scratch/
 *.tmp
 *.local
+
+# Portfolio evidence — deploy screenshots from Task 1.12
+portfolio-screenshots/
