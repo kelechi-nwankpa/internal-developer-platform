@@ -168,17 +168,109 @@ cost: ## show current AWS spend for Project=idp resources (month-to-date)
 		--output text
 
 # ─────────────────────────────────────────────────────────────
-# Local Kubernetes (implemented in Phase 2)
+# Local Kubernetes — kind cluster
 # ─────────────────────────────────────────────────────────────
+KIND_CLUSTER_NAME := idp
+KIND_CONFIG       := platform/kind/kind-config.yaml
+KIND_CONTEXT      := kind-$(KIND_CLUSTER_NAME)
+
 .PHONY: kind-up
-kind-up: ## [Phase 2+] create a local kind cluster
-	@printf "$(RED)Not yet implemented — arrives in Phase 2.$(RESET)\n"
-	@exit 1
+kind-up: ## create the local kind cluster from platform/kind/kind-config.yaml
+	@printf "$(BLUE)==> Creating kind cluster '$(KIND_CLUSTER_NAME)'$(RESET)\n"
+	@if kind get clusters 2>/dev/null | grep -qx $(KIND_CLUSTER_NAME); then \
+		printf "$(YELLOW)   Cluster '$(KIND_CLUSTER_NAME)' already exists — skipping create.$(RESET)\n"; \
+	else \
+		kind create cluster --config $(KIND_CONFIG); \
+	fi
+	@printf "$(BLUE)==> Waiting for control-plane node Ready$(RESET)\n"
+	@kubectl --context $(KIND_CONTEXT) wait --for=condition=Ready node --all --timeout=2m
+	@printf "$(GREEN)==> Cluster '$(KIND_CLUSTER_NAME)' is up (context: $(KIND_CONTEXT))$(RESET)\n"
 
 .PHONY: kind-down
-kind-down: ## [Phase 2+] destroy the local kind cluster
-	@printf "$(RED)Not yet implemented — arrives in Phase 2.$(RESET)\n"
-	@exit 1
+kind-down: ## destroy the local kind cluster
+	@printf "$(BLUE)==> Deleting kind cluster '$(KIND_CLUSTER_NAME)'$(RESET)\n"
+	@kind delete cluster --name $(KIND_CLUSTER_NAME)
+
+.PHONY: kind-status
+kind-status: ## show kind cluster + node + system pod state
+	@printf "$(BLUE)==> Cluster:$(RESET)\n"
+	@kind get clusters | sed 's/^/  /'
+	@printf "\n$(BLUE)==> Nodes:$(RESET)\n"
+	@kubectl --context $(KIND_CONTEXT) get nodes
+	@printf "\n$(BLUE)==> System pods:$(RESET)\n"
+	@kubectl --context $(KIND_CONTEXT) get pods -A
+
+# ─────────────────────────────────────────────────────────────
+# ArgoCD — bootstrap into the local kind cluster
+#
+# Install is server-side apply because the ApplicationSet CRD's serialised
+# form exceeds Kubernetes' 256KB annotation limit — the older client-side
+# `kubectl apply` fails with "metadata.annotations: Too long". See ADR-0014.
+# ─────────────────────────────────────────────────────────────
+ARGOCD_VERSION  := v3.4.5
+ARGOCD_MANIFEST := https://raw.githubusercontent.com/argoproj/argo-cd/$(ARGOCD_VERSION)/manifests/install.yaml
+
+.PHONY: argocd-install
+argocd-install: ## install ArgoCD ($(ARGOCD_VERSION)) into kind-idp via server-side apply
+	@printf "$(BLUE)==> Verifying kubectl context is '$(KIND_CONTEXT)'$(RESET)\n"
+	@current=$$(kubectl config current-context 2>/dev/null || echo none); \
+	if [ "$$current" != "$(KIND_CONTEXT)" ]; then \
+		printf "$(RED)   Current context is '$$current', expected '$(KIND_CONTEXT)'.$(RESET)\n"; \
+		printf "$(RED)   Run 'make kind-up' first, or 'kubectl config use-context $(KIND_CONTEXT)'.$(RESET)\n"; \
+		exit 1; \
+	fi
+	@printf "$(BLUE)==> Creating namespace 'argocd' (idempotent)$(RESET)\n"
+	@kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+	@printf "$(BLUE)==> Applying ArgoCD $(ARGOCD_VERSION) via server-side apply$(RESET)\n"
+	@kubectl apply --server-side --force-conflicts -n argocd -f $(ARGOCD_MANIFEST)
+	@printf "$(BLUE)==> Waiting for deployments to become Available (5 min)$(RESET)\n"
+	@kubectl wait --for=condition=Available deploy --all -n argocd --timeout=5m
+	@printf "$(BLUE)==> Waiting for application-controller StatefulSet to be Ready (5 min)$(RESET)\n"
+	@kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=5m
+	@printf "$(GREEN)==> ArgoCD $(ARGOCD_VERSION) is up in namespace 'argocd'$(RESET)\n"
+	@printf "\nNext:\n"
+	@printf "  make argocd-status         # verify pod + CRD state\n"
+	@printf "  make argocd-password       # print bootstrap admin password (rotate it, then delete secret)\n"
+	@printf "  make argocd-portforward    # open UI on https://localhost:8080 (blocking)\n"
+
+.PHONY: argocd-uninstall
+argocd-uninstall: ## remove ArgoCD (namespace + CRDs; destroys any Application/AppProject/ApplicationSet data)
+	@printf "$(YELLOW)==> Deleting namespace 'argocd' (cascades all in-namespace objects)$(RESET)\n"
+	@kubectl delete namespace argocd --ignore-not-found
+	@printf "$(YELLOW)==> Deleting ArgoCD CRDs (destroys any Applications, AppProjects, ApplicationSets)$(RESET)\n"
+	@kubectl delete crd \
+		applications.argoproj.io \
+		applicationsets.argoproj.io \
+		appprojects.argoproj.io \
+		--ignore-not-found
+	@printf "$(GREEN)==> ArgoCD removed$(RESET)\n"
+
+.PHONY: argocd-status
+argocd-status: ## show ArgoCD pod, CRD, and secret state
+	@printf "$(BLUE)==> Pods:$(RESET)\n"
+	@kubectl get pods -n argocd 2>/dev/null || printf "$(RED)  namespace 'argocd' not found — run 'make argocd-install'$(RESET)\n"
+	@printf "\n$(BLUE)==> CRDs:$(RESET)\n"
+	@kubectl get crd 2>/dev/null | grep argoproj || printf "$(RED)  no ArgoCD CRDs found$(RESET)\n"
+	@printf "\n$(BLUE)==> Secrets (argocd-initial-admin-secret should be absent after password rotation):$(RESET)\n"
+	@kubectl get secrets -n argocd 2>/dev/null || true
+
+.PHONY: argocd-password
+argocd-password: ## print the bootstrap admin password (only exists until deleted per security hygiene)
+	@if kubectl -n argocd get secret argocd-initial-admin-secret >/dev/null 2>&1; then \
+		printf "$(YELLOW)Bootstrap admin password (rotate + delete this secret ASAP):$(RESET)\n"; \
+		kubectl -n argocd get secret argocd-initial-admin-secret \
+			-o jsonpath='{.data.password}' | base64 -d; \
+		printf "\n"; \
+	else \
+		printf "$(GREEN)No bootstrap admin secret found — good, it was deleted after rotation.$(RESET)\n"; \
+		printf "Use your rotated admin password, or 'argocd account update-password' to change it again.\n"; \
+	fi
+
+.PHONY: argocd-portforward
+argocd-portforward: ## port-forward argocd-server → https://localhost:8080 (blocks; Ctrl-C to stop)
+	@printf "$(BLUE)==> Port-forwarding argocd-server → https://localhost:8080$(RESET)\n"
+	@printf "$(YELLOW)   Accept the self-signed cert warning in the browser. Ctrl-C to stop.$(RESET)\n"
+	@kubectl -n argocd port-forward svc/argocd-server 8080:443
 
 # ─────────────────────────────────────────────────────────────
 # Portal (implemented in Phase 5)

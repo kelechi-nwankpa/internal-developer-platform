@@ -47,6 +47,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0011](0011-ecr-immutable-tags-per-domain-repos.md) | ECR with immutable tags and per-domain repositories | Accepted | 2026-07-11 |
 | [0012](0012-subdomain-delegation-for-idp.md) | Subdomain delegation for `idp.seniormankelz.dev` | Accepted | 2026-07-11 |
 | [0013](0013-cdk-nag-suppression-policy.md) | cdk-nag suppression policy | Accepted | 2026-07-12 |
+| [0014](0014-argocd-raw-install-vs-helm.md) | Install ArgoCD from the raw pinned manifest, not the Helm chart | Accepted | 2026-07-20 |
 
 ## References
 
