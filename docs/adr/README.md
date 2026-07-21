@@ -48,6 +48,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0012](0012-subdomain-delegation-for-idp.md) | Subdomain delegation for `idp.seniormankelz.dev` | Accepted | 2026-07-11 |
 | [0013](0013-cdk-nag-suppression-policy.md) | cdk-nag suppression policy | Accepted | 2026-07-12 |
 | [0014](0014-argocd-raw-install-vs-helm.md) | Install ArgoCD from the raw pinned manifest, not the Helm chart | Accepted | 2026-07-20 |
+| [0015](0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Accepted | 2026-07-21 |
 
 ## References
 

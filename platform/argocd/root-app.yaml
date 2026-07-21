@@ -1,0 +1,68 @@
+---
+# The "root" Application — starts the app-of-apps recursion.
+#
+# This is the ONE and ONLY Kubernetes object we ever apply by hand. Once it's
+# on the cluster, ArgoCD reconciles it, discovers the child Applications
+# listed in platform/argocd/apps/, and installs them. Every subsequent
+# platform component arrives as a YAML file merged to this repo — never as
+# a manual kubectl apply.
+#
+# See: docs/adr/0015-argocd-app-of-apps-pattern.md for the design rationale.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  # The finalizer ensures ArgoCD tears down child resources BEFORE it lets
+  # this Application be deleted. Without it, `kubectl delete application root`
+  # leaves the child Applications (and everything they installed) as orphans
+  # on the cluster.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # AppProject scoping. `default` is permissive (any repo, any cluster, any
+  # namespace). Phase 8 will introduce a tighter `platform` project that
+  # whitelists exactly this repo + the argocd namespace.
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    # HEAD tracks the tip of the default branch (main). Trade-off: any merge
+    # to main takes effect on next reconcile. Mitigation: main is protected
+    # (PR review + CI green required). Alternative: pin to a tag for prod.
+    targetRevision: HEAD
+    path: platform/argocd/apps
+    directory:
+      # Do not descend into subdirectories. Keeps the layout flat and
+      # predictable — one file per child Application. Revisit if we ever want
+      # to group by category (observability/, security/, ...).
+      recurse: false
+
+  destination:
+    # https://kubernetes.default.svc is the synthetic "in-cluster" entry.
+    # ArgoCD authenticates to it via the pod's ServiceAccount token — no
+    # cluster credential Secret exists or is needed.
+    server: https://kubernetes.default.svc
+    # The rendered manifests from `apps/` are themselves Application objects,
+    # and Applications live in the argocd namespace.
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      # If a child Application is removed from apps/, delete it (and its
+      # managed resources) from the cluster on next reconcile. This is what
+      # makes "delete a file, get an uninstall" work.
+      prune: true
+      # If someone kubectl edits a managed resource on the cluster, revert
+      # it to match Git within ~3 minutes. Turns cluster drift into a
+      # non-event.
+      selfHeal: true
+    syncOptions:
+      # If a child Application targets a namespace that doesn't exist yet,
+      # create it. Solves the "namespace must exist first" chicken-and-egg
+      # bootstrap problem we hit manually in Task 2.2.c.
+      - CreateNamespace=true
+      # Server-side apply — same reason as the raw ArgoCD install (avoids
+      # the 256KB annotation limit on large CRDs; see ADR-0014 postscript).
+      - ServerSideApply=true

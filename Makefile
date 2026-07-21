@@ -272,6 +272,21 @@ argocd-portforward: ## port-forward argocd-server → https://localhost:8080 (bl
 	@printf "$(YELLOW)   Accept the self-signed cert warning in the browser. Ctrl-C to stop.$(RESET)\n"
 	@kubectl -n argocd port-forward svc/argocd-server 8080:443
 
+.PHONY: argocd-bootstrap-root
+argocd-bootstrap-root: ## apply the app-of-apps root Application (one-time; everything else is GitOps after this)
+	@printf "$(BLUE)==> Verifying kubectl context is '$(KIND_CONTEXT)'$(RESET)\n"
+	@current=$$(kubectl config current-context 2>/dev/null || echo none); \
+	if [ "$$current" != "$(KIND_CONTEXT)" ]; then \
+		printf "$(RED)   Current context is '$$current', expected '$(KIND_CONTEXT)'.$(RESET)\n"; \
+		exit 1; \
+	fi
+	@printf "$(BLUE)==> Applying platform/argocd/root-app.yaml (the only manual apply in the platform lifecycle)$(RESET)\n"
+	@kubectl apply -f platform/argocd/root-app.yaml
+	@printf "$(GREEN)==> root Application applied.$(RESET)\n"
+	@printf "\nWatch it reconcile:\n"
+	@printf "  argocd app get root         # sync status, health, and any children\n"
+	@printf "  argocd app list             # every managed Application on the cluster\n"
+
 # ─────────────────────────────────────────────────────────────
 # Portal (implemented in Phase 5)
 # ─────────────────────────────────────────────────────────────

@@ -68,6 +68,7 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 |---|---|---|---|
 | 2.1 | Local `kind` cluster from `platform/kind/kind-config.yaml` | ✅ | Config committed 2026-07-15 |
 | 2.2 | ArgoCD bootstrap via raw pinned manifest, SSA install, admin rotation | ✅ | See detailed log below |
+| 2.2.f | App-of-apps root wired — ArgoCD now GitOps-manages itself | ✅ | Shipped 2026-07-21; see Task 2.2.f log below |
 | 2.3 | cert-manager | 🔲 pending | — |
 | 2.4 | External Secrets Operator (ESO) | 🔲 pending | — |
 | 2.5 | ExternalDNS | 🔲 pending | — |
@@ -91,7 +92,7 @@ Broken into six sub-tasks:
 | 2.2.c | Downloaded manifest, checksummed (sha256 `cdf6758b48…`), inventoried (59 objects: 3 CRDs, 3 ClusterRoles + 3 CRBs, 6 Roles + 6 RBs, 7 SAs, 6 Deployments, 1 StatefulSet, 8 Services, 7 NetworkPolicies, 7 ConfigMaps, 2 Secrets). All three images pinned (`quay.io/argoproj/argocd:v3.4.5`, `ghcr.io/dexidp/dex:v2.45.0`, `public.ecr.aws/docker/library/redis:8.2.3-alpine`) — CLAUDE.md §9 compliant. | Applied. Hit two real issues (see below). |
 | 2.2.d | Retrieved bootstrap admin password from `Secret/argocd-initial-admin-secret`, logged in via `argocd` CLI on port-forwarded `https://localhost:8080`, rotated password via `argocd account update-password`, deleted the initial-admin-secret. Verified the secret is gone and current session still works. | |
 | 2.2.e | This commit. `Makefile` targets `kind-up`, `kind-down`, `kind-status`, `argocd-install`, `argocd-uninstall`, `argocd-status`, `argocd-password`, `argocd-portforward`. ADR-0014. This log. | |
-| 2.2.f | **Pending** — app-of-apps root under `platform/argocd/` so ArgoCD manages itself. Separate commit. | |
+| 2.2.f | App-of-apps root under `platform/argocd/`. ArgoCD now GitOps-manages itself. See Task 2.2.f log below. | ✅ Shipped 2026-07-21 |
 
 ### The two real bugs Task 2.2 threw at us
 
@@ -127,11 +128,63 @@ Broken into six sub-tasks:
 - No notifications. `argocd-notifications-controller` is running but no destinations configured. Phase 8 wires Slack.
 - No backup. ArgoCD's state is entirely in its CRs — losing them is "re-apply from Git," which is exactly why app-of-apps (2.2.f) matters.
 
+## Task 2.2.f — App-of-apps root (detailed log)
+
+**Shipped 2026-07-21.**
+
+### What we did
+
+Wired the app-of-apps pattern so ArgoCD manages itself and every future Phase 2+ component via GitOps rather than manual `kubectl apply`.
+
+| Artefact | Purpose |
+|---|---|
+| `platform/argocd/root-app.yaml` | The one `Application` object that starts the recursion. `syncPolicy.automated.prune: true` + `selfHeal: true` + `CreateNamespace=true` + `ServerSideApply=true`. Points at `platform/argocd/apps/`. |
+| `platform/argocd/apps/.gitkeep` | Empty placeholder — Task 2.3+ populates this with real child Applications (cert-manager, ESO, etc.). |
+| `platform/argocd/README.md` | Explains the layout + the "add a new component" and "remove a component" workflows for future contributors. |
+| `Makefile` target `argocd-bootstrap-root` | The single command that applies root-app once. Everything else after this is GitOps. |
+| `ADR-0015` | Records the choice of app-of-apps over ApplicationSet / Helm-of-helms / individual manual apply. |
+
+### What we verified after applying
+
+- `argocd app get root` → `Sync=Synced, Health=Healthy` with zero managed resources. **Exactly matches the quiz prediction** — an empty Git source is a legitimate "desired state is nothing" declaration.
+- `argocd app list` → one entry (`root`) in the `default` project.
+- `kubectl -n argocd get application root -o yaml` → the finalizer `resources-finalizer.argocd.argoproj.io` is present, meaning ArgoCD will cascade-clean children before root itself is deletable.
+
+### The mental model that carries forward
+
+**Adding a Phase 2 component from here on is a one-file PR.** cert-manager (Task 2.3) will not be `helm install`-ed and it will not be `kubectl apply`-ed. It will be a YAML file added to `platform/argocd/apps/cert-manager.yaml` whose contents are an ArgoCD `Application` pointing at `https://charts.jetstack.io` chart `cert-manager v1.x.y`. Merge to main → ArgoCD's next reconcile creates the Application on the cluster → the Application's own reconcile installs cert-manager. Human effort: one PR. Manual `kubectl` calls: zero.
+
+### Non-obvious things worth banking
+
+- **The one imperative act.** `Application/root` itself is not GitOps-managed — someone has to apply it manually once. We could make it self-referential (root's source path includes `../root-app.yaml`), but that adds a subtle circular dependency: if a bad merge disables ArgoCD's ability to reconcile itself, recovery becomes harder. Keeping root-app "outside the loop" preserves the "always recoverable with one manual apply" property. Documented in ADR-0015 consequences.
+- **Empty Git source = Synced, not error.** ArgoCD treats an empty directory as "desired state is zero objects." No error, no scary red status. Enables the exact workflow we want: deploy root-app FIRST, add children over time.
+- **Two sync options that turn the pattern into a superpower.** `CreateNamespace=true` on the root's syncPolicy means child Applications don't have to worry about their target namespace existing yet — ArgoCD creates it. `ServerSideApply=true` means large CRDs (cert-manager, Crossplane, Kyverno) apply cleanly without the 256KB annotation gotcha we hit in Task 2.2.c. Both were hard-won lessons from the last two tasks; both are encoded in root-app so we never re-learn them.
+- **Prune is the delete-a-file-get-an-uninstall property.** Without `prune: true`, removing a file from `apps/` leaves the deployed resources on the cluster as orphans. With prune, ArgoCD tears them down on next reconcile — but only *its* managed resources, not other things in the same namespace. Safe, contained, reversible.
+- **The `default` AppProject is permissive.** For Phase 2 dev this is fine. For prod, we'd want a `platform` AppProject that whitelists only this repo + the platform namespaces. Deferred to Phase 8 hardening.
+
+### PR-style review
+
+**Strengths:**
+
+- One `make argocd-bootstrap-root` and the platform is self-managing.
+- Every future component install/uninstall is a one-file PR with full audit history in `git log`.
+- Drift-corrects within ~3 minutes on any manual `kubectl edit`.
+- Root-app remains recoverable via a single `kubectl apply` — no circular dependency risk.
+- SSA + CreateNamespace sync options mean the platform-installation footguns we hit in Task 2.2.c are permanently avoided for every future component.
+
+**Weaknesses (deferred, not blockers):**
+
+- `spec.project: default` is permissive. For prod, a tighter `platform` AppProject that scopes allowed repos and namespaces is the right hygiene. Phase 8.
+- `targetRevision: HEAD` means any merge to `main` reconciles immediately. Fine for solo dev with a protected `main`; for a team, per-environment branches (`main` → dev, `staging` → staging, `production` → prod) with different root-apps per env is the standard pattern. Phase 9 EKS install will introduce that.
+- Root-app is `apps-list-lives-in-a-single-directory` — flat structure. Will not scale past ~20 hand-crafted Applications without a naming convention or subdirectory reorganisation. Trigger to revisit noted in ADR-0015.
+- No status notification wired — if root-app or a child fails to sync, no one gets paged. Phase 8 wires `argocd-notifications-controller` to Slack.
+
 ## ADRs written this phase (so far)
 
 | # | Decision | Why interesting for portfolio |
 |---|---|---|
 | [ADR-0014](../adr/0014-argocd-raw-install-vs-helm.md) | Install ArgoCD from the raw pinned manifest, not the Helm chart | Documents the SSA annotation-size lesson; ties option choice to learning value + planned migration to Helm on EKS |
+| [ADR-0015](../adr/0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Documents the bootstrap paradox and its resolution; explains how app-of-apps and ApplicationSet coexist in later phases |
 
 ## What's next
 
