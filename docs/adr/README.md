@@ -49,6 +49,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0013](0013-cdk-nag-suppression-policy.md) | cdk-nag suppression policy | Accepted | 2026-07-12 |
 | [0014](0014-argocd-raw-install-vs-helm.md) | Install ArgoCD from the raw pinned manifest, not the Helm chart | Accepted | 2026-07-20 |
 | [0015](0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Accepted | 2026-07-21 |
+| [0016](0016-cert-manager-install-via-helm.md) | Install cert-manager via the upstream Helm chart, as an ArgoCD Application | Accepted | 2026-07-27 |
 
 ## References
 

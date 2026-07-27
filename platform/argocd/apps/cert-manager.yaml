@@ -1,0 +1,69 @@
+---
+# cert-manager — TLS certificate lifecycle for the cluster.
+#
+# This is the FIRST real child Application under the app-of-apps root.
+# It arrives here by being merged to main; ArgoCD's root Application picks
+# it up on next reconcile, creates this Application on the cluster, which
+# in turn pulls the upstream Helm chart and installs cert-manager.
+#
+# See: docs/adr/0016-cert-manager-install-via-helm.md
+#      docs/phases/phase-2-platform.md (Task 2.3)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  # Cascade cleanup: if this Application is deleted (either directly or via
+  # root-app prune when the file is removed from git), ArgoCD blocks the
+  # delete until all managed resources are cleaned up first.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Same AppProject as root. Phase 8 will introduce a tighter `platform`
+  # AppProject that whitelists exactly this repo + the cert-manager namespace.
+  project: default
+
+  source:
+    # Upstream Helm chart from Jetstack (cert-manager's maintainers).
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.21.0
+    helm:
+      # valuesObject (typed YAML) is preferred over values (raw string) — it
+      # lets ArgoCD parse and diff values, not just treat them as opaque text.
+      # Available since ArgoCD v2.6.
+      valuesObject:
+        crds:
+          # Install the CRDs (Certificate, Issuer, ClusterIssuer, Order,
+          # Challenge, CertificateRequest). Without this, the operator starts
+          # but has nothing to reconcile.
+          enabled: true
+          # Do NOT delete the CRDs on Helm uninstall. If this Application is
+          # ever removed, we want in-flight Certificate objects in downstream
+          # namespaces to survive rather than cascade-delete into oblivion.
+          # Trade-off: manual `kubectl delete crd ...` needed for a clean tear-
+          # down. Acceptable — safer default for a platform component.
+          keep: true
+
+  destination:
+    # https://kubernetes.default.svc is the synthetic "in-cluster" entry —
+    # same one we saw in `argocd cluster list`. ArgoCD authenticates via the
+    # controller pod's ServiceAccount token; no cluster credential needed.
+    server: https://kubernetes.default.svc
+    # The cert-manager operator lives in its own namespace. The syncOption
+    # below creates it if it doesn't exist — solving the same chicken-and-egg
+    # problem we hit manually with the argocd namespace in Task 2.2.c.
+    namespace: cert-manager
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Create the destination namespace if missing.
+      - CreateNamespace=true
+      # Server-side apply — cert-manager's Certificate CRD is one of the
+      # canonical examples that exceeds the 256KB annotation limit of
+      # client-side kubectl apply. Same lesson as ADR-0014's postscript.
+      - ServerSideApply=true
