@@ -1,0 +1,178 @@
+---
+# vault — HashiCorp Vault as the secrets backend for ESO on kind.
+#
+# Fourth GitOps-managed child under app-of-apps root. Same install pattern
+# as cert-manager and ESO (ADR-0016, ADR-0018): upstream Helm chart wrapped
+# in an ArgoCD Application, pinned to a specific chart version.
+#
+# This is the KIND backend for ESO. On EKS (Phase 9) we'll use AWS Secrets
+# Manager instead — no Vault deployment there. See ADR-0020 (pending) for
+# the per-environment backend strategy.
+#
+# Install mode: STANDALONE + MANUAL UNSEAL — see ADR-0019 for why we
+# chose this over dev mode or auto-unseal.
+#
+# See: docs/adr/0019-vault-install-for-eso-kind-backend.md
+#      docs/phases/phase-2-platform.md (Task 2.4)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vault
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Same AppProject as other platform Applications.
+  project: default
+
+  source:
+    # Official HashiCorp Helm repo. Note the chart is `vault` and the chart
+    # tag has no `v` prefix (chart `0.34.0`, though the GitHub release tag
+    # is `v0.34.0`). Same convention as ESO's chart 2.8.0.
+    repoURL: https://helm.releases.hashicorp.com
+    chart: vault
+    targetRevision: 0.34.0
+    helm:
+      # Standalone mode + manual unseal + file backend. Each override
+      # explained inline so future contributors don't wonder why we're
+      # not just running dev mode.
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Global — top-level toggles
+        # ─────────────────────────────────────────────────────────────
+        global:
+          # Vault v2.x switched to BSL license. Explicitly acknowledging
+          # so we don't get surprised later. Personal/portfolio use is
+          # fully covered by BSL; only competing hosted-Vault services
+          # are restricted (see ADR-0019).
+          enabled: true
+
+        # ─────────────────────────────────────────────────────────────
+        # Server — the actual Vault pod
+        # ─────────────────────────────────────────────────────────────
+        server:
+          # Explicitly disable dev mode. Dev mode is the ergonomic default
+          # of the chart (in-memory, auto-unseals, root token = "root",
+          # data wiped on pod restart). We picked standalone specifically
+          # to learn real Vault operations, so dev must be off.
+          dev:
+            enabled: false
+
+          # Standalone mode — one Vault instance, file storage backend,
+          # sealed by default (must be unsealed after every pod restart).
+          # See ADR-0019 for why this over HA mode or auto-unseal.
+          standalone:
+            enabled: true
+            # HCL config for the Vault server. Note this is a string
+            # embedded in YAML — indentation matters, and Vault parses it
+            # as HCL not YAML.
+            config: |
+              ui = true
+
+              listener "tcp" {
+                tls_disable = 1
+                address = "[::]:8200"
+                cluster_address = "[::]:8201"
+              }
+
+              storage "file" {
+                path = "/vault/data"
+              }
+
+              # Manual unseal — no seal stanza. Vault will start sealed
+              # every time; we must `vault operator unseal` after every
+              # pod restart. This is deliberate learning friction.
+
+          # Persistent storage for Vault's data. Uses kind's default
+          # local-path-provisioner (see Task 2.1 — the local-path-provisioner
+          # pod runs in kube-system).
+          dataStorage:
+            enabled: true
+            size: 1Gi
+            # Empty storageClass = kind's default. Kind's local-path is
+            # single-node only, which is fine for our single-node cluster.
+            storageClass: null
+            accessMode: ReadWriteOnce
+            mountPath: /vault/data
+
+          # Audit log storage — separate PVC for audit logs. We're not
+          # enabling audit yet (Phase 8 tightens); keep the PVC allocation
+          # off for now to save PV space.
+          auditStorage:
+            enabled: false
+
+          # We don't need HA on kind. Single pod, single replica.
+          ha:
+            enabled: false
+
+          # Serve HTTP inside the cluster (not HTTPS). We port-forward for
+          # the UI/CLI locally, and ESO talks to Vault over the cluster
+          # network. Phase 5's cert-manager + Ingress could give Vault a
+          # real cert if we wanted external UI access.
+          # (No override needed — the standalone.config above sets
+          # tls_disable = 1 which controls this.)
+
+          # Ingress off — we don't expose Vault externally. Access is via
+          # port-forward for humans or in-cluster DNS for ESO.
+          ingress:
+            enabled: false
+
+          # Resource limits — Vault is lightweight on kind. Leave defaults
+          # (~250m CPU, 256Mi memory) rather than removing them (Vault has
+          # sensible chart defaults; overriding without measuring risks
+          # OOMKills).
+
+        # ─────────────────────────────────────────────────────────────
+        # UI — Vault's built-in web UI
+        # ─────────────────────────────────────────────────────────────
+        ui:
+          # Enable the UI service. Access via port-forward:
+          #   kubectl -n vault port-forward svc/vault 8200:8200
+          # Then http://localhost:8200 (tls_disable = 1 above).
+          enabled: true
+          serviceType: ClusterIP
+
+        # ─────────────────────────────────────────────────────────────
+        # Injector — the Vault Agent Injector (SIDECAR PATTERN, NOT US)
+        # ─────────────────────────────────────────────────────────────
+        injector:
+          # DISABLE. The Vault Agent Injector is HashiCorp's own way to
+          # get secrets into pods — it mutates pod specs to add a Vault
+          # Agent sidecar that fetches secrets and writes them to a
+          # shared volume. That's a completely different pattern from
+          # what we're using.
+          #
+          # WE'RE USING ESO instead: ESO fetches from Vault, materialises
+          # a Kubernetes Secret, and pods consume that Secret via env/volume
+          # exactly like they consume any other Secret. No sidecar, no
+          # pod-spec mutation.
+          #
+          # Enabling both would be redundant and confusing. Keep injector
+          # off; ESO does the same job with less pod-level intrusion.
+          enabled: false
+
+        # ─────────────────────────────────────────────────────────────
+        # CSI provider — kubelet-mounts-secrets-as-volumes pattern
+        # ─────────────────────────────────────────────────────────────
+        csi:
+          # DISABLE. Same reasoning as injector — the CSI provider is
+          # another way to get Vault secrets into pods (via a CSI volume
+          # that pulls at mount time). ESO's Kubernetes Secret pattern
+          # is what we've chosen. Off.
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Conventional namespace for Vault. Created by CreateNamespace=true
+    # syncOption below.
+    namespace: vault
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
