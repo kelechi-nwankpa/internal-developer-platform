@@ -52,7 +52,7 @@ LOCAL LAPTOP
 │                │     ├── argocd-dex-server                     │
 │                │     └── argocd-redis                          │
 │                │                                               │
-│                ├── cert-manager namespace   ◄─── 2.3 pending   │
+│                ├── cert-manager namespace   ◄─── 2.3 shipped   │
 │                ├── external-secrets namespace  ◄─── 2.4        │
 │                ├── external-dns namespace   ◄─── 2.5           │
 │                └── kube-system (AWS LBC)    ◄─── 2.6           │
@@ -69,11 +69,11 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 | 2.1 | Local `kind` cluster from `platform/kind/kind-config.yaml` | ✅ | Config committed 2026-07-15 |
 | 2.2 | ArgoCD bootstrap via raw pinned manifest, SSA install, admin rotation | ✅ | See detailed log below |
 | 2.2.f | App-of-apps root wired — ArgoCD now GitOps-manages itself | ✅ | Shipped 2026-07-21; see Task 2.2.f log below |
-| 2.3 | cert-manager | 🔲 pending | — |
+| 2.3 | cert-manager (operator + SelfSigned ClusterIssuer, end-to-end proven) | ✅ | Shipped 2026-07-28; see Task 2.3 log below |
 | 2.4 | External Secrets Operator (ESO) | 🔲 pending | — |
 | 2.5 | ExternalDNS | 🔲 pending | — |
 | 2.6 | AWS Load Balancer Controller | 🔲 pending | — |
-| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔲 pending | see 2.2.f follow-up |
+| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔄 in progress | 2/5 done: cert-manager + cert-manager-issuers |
 | 2.8 | Runbook: `docs/runbooks/kind-recovery.md` | 🔲 pending | — |
 | 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 🔲 pending | — |
 
@@ -179,22 +179,112 @@ Wired the app-of-apps pattern so ArgoCD manages itself and every future Phase 2+
 - Root-app is `apps-list-lives-in-a-single-directory` — flat structure. Will not scale past ~20 hand-crafted Applications without a naming convention or subdirectory reorganisation. Trigger to revisit noted in ADR-0015.
 - No status notification wired — if root-app or a child fails to sync, no one gets paged. Phase 8 wires `argocd-notifications-controller` to Slack.
 
+## Task 2.3 — cert-manager (detailed log)
+
+**Shipped 2026-07-28**, across three study sessions (2026-07-27 → 2026-07-28). First component installed by pure GitOps — no manual `kubectl apply` for any platform config change.
+
+### What we did
+
+Seven sub-tasks:
+
+| # | Step | Notes |
+|---|---|---|
+| 2.3.a | Chose install source (**Helm chart via ArgoCD Application** — the operator is a *consumed* component, so parameterisation beats visibility, opposite of ADR-0014's choice for ArgoCD itself) + initial ClusterIssuer type (**SelfSigned** — zero external deps for kind, exercises the entire wiring without needing DNS or ACME). | Both choices recorded in ADR-0016 + ADR-0017. |
+| 2.3.b | Pinned **`v1.21.0`** — current stable tag (released 2026-07-08, ~3 weeks old). Rejected `v1.20.3` (n-1, doc drift) and `v1.19.6` (n-2, more drift). Chart version = app version for the Jetstack chart, so one pin covers both. | Same doc-drift reasoning as Task 2.2.b. Flagged that k8s v1.36.1 is outside cert-manager's officially tested matrix — didn't bite in practice. |
+| 2.3.c | Drafted `platform/argocd/apps/cert-manager.yaml` — ArgoCD Application, `charts.jetstack.io` chart `cert-manager` v1.21.0, sync policy mirrors root (automated prune + selfHeal + CreateNamespace + ServerSideApply), values overrides: `crds.enabled: true` + `crds.keep: true` (safety default so downstream Certificate objects survive Application removal). Everything else = chart defaults. | Deliberately minimal — chart defaults are sensible; no cargo-culted resource limits. |
+| 2.3.d | Drafted ADR-0016 (install-via-Helm-via-ArgoCD-Application). Explicitly flips ADR-0014's raw-manifest reasoning with the "learning vs consumption" distinction. | Sets the pattern for every subsequent platform component (ESO, ExternalDNS, AWS LBC). |
+| 2.3.e | Commit `09214ba` + push. **First real GitOps deploy.** Force-synced root (`argocd app sync root`). Within seconds: cert-manager Application appeared, Helm chart rendered, 6 CRDs installed, 3 Deployments (`cert-manager`, `cert-manager-webhook`, `cert-manager-cainjector`) Running, all 3 pods Ready with zero restarts. | Zero manual `kubectl` from a laptop. Zero `helm install`. |
+| 2.3.f | Drafted `platform/cert-manager/clusterissuers.yaml` (SelfSigned active + LE-staging/LE-prod as commented templates for Phase 9 EKS activation) + `cert-manager-issuers.yaml` (wrapping Application) + ADR-0017 (per-environment issuer strategy). Commit `d5e9571` + push. ClusterIssuer landed with `Ready: True` in <5 seconds. Then manual end-to-end test: `kubectl apply` a test Certificate → cert-manager issued a real X.509 cert (2048-bit RSA, 90-day validity, CN=`test.idp.seniormankelz.dev`) into a `Secret/test-selfsigned-tls` (type `kubernetes.io/tls`, keys: `ca.crt` + `tls.crt` + `tls.key`) → cleaned up. | Test Certificate deliberately NOT in git — verification is manual, platform config is GitOps. |
+| 2.3.f-fix | Fixed root Application permanent `OutOfSync` caused by `directory.recurse: false` being stripped by k8s `omitempty` serialization. Removed the field from both `cert-manager-issuers.yaml` and `root-app.yaml`; added inline comments explaining the pattern so no one reintroduces it. Commit `432add0` + push. All three Applications now Synced/Healthy. | See "the real bug" and ADR-0015 postscript. |
+| 2.3.g | This commit — phase log update + ADR-0015 postscript + close-out recap. | |
+
+### The real bug — `directory.recurse: false` and Kubernetes omitempty
+
+After Task 2.3.f, `argocd app list` showed:
+
+```text
+argocd/cert-manager           Synced     Healthy
+argocd/cert-manager-issuers   Synced     Healthy
+argocd/root                   OutOfSync  Healthy   ← wouldn't clear
+```
+
+Force-syncing root reported "successfully synced" but the OutOfSync status persisted. Every `argocd app diff root` returned the same delta:
+
+```text
+===== argoproj.io/Application argocd/cert-manager-issuers ======
+>     directory:
+>       recurse: false
+```
+
+Root's target state (from git) declared `directory: { recurse: false }`; the live Application on the cluster had no `directory` field at all. Since they didn't match, drift was reported. Since ArgoCD couldn't make them match (writing `false` didn't help — the field got stripped again), the drift was **permanent**.
+
+**Root cause.** The ArgoCD Application CRD's Go type declares:
+
+```go
+type ApplicationSourceDirectory struct {
+  Recurse bool `json:"recurse,omitempty"`
+}
+```
+
+`omitempty` on a Go `bool` means: on serialization, drop the field if it equals the Go zero value (`false`). So when we sent `recurse: false` to the API server, the server accepted it, stored it, and on every subsequent read serialized it back with the field absent. Git had the field; cluster didn't. Diff reported it. Sync couldn't fix it.
+
+**Fix.** Remove the field entirely. `recurse: false` is already the default, so omitting it changes nothing behaviourally; it only stops the phantom drift. Fixed in commit `432add0`.
+
+**Why this matters beyond ArgoCD.** The pattern — *"explicit zero value + `omitempty` = permanent GitOps drift"* — bites any tool that compares declared vs live state on Kubernetes resources. Terraform hits it. Pulumi hits it. Crossplane Compositions will hit it in Phase 4 when we start writing bool fields. The lesson is universal: **if a boolean is `false` and its CRD marks the field `omitempty`, don't set it explicitly — omit it and let the default apply.** Setting `true` is safe (`true` isn't the zero value, so it survives round-tripping); setting `false` is a trap.
+
+Documented as a postscript on ADR-0015 for permanent-reference indexing.
+
+### Non-obvious things worth banking
+
+- **The two-layer indirection genuinely works.** Push a file to `platform/argocd/apps/`, root reconciles, creates the child Application, child reconciles, applies its own manifests. All within ~5 seconds on kind (limited by ArgoCD's polling frequency and Helm rendering time).
+- **`crds.enabled: true` + `crds.keep: true` is the right cert-manager Helm default.** Enable so CRDs are installed; keep so uninstalling cert-manager doesn't cascade-delete every Certificate in every downstream namespace. Safer than the alternative even though it means a manual `kubectl delete crd ...` for a truly-clean teardown.
+- **SelfSigned isn't a toy issuer.** The X.509 cert produced has a real serial number, real 2048-bit RSA key material, real 90-day validity window, and real renewal scheduling. Every code path cert-manager exercises for LE-staging or LE-prod is exercised for SelfSigned too — just with a different signature source. Great for local proving-out.
+- **Test Certificate as manual `kubectl apply` — not in git.** Platform config = GitOps; verification tests = ad-hoc kubectl. Different tools for different concerns. Keeps `platform/argocd/apps/` free of noise.
+- **Commented-out YAML for future-environment issuers.** Ships the LE-staging + LE-prod templates now, activated by uncomment + placeholder fill in Phase 9. Migration from kind → EKS = 2-line change, not rewriting the manifests.
+- **HTTP-01 is impossible for us.** `.dev` is HSTS-preloaded; browsers refuse plain HTTP even for the ACME challenge. DNS-01 is mandatory. That constraint set Phase 1's DNS work (Route53 subdomain delegation) up perfectly.
+- **`argocd app sync <name> --force` doesn't fix `omitempty` drift.** The apply succeeds, the field gets stripped again, drift returns. The fix is at the source (remove the field from the manifest), not at the sync layer.
+
+### PR-style review
+
+**Strengths:**
+
+- First GitOps deploy delivered on the app-of-apps promise perfectly — 3 pods running, 6 CRDs installed, 0 manual kubectl.
+- Operator install and issuer config as separate Applications — different lifecycles, upgrades don't cross-contaminate.
+- LE issuers ship as commented templates — Phase 9 activation is uncomment + fill, not rewrite.
+- End-to-end proven with real X.509 cert issuance in <5 seconds.
+- The `omitempty` gotcha caught + fixed + documented as an ADR postscript — future contributors have permanent institutional knowledge.
+
+**Weaknesses (deferred, not blockers):**
+
+- Still `spec.project: default` on both cert-manager Applications. Tighter `platform` AppProject that whitelists exactly this repo + these namespaces is Phase 8 hardening.
+- No `syncOptions: [PruneLast=true]` — if we ever delete cert-manager, the CRDs might get pruned before the operator itself, leaving downstream Certificate objects in an orphaned state. Not a live concern; nice discipline for Phase 8.
+- Test Certificate flow is manual. Automating it as a health check (e.g., a cronjob that issues + verifies + deletes a test cert nightly) would give us a canary. Deferred.
+- Kubernetes v1.36.1 compatibility with cert-manager v1.21.0 is unofficial. Didn't bite; if it does in the future, the fix is a chart-version bump or a k8s downgrade — both cheap.
+
 ## ADRs written this phase (so far)
 
 | # | Decision | Why interesting for portfolio |
 |---|---|---|
 | [ADR-0014](../adr/0014-argocd-raw-install-vs-helm.md) | Install ArgoCD from the raw pinned manifest, not the Helm chart | Documents the SSA annotation-size lesson; ties option choice to learning value + planned migration to Helm on EKS |
-| [ADR-0015](../adr/0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Documents the bootstrap paradox and its resolution; explains how app-of-apps and ApplicationSet coexist in later phases |
+| [ADR-0015](../adr/0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Documents the bootstrap paradox and its resolution; explains how app-of-apps and ApplicationSet coexist in later phases. Postscript on the `directory.recurse: false` omitempty drift trap. |
+| [ADR-0016](../adr/0016-cert-manager-install-via-helm.md) | Install cert-manager via the upstream Helm chart, as an ArgoCD Application | Explicitly flips ADR-0014's raw-manifest choice — visibility for learning vs parameterisation for consumption. Sets the pattern every subsequent platform component follows. |
+| [ADR-0017](../adr/0017-cert-manager-issuer-strategy.md) | ClusterIssuer strategy: SelfSigned on kind, Let's Encrypt on EKS | Per-environment issuer matrix; explains why DNS-01 over HTTP-01 (`.dev` HSTS-preloaded, wildcard cert requirement); LE issuers as commented templates for Phase 9. |
 
 ## What's next
 
-- **2.2.f** (follow-up commit, before 2.3) — app-of-apps root under `platform/argocd/`. `root-app.yaml` points ArgoCD at `platform/argocd/apps/` in this repo. ArgoCD reconciles itself from Git going forward. Every future Phase 2 component (cert-manager, ESO, ExternalDNS, AWS LBC) becomes an `Application` in that directory, not a manual `helm install`.
-- **2.3** — cert-manager. Installed by an ArgoCD `Application` (not by hand). Configured for staging Let's Encrypt initially, production only when we hit real domains.
-- **2.4–2.6** — ESO, ExternalDNS, AWS LBC, in that order. Each one installed as an ArgoCD `Application`.
+- **2.4 — External Secrets Operator (ESO).** Second GitOps-managed component. Reads from AWS Secrets Manager (on EKS) or a local dev backend (on kind, likely Vault-in-docker or a fake provider). Adds `platform/argocd/apps/eso.yaml` + values overrides.
+- **2.5 — ExternalDNS.** Auto-populates Route53 records from Ingress annotations. Idle on kind (nothing routable), meaningful on EKS. Same Application pattern.
+- **2.6 — AWS Load Balancer Controller.** ALB provisioning from Ingress objects. Only relevant on EKS; installed but idle on kind.
+- **2.7 — status update after 2.4/2.5/2.6 land** — will mark app-of-apps as fully populated with 5 platform components.
+- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + expected reconcile time.
+- **2.9 — Phase 2 close-out recording.** Full destroy-rebuild demo, top-to-bottom, on video. The portfolio finale for Phase 2.
 
 ## Interview talking points (running list, will grow)
 
-- *"Why raw manifest and not Helm for ArgoCD?"* — see ADR-0014 decision drivers. Punchline: "For local learning, visibility beats parameterisation. For prod on EKS, the trade-off flips. The decision to swap is a one-line ADR revision."
-- *"Walk me through what happens if `kubectl apply` half-succeeds."* — see the partial-install experience with the ApplicationSet CRD. Key lesson: apply is not a transaction; always verify with `kubectl get` after bulk operations.
+- *"Why raw manifest for ArgoCD but Helm chart for cert-manager?"* — visibility for the *tool we're learning* (ArgoCD in Task 2.2 — inspect every RBAC binding, understand every controller); parameterisation for *tools we're consuming* (cert-manager in Task 2.3 — chart defaults are sensible, values.yaml handles the ~5 knobs we care about). Same underlying pattern (GitOps via ArgoCD Application); different source type per the calculus.
+- *"How does GitOps handle the 'delete a file' case?"* — `syncPolicy.automated.prune: true` on the parent Application. Root sees the file gone, ArgoCD prunes the child Application, the child's own finalizer cascades to its managed resources. One PR removal = full component uninstall + cleanup.
+- *"Walk me through what happens if `kubectl apply` half-succeeds."* — the ApplicationSet CRD partial-install story from Task 2.2.c. Server-side apply fixes the annotation-size class of failure; the general lesson is that apply isn't atomic — always verify with `kubectl get` after bulk operations.
 - *"How does ArgoCD authenticate to the cluster it lives on?"* — in-cluster config: SA token + CA cert + env vars injected by kubelet. Same primitive every k8s controller uses. Extra clusters need stored kubeconfigs (as Secrets in the argocd namespace).
 - *"Why is the application-controller a StatefulSet?"* — stable pod ordinal identity for sharding. Deployments would give random pod hashes, breaking `myShard = hash(cluster) % replicas == ordinal` across rollouts.
+- *"What's `directory.recurse: false` doing in your Application YAML?"* — trick question. It's NOT there anymore; can't be. K8s strips omitempty bool fields when they equal the zero value, so setting `false` explicitly causes permanent GitOps drift between git (present) and cluster (stripped). Real bug we hit. Same class of issue bites Terraform, Pulumi, Crossplane. Documented as ADR-0015 postscript.
+- *"Why SelfSigned issuer for kind, not Let's Encrypt staging?"* — zero external dependencies (offline dev works), zero LE quota consumed on dev churn, exercises exactly the same wiring (Certificate → CertificateRequest → cert bytes → Secret) as any other issuer. Wrong choice for prod; right choice for local. When we hit EKS, we uncomment the LE-staging + LE-prod ClusterIssuers already sitting in the same file as commented templates.

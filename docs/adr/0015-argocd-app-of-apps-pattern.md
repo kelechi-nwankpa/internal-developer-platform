@@ -96,3 +96,41 @@ Option C (ApplicationSet) will be **added alongside** in Phase 6 for Backstage-g
 ## Interview framing
 
 The one-liner: *"App-of-apps is the classical solution to ArgoCD's bootstrapping paradox: how does ArgoCD know what to install? Answer: one manual apply of a root Application that watches a Git directory; every YAML in that directory becomes a managed child Application. It's the shape of GitOps recursion — one imperative action, everything else declarative and reconciling. For template-generated apps (per-environment, per-service), you compose it with ApplicationSet; the two patterns coexist."*
+
+## Postscript — the `directory.recurse: false` omitempty drift trap (learned during Task 2.3.f)
+
+After shipping `cert-manager-issuers.yaml` as the second child under root, `argocd app list` showed:
+
+```text
+argocd/cert-manager           Synced     Healthy
+argocd/cert-manager-issuers   Synced     Healthy
+argocd/root                   OutOfSync  Healthy   ← wouldn't clear
+```
+
+Force-syncing root reported "successfully synced" every time, but the OutOfSync status returned within seconds. Every `argocd app diff root` produced the same delta:
+
+```text
+===== argoproj.io/Application argocd/cert-manager-issuers ======
+>     directory:
+>       recurse: false
+```
+
+Root's target state (from git) declared `spec.source.directory: { recurse: false }`; the live Application on the cluster had no `directory` field at all. Drift reported. Sync couldn't fix it — writing the field back had no persistent effect. **Permanent OutOfSync.**
+
+**Root cause.** ArgoCD's `Application` CRD Go type declares:
+
+```go
+type ApplicationSourceDirectory struct {
+    Recurse bool `json:"recurse,omitempty"`
+}
+```
+
+The `omitempty` JSON tag on a Go `bool` means: **on serialization, drop the field if it equals the Go zero value.** For `bool`, that's `false`. So when we sent `recurse: false` to the API server, the server accepted it, stored it, and every subsequent read serialized it back with the field absent. Git had the field; cluster didn't. Diff reported it. Sync couldn't cure it.
+
+**Fix.** Remove the field entirely from the Application manifest. `recurse: false` is already the default behaviour, so omitting the line changes nothing at runtime; it just stops the phantom drift. In our case: two edits (`cert-manager-issuers.yaml`, `root-app.yaml`) with inline comments explaining the pattern so future contributors don't reintroduce it. Commit `432add0`.
+
+**The general pattern that applies far beyond ArgoCD.** *"Explicit zero value + `omitempty` = permanent GitOps drift"* bites **every tool that compares declared vs live state on Kubernetes resources.** Terraform hits it (usually surfaces as "always shows a diff"). Pulumi hits it. Crossplane's Composition YAMLs will hit it in Phase 4 when we start writing boolean fields. It's not an ArgoCD bug — it's a Kubernetes API server behaviour that any GitOps tool must reckon with.
+
+**How to avoid it going forward.** Whenever you're setting a `bool` field to its zero value (`false`) in a k8s manifest, **check the CRD's Go struct definition** (or run `kubectl explain <resource>.<field>`) to see if the field has `omitempty`. If it does, don't set the value explicitly — the default is what you want anyway. Setting `true` is safe (non-zero values survive round-tripping); setting `false` is a trap. Same rule applies to any pointer-typed field with `omitempty` set to nil-equivalent values.
+
+**Interview framing:** *"The most operationally-annoying bug in our GitOps setup wasn't in ArgoCD — it was in the JSON serialization tag on one Kubernetes CRD field. `omitempty` on a Go `bool` strips `false` values on write; the git declaration retained the field, the cluster stripped it, ArgoCD flagged perma-drift. The fix is a one-line YAML deletion. The lesson is universal: never set a boolean to its zero value in a k8s manifest whose CRD marks the field `omitempty`. Same class of bug bites Terraform, Pulumi, Crossplane — it's not tool-specific, it's a k8s API server behaviour."*
