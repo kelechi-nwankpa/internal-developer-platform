@@ -1,0 +1,50 @@
+---
+# vault-config — cluster-side configuration for Vault (RBAC, not Vault's own
+# internal state).
+#
+# Split from vault.yaml because:
+#   - vault.yaml is the operator install (Helm chart) — lifecycle = chart
+#     version bumps
+#   - vault-config.yaml is the RBAC needed so Vault can call TokenReview
+#     for the k8s auth method — lifecycle = auth-model changes
+#
+# NOTE: Vault's INTERNAL state (auth methods, policies, roles, secrets)
+# is NOT managed by this Application — it lives inside Vault's storage
+# and is configured via `vault` CLI commands (see Task 2.4.h/i log). A
+# real prod deployment would use the Terraform Vault provider to make
+# that declarative; for a portfolio project on kind, the manual `vault
+# write` documented in the phase log is educational and sufficient.
+#
+# See: docs/adr/0019-vault-install-for-eso-kind-backend.md
+#      docs/phases/phase-2-platform.md (Task 2.4)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vault-config
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/vault
+    # No directory.recurse field — see ADR-0015 postscript on the
+    # omitempty drift trap for why we never set recurse: false explicitly.
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Defensive default namespace for future namespaced additions here.
+    # The ClusterRoleBinding is cluster-scoped so unaffected.
+    namespace: vault
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

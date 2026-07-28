@@ -1,0 +1,36 @@
+---
+# vault-tokenreview-binding — grants Vault's ServiceAccount permission to
+# call the Kubernetes TokenReview API.
+#
+# WHY: when a workload (like ESO) authenticates to Vault via the k8s auth
+# method, it presents its own SA token. Vault has to verify that token is
+# valid — it does so by calling TokenReview on kube-apiserver, using its
+# OWN SA token as credentials. Without this ClusterRoleBinding, Vault has
+# no permission to call TokenReview and every ESO auth attempt fails
+# with "permission denied".
+#
+# Created imperatively during Task 2.4.h (kubectl create clusterrolebinding),
+# committed here so cluster rebuilds recreate it via GitOps.
+#
+# See: docs/adr/0019-vault-install-for-eso-kind-backend.md
+#      docs/adr/0020-eso-backend-strategy.md
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-tokenreview-binding
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: auth
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  # system:auth-delegator is a built-in ClusterRole shipped with every
+  # Kubernetes cluster. It grants permission to create TokenReview and
+  # SubjectAccessReview requests — exactly what Vault needs to validate
+  # incoming SA tokens.
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: vault
+    namespace: vault
