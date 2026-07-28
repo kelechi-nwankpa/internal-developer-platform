@@ -33,11 +33,13 @@ spec:
     # (PR review + CI green required). Alternative: pin to a tag for prod.
     targetRevision: HEAD
     path: platform/argocd/apps
-    directory:
-      # Do not descend into subdirectories. Keeps the layout flat and
-      # predictable — one file per child Application. Revisit if we ever want
-      # to group by category (observability/, security/, ...).
-      recurse: false
+    # NOTE: we deliberately do NOT set `directory.recurse: false` here even
+    # though non-recursive is what we want. The `Recurse` field on ArgoCD's
+    # Application CRD is a Go bool with `omitempty`, so k8s strips it when
+    # it equals its zero value (false). Setting it explicitly would cause
+    # a permanent OutOfSync between git and the live Application. Recurse
+    # defaults to false. To enable recursion, set `recurse: true` — that
+    # value is NOT stripped. Same pattern as cert-manager-issuers.yaml.
 
   destination:
     # https://kubernetes.default.svc is the synthetic "in-cluster" entry.

@@ -37,11 +37,13 @@ spec:
     repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
     targetRevision: HEAD
     path: platform/cert-manager
-    directory:
-      # Top-level files only. If we later add subdirectories (e.g. one
-      # per environment), we'd reconsider — probably by splitting into
-      # multiple Applications rather than turning on recursion.
-      recurse: false
+    # NOTE: we deliberately do NOT set `directory.recurse: false` here even
+    # though non-recursive is what we want. `Recurse` on the ArgoCD
+    # Application CRD is a Go bool with `omitempty`, so k8s strips it when
+    # it equals its zero value (false). Setting it explicitly here would
+    # cause a permanent OutOfSync between git (field present) and the live
+    # Application (field stripped). Recurse defaults to false. If we ever
+    # want recursion, set `recurse: true` — that value is NOT stripped.
 
   destination:
     server: https://kubernetes.default.svc
