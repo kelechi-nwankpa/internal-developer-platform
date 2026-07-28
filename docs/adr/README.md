@@ -51,6 +51,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0015](0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Accepted | 2026-07-21 |
 | [0016](0016-cert-manager-install-via-helm.md) | Install cert-manager via the upstream Helm chart, as an ArgoCD Application | Accepted | 2026-07-27 |
 | [0017](0017-cert-manager-issuer-strategy.md) | cert-manager ClusterIssuer strategy: SelfSigned on kind, Let's Encrypt on EKS | Accepted | 2026-07-28 |
+| [0018](0018-external-secrets-install-via-helm.md) | Install External Secrets Operator (ESO) via the upstream Helm chart, as an ArgoCD Application | Accepted | 2026-07-28 |
 
 ## References
 
