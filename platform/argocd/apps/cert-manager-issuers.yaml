@@ -1,0 +1,59 @@
+---
+# cert-manager-issuers — ClusterIssuers that give the operator work to do.
+#
+# The operator (installed by cert-manager.yaml as an ArgoCD Application
+# sourcing the Jetstack Helm chart) is idle until an Issuer or ClusterIssuer
+# tells it which CA to sign certs against. This Application ships that
+# configuration as a separate concern from the operator install because:
+#
+#   1. Different lifecycles — operator upgrades (helm chart bumps) vs
+#      issuer config changes (new CA, rotated ACME account, added
+#      DNS-01 solver) are independent events. Coupling them means every
+#      issuer edit triggers an operator reconcile.
+#   2. Different source types — operator = Helm chart from jetstack;
+#      issuers = raw manifests in this repo. Fits ArgoCD's model to
+#      have separate Applications per source.
+#   3. Generalises — when trust-manager arrives in Phase 8, it'll follow
+#      the same split (trust-manager.yaml for operator, trust-manager-
+#      bundles.yaml for its bundle config).
+#
+# See: docs/adr/0017-cert-manager-issuer-strategy.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-issuers
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Same AppProject as the other platform Applications. Phase 8 will
+  # introduce a tighter `platform` AppProject.
+  project: default
+
+  source:
+    # This repo, this branch. Path is a directory in the repo; ArgoCD
+    # applies every YAML file it finds inside.
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/cert-manager
+    directory:
+      # Top-level files only. If we later add subdirectories (e.g. one
+      # per environment), we'd reconsider — probably by splitting into
+      # multiple Applications rather than turning on recursion.
+      recurse: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Default namespace for namespaced resources without an explicit
+    # namespace. ClusterIssuers are cluster-scoped so this doesn't affect
+    # them; it's a defensive default for future namespaced additions.
+    namespace: cert-manager
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

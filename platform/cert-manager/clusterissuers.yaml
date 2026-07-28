@@ -1,0 +1,92 @@
+---
+# ClusterIssuers — the CAs that cert-manager uses to sign Certificates.
+#
+# ClusterIssuers are cluster-scoped: any namespace can reference them via
+# `spec.issuerRef` on a Certificate. (Issuer, the namespace-scoped equivalent,
+# is for multi-tenant clusters where each team wants their own CA. Not our
+# case — we want a shared platform-managed CA per environment.)
+#
+# See: docs/adr/0017-cert-manager-issuer-strategy.md
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+  labels:
+    cert-manager.io/issuer-type: selfsigned
+spec:
+  # SelfSigned issuer — every Certificate that references this ClusterIssuer
+  # gets a self-signed cert. No external CA involved, no network calls, no
+  # domain ownership required. Browsers show a "not trusted" warning; the
+  # underlying wiring (Certificate → Order → cert → Secret) is identical
+  # to what a Let's Encrypt or Vault issuer would exercise.
+  #
+  # Right choice for kind local dev. Wrong choice for anything user-facing
+  # on EKS — see ADR-0017 for the LE-staging/LE-prod migration plan.
+  selfSigned: {}
+
+# ─────────────────────────────────────────────────────────────
+# TEMPLATE: Let's Encrypt STAGING ClusterIssuer (Phase 9 activation)
+#
+# Uncomment when we deploy to EKS AND cert-manager has IRSA credentials
+# to write DNS records in Route53 (docs/adr/0009-github-oidc-federation.md
+# established the IRSA pattern; Phase 9 will grant the cert-manager SA
+# permission on the idp.seniormankelz.dev hosted zone).
+#
+# LE STAGING certs are NOT trusted by browsers — they're for validating
+# your ACME flow end-to-end without burning production LE rate limits
+# (LE prod: 50 certs per registered domain per week; LE staging: 30k/week).
+#
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-staging
+#   labels:
+#     cert-manager.io/issuer-type: acme-staging
+# spec:
+#   acme:
+#     email: nnunnunnu90@gmail.com
+#     server: https://acme-staging-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       # ACME account private key — cert-manager creates on first registration.
+#       name: letsencrypt-staging-account-key
+#     solvers:
+#       - dns01:
+#           route53:
+#             region: eu-west-1
+#             hostedZoneID: # from DnsStack output — filled in Phase 9
+#             role: # IRSA role ARN — filled in Phase 9
+#         selector:
+#           dnsZones:
+#             - idp.seniormankelz.dev
+
+# ─────────────────────────────────────────────────────────────
+# TEMPLATE: Let's Encrypt PRODUCTION ClusterIssuer (Phase 9 activation)
+#
+# Same shape as staging, different ACME endpoint. Certs ARE trusted by
+# browsers. Rate limits are strict (50 certs per registered domain per
+# week) — activate only for real production services, never for CI or
+# dev churn. Any workload that regenerates its Certificate on every
+# `helm upgrade` will burn through the quota in an afternoon.
+#
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-prod
+#   labels:
+#     cert-manager.io/issuer-type: acme-prod
+# spec:
+#   acme:
+#     email: nnunnunnu90@gmail.com
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       name: letsencrypt-prod-account-key
+#     solvers:
+#       - dns01:
+#           route53:
+#             region: eu-west-1
+#             hostedZoneID: # from DnsStack output — filled in Phase 9
+#             role: # IRSA role ARN — filled in Phase 9
+#         selector:
+#           dnsZones:
+#             - idp.seniormankelz.dev
