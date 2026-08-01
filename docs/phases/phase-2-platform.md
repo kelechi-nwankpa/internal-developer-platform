@@ -53,7 +53,8 @@ LOCAL LAPTOP
 │                │     └── argocd-redis                          │
 │                │                                               │
 │                ├── cert-manager namespace   ◄─── 2.3 shipped   │
-│                ├── external-secrets namespace  ◄─── 2.4        │
+│                ├── external-secrets namespace  ◄─── 2.4 shipped│
+│                ├── vault namespace          ◄─── 2.4 shipped   │
 │                ├── external-dns namespace   ◄─── 2.5           │
 │                └── kube-system (AWS LBC)    ◄─── 2.6           │
 │                                                                │
@@ -70,10 +71,10 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 | 2.2 | ArgoCD bootstrap via raw pinned manifest, SSA install, admin rotation | ✅ | See detailed log below |
 | 2.2.f | App-of-apps root wired — ArgoCD now GitOps-manages itself | ✅ | Shipped 2026-07-21; see Task 2.2.f log below |
 | 2.3 | cert-manager (operator + SelfSigned ClusterIssuer, end-to-end proven) | ✅ | Shipped 2026-07-28; see Task 2.3 log below |
-| 2.4 | External Secrets Operator (ESO) | 🔲 pending | — |
+| 2.4 | External Secrets Operator (ESO) + HashiCorp Vault (kind backend) + ClusterSecretStore + end-to-end proven + root token rotated | ✅ | Shipped 2026-08-01; see Task 2.4 log below |
 | 2.5 | ExternalDNS | 🔲 pending | — |
 | 2.6 | AWS Load Balancer Controller | 🔲 pending | — |
-| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔄 in progress | 2/5 done: cert-manager + cert-manager-issuers |
+| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔄 in progress | 6 Applications live: cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config. ExternalDNS + AWS LBC still to come. |
 | 2.8 | Runbook: `docs/runbooks/kind-recovery.md` | 🔲 pending | — |
 | 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 🔲 pending | — |
 
@@ -261,6 +262,73 @@ Documented as a postscript on ADR-0015 for permanent-reference indexing.
 - Test Certificate flow is manual. Automating it as a health check (e.g., a cronjob that issues + verifies + deletes a test cert nightly) would give us a canary. Deferred.
 - Kubernetes v1.36.1 compatibility with cert-manager v1.21.0 is unofficial. Didn't bite; if it does in the future, the fix is a chart-version bump or a k8s downgrade — both cheap.
 
+## Task 2.4 — External Secrets Operator + Vault (detailed log)
+
+**Shipped 2026-08-01**, across 6+ study sessions (2026-07-27 → 2026-08-01). The heaviest task of Phase 2 by wall-clock and by depth — bundled ESO install, a whole Vault install with the manual-unseal ceremony, ESO/Vault integration via k8s auth method, the root token rotation drill, and one real "the recovery flow actually happens" moment when a laptop reboot re-sealed Vault mid-session.
+
+### What we did
+
+Fourteen sub-tasks:
+
+| # | Step | Notes |
+|---|---|---|
+| 2.4.a | Chose install source (**Helm chart via ArgoCD Application** — same reasoning as ADR-0016 for cert-manager) + backend for kind (**local HashiCorp Vault** over Fake provider or LocalStack — deepest portfolio value, teaches Vault as a bonus component). | ADR-0018 + ADR-0019 record both. |
+| 2.4.b | Pinned **ESO chart `2.8.0`** — current stable (~9 days old). Same doc-alignment reasoning as Task 2.2.b + 2.3.b. | Chart version and app image tag are separate concepts for ESO (`v2.8.0` app, `2.8.0` chart); worth naming. |
+| 2.4.c | Drafted `platform/argocd/apps/external-secrets.yaml` — minimal Application, chart defaults accepted, `valuesObject: {}`. | ADR-0018 documents the reasoning + explicitly rules out Vault Secrets Operator (VSO) because it can't handle AWS Secrets Manager on EKS. |
+| 2.4.d | Commit `623d165` + push. All 3 ESO pods Running, ~25 CRDs installed (much richer than cert-manager's 6 — ESO has generators for GitHub tokens, ECR auth, STS sessions, Vault dynamic secrets, and more). ESO operator installed idle, waiting for its first `SecretStore`. | |
+| 2.4.e | Decided **Vault install mode: standalone + manual unseal.** Rejected dev mode (hides all interesting Vault ops), auto-unseal (skips the ceremony we specifically wanted to learn), HA mode (overkill for single-node kind). | ADR-0019 records the reasoning + auto-unseal migration path. |
+| 2.4.f | Pinned **Vault chart `0.34.0`** + accept default app image (chart internally pins to `v2.0.3`). | Vault v2.x uses BSL license — portfolio-safe (only "competing hosted Vault-as-a-service" is restricted); interview readiness noted in ADR-0019. |
+| 2.4.g | Drafted `platform/argocd/apps/vault.yaml` — ~130 lines with explanatory comments. Standalone HCL config, 1Gi PVC, UI on port 8200, injector + CSI explicitly DISABLED (both redundant with ESO — one operator, not three, to get secrets into pods). | ADR-0019 documents mode + auto-unseal migration path + BSL note. |
+| 2.4.h | Commit `46da5d6` + push. Vault Application `Synced/Progressing`; pod came up **`Running 0/1` because sealed** (expected). Ran the ceremony: `vault operator init` (saved 5 unseal keys + root token to password manager) → `vault operator unseal` × 3 → `Sealed: false`. Then enabled k8s auth method: created `ClusterRoleBinding/vault-tokenreview-binding` (imperatively for immediacy, moved to git in 2.4.j), `vault auth enable kubernetes`, `vault write auth/kubernetes/config`. | The **educational moment** — every real Vault deployment starts sealed and needs this exact ceremony. |
+| 2.4.i | Enabled KV v2 engine at `secret/`, wrote `eso-reader` policy (`path "secret/data/*" { capabilities = ["read"] }`), created k8s auth role binding `external-secrets/external-secrets` SA → `eso-reader` policy (1h TTL), seeded a test secret. Manually simulated exactly what ESO would do: got an ESO SA token, sent to Vault `/v1/auth/kubernetes/login`, received a Vault token, read the test secret. **Write blocked with 403** — least-privilege verified. | Proves the auth chain end-to-end before writing any GitOps YAML. |
+| 2.4.j | Drafted `platform/vault/clusterrolebinding-tokenreview.yaml` (moves imperative CRB to git) + `platform/argocd/apps/vault-config.yaml` (wrapping Application) + `platform/external-secrets/clustersecretstore-vault.yaml` (the actual ClusterSecretStore) + `platform/argocd/apps/external-secrets-stores.yaml` (wrapping Application) + ADR-0020 (per-env backend strategy). | Pattern now consistent across cert-manager, ESO, and Vault: operator Application + config Application, split by lifecycle. |
+| 2.4.k | Commit `f28e79f` + push. Forced root refresh via `kubectl annotate application root argocd.argoproj.io/refresh=hard` (argocd CLI JWT had expired — kubectl doesn't have that issue). Both new Applications appeared Synced/Healthy within 90s. `ClusterSecretStore/vault-kv` reported **`Status: Valid, Ready: True, "store validated"`** — ESO successfully exercised the full auth chain on its own. CRB adopted by ArgoCD (field managers list shows both `argocd-controller` and legacy `kubectl-create` — SSA historical retention, harmless). | |
+| 2.4.l | **End-to-end test through the full GitOps loop.** `kubectl apply ExternalSecret/test-from-vault` in `default` namespace → ESO synced within <1s → `Secret/test-from-vault` materialised with exact values from Vault (`username=demo-user, password=hello-from-vault-2026`). Deleted the ExternalSecret → cascade cleanup → back to zero state. | The whole ESO promise realised: developer declares, backend delivers, k8s Secret appears. |
+| 2.4.m | **Root token rotation ceremony** — `vault operator generate-root -init` → OTP + nonce → provide 3 unseal keys → encoded token → decode with OTP → new root. Failed the ceremony 3 times before succeeding (OTP/encoded-token mismatch class of error — well-known Vault gotcha). Verified new root works, revoked the old one. | The old root had accidentally leaked into chat via `vault token lookup` output earlier; rotation eliminated that exposure. Also happened to hit a real "laptop rebooted, Vault sealed" recovery in the middle of this task — exactly the friction ADR-0019 predicted. |
+| 2.4.n | This commit. Phase log update + memory update. | |
+
+### The real bugs Task 2.4 threw at us
+
+**1. Root token leaked in chat via `vault token lookup` output.** During Task 2.4.i verification, I ran `kubectl -n vault exec vault-0 -- vault token lookup` to confirm the pod's cached token was working. Vault's default `token lookup` output **prints the token ID**, which landed in our chat transcript. Same class of issue as the ArgoCD admin password episode from Task 2.2.d. Fix: **`vault token capabilities <path>` or `vault kv list <path>` for auth verification** — either fails cleanly if unauth'd without exposing the token. Also motivated the rotation ceremony (2.4.m) which invalidated the exposed token.
+
+**2. The Vault rotation ceremony is genuinely fiddly.** `vault operator generate-root` splits across four commands: `-init` (generates OTP + nonce), 3 × `-nonce=<X>` (provide unseal keys, get encoded token), `-decode=<encoded> -otp=<otp>` (reveals new root token). Common failure mode: OTP from attempt N used to decode encoded_token from attempt N+1 → produces a plausible-looking-but-invalid token string, which then fails `vault login` with 403. Hit this 3 times before succeeding. Fix: **treat OTP + encoded_token as a bound pair from the same operation, save both to a scratch file the moment they're generated, never re-run `-init` between them.** HashiCorp's own docs call out this class of user error.
+
+**3. Manual unseal drill actually happened.** Laptop reboot mid-session → Vault pod restarted → sealed. Everything blocked (rotation command returned `503 Vault is sealed`). Exactly what ADR-0019 predicted as the "cons" of manual unseal. Recovery: 3× `vault operator unseal` with keys from password manager, ~30s. This is the recurring cost we chose over auto-unseal for the training value; it's the "recovery drill" that ADR-0019 says is precisely the point.
+
+**4. ArgoCD CLI JWT expiring across sessions.** Recurring since Task 2.2. Every ~24h the CLI session expires and needs `argocd login`. Kubectl doesn't have this — kubelet auth via client cert is durable. Workaround this session: force root reconcile via `kubectl annotate application root argocd.argoproj.io/refresh=hard --overwrite` instead of `argocd app sync`. **Permanent fix: SSO via Dex + GitHub OIDC (Phase 8).** Would refresh the session automatically off the identity provider.
+
+**5. SSA field manager coexistence on the CRB.** After ArgoCD adopted the imperative `vault-tokenreview-binding` via SSA, `kubectl get clusterrolebinding vault-tokenreview-binding -o jsonpath='{.metadata.managedFields[*].manager}'` showed **both** `argocd-controller` AND `kubectl-create`. SSA retains field ownership history per manager. Not a conflict (the two managers' declared states agreed at adoption time), but a visible artefact. **Real-world cleanup:** `kubectl patch --field-manager=kubectl-create --subresource=metadata --type=merge --patch '{"metadata":{"managedFields":[]}}'` to reset. Not worth doing for us; historical entry is harmless.
+
+### Non-obvious things worth banking
+
+- **Shamir's Secret Sharing is more than a slogan.** Vault splits its master key into 5 shares with threshold 3 by default. You can lose 2 keys and still unseal; an attacker needs 3 to compromise. In real deployments the 5 keys go to 5 different humans in different geographies — no single person can unseal alone. We ran the ceremony ourselves; the pattern is now real intuition, not textbook trivia.
+- **Vault starts sealed on every restart.** Not a bug — an intentional security property. Sealed Vault has zero decryption capability; even a compromised pod filesystem leaks no secrets (they're encrypted at rest with the master key that's in memory only). This is what makes "manual unseal drill" a real security practice, not just ceremony.
+- **ESO's provider abstraction is the whole reason we chose ESO over VSO.** Same `ExternalSecret` shape works with Vault (kind), AWS Secrets Manager (EKS), GCP Secret Manager, Azure Key Vault, 1Password, Doppler. Workloads never see the backend. On EKS in Phase 9 we swap `secretStoreRef.name: vault-kv` → `secretStoreRef.name: aws-secrets-manager` per-workload — zero rewrite. VSO would force us to switch operators for that.
+- **Vault k8s auth requires `system:auth-delegator` on Vault's SA.** So Vault can call `TokenReview` on the API server to validate incoming SA tokens. Without this ClusterRoleBinding, every ESO auth attempt fails with "permission denied." Now committed as `platform/vault/clusterrolebinding-tokenreview.yaml` so cluster rebuilds recreate it via GitOps.
+- **KV v2 splits data and metadata paths.** Policy for a KV v2 engine at mount `secret/` needs `path "secret/data/*"` for read access (not `secret/*`) — the `/data/` prefix is where actual values live. `secret/metadata/*` is versioning/deletion metadata. ESO handles the prefix internally when `version: v2` is set. Confusing at first; well-documented once you know.
+- **Vault CLI is not installed on your laptop.** All `vault` commands go via `kubectl exec` into the pod. Alternative: `brew install vault` + port-forward + local CLI for shorter command lines. Not worth it for our frequency of use.
+- **`vault operator generate-root` produces a plausible-looking string when OTP+encoded mismatch.** It doesn't error — it produces garbage that decodes to what looks like a token but authenticates to nothing. Diagnostic: try `vault login <new-token>` and expect either success or 403. Never revoke the old until the new is verified working.
+- **`kubectl exec -it vault-0` alone does nothing.** You need `-- sh` for a shell or `-- vault <command>` for a specific command. Common trip-up for anyone new to kubectl.
+
+### PR-style review
+
+**Strengths:**
+
+- ESO + Vault fully GitOps-managed. Six ArgoCD Applications under root (cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config), all Synced/Healthy.
+- Full auth chain proven end-to-end: workload SA → JWT → Vault k8s auth → Vault token bound to eso-reader policy → read from `secret/data/*` → materialised k8s Secret → developer consumes as env/volume.
+- Pattern consistent across all three platform components: operator install (Helm chart) + config Application (raw manifests in this repo). Applies uniformly to cert-manager, external-secrets, vault.
+- Vault install decisions all documented across ADR-0018, ADR-0019, ADR-0020 with explicit reasoning + when-to-revisit triggers.
+- Root token rotated after initial exposure — clean audit-trail cutover.
+- Manual unseal drill practiced under real recovery pressure (laptop reboot mid-session), exactly the muscle memory ADR-0019 predicted this would build.
+
+**Weaknesses (deferred, not blockers):**
+
+- Still `spec.project: default` on all Applications. Tighter `platform` AppProject that whitelists exactly this repo + these namespaces is Phase 8 hardening.
+- Vault runs as a single replica with no auto-unseal — a Vault pod restart requires manual re-unseal before ESO can read anything. Fine for local dev; wrong shape for anything user-facing. On EKS we don't run Vault at all (AWS Secrets Manager instead).
+- Vault UI has no TLS (`tls_disable = 1` in the standalone config). Phase 5 cert-manager + Ingress could give it a real cert if we needed external UI access; not required for our workflow (port-forward + localhost).
+- SSA field manager coexistence on the CRB (`argocd-controller` + `kubectl-create`). Harmless artefact but visible. Fixable with a manual `kubectl patch` if it ever matters.
+- Vault's internal state (auth methods, policies, roles, secrets) is NOT managed by GitOps — configured via manual `vault write` commands documented in this log. A real prod deployment would use the Terraform Vault provider. For portfolio value, the manual commands are more educational.
+
 ## ADRs written this phase (so far)
 
 | # | Decision | Why interesting for portfolio |
@@ -269,14 +337,16 @@ Documented as a postscript on ADR-0015 for permanent-reference indexing.
 | [ADR-0015](../adr/0015-argocd-app-of-apps-pattern.md) | Use the ArgoCD app-of-apps pattern for platform bootstrap | Documents the bootstrap paradox and its resolution; explains how app-of-apps and ApplicationSet coexist in later phases. Postscript on the `directory.recurse: false` omitempty drift trap. |
 | [ADR-0016](../adr/0016-cert-manager-install-via-helm.md) | Install cert-manager via the upstream Helm chart, as an ArgoCD Application | Explicitly flips ADR-0014's raw-manifest choice — visibility for learning vs parameterisation for consumption. Sets the pattern every subsequent platform component follows. |
 | [ADR-0017](../adr/0017-cert-manager-issuer-strategy.md) | ClusterIssuer strategy: SelfSigned on kind, Let's Encrypt on EKS | Per-environment issuer matrix; explains why DNS-01 over HTTP-01 (`.dev` HSTS-preloaded, wildcard cert requirement); LE issuers as commented templates for Phase 9. |
+| [ADR-0018](../adr/0018-external-secrets-install-via-helm.md) | Install External Secrets Operator (ESO) via the upstream Helm chart, as an ArgoCD Application | Explicit "same pattern as cert-manager" ADR — records the choice + explicitly rules out Vault Secrets Operator (VSO) because it can't handle AWS Secrets Manager which Phase 9 needs. |
+| [ADR-0019](../adr/0019-vault-install-for-eso-kind-backend.md) | Install HashiCorp Vault (standalone + manual unseal) as the ESO backend on kind | Documents 5 install-mode options weighed with the auto-unseal migration path noted. Includes BSL licensing note for interview readiness. |
+| [ADR-0020](../adr/0020-eso-backend-strategy.md) | ESO backend strategy: Vault on kind, AWS Secrets Manager on EKS | Per-env backend matrix with same `ExternalSecret` shape working on both. Cross-refs ADR-0008 (KMS) + ADR-0009 (IRSA) as Phase 1 dependencies for the EKS side. |
 
 ## What's next
 
-- **2.4 — External Secrets Operator (ESO).** Second GitOps-managed component. Reads from AWS Secrets Manager (on EKS) or a local dev backend (on kind, likely Vault-in-docker or a fake provider). Adds `platform/argocd/apps/eso.yaml` + values overrides.
 - **2.5 — ExternalDNS.** Auto-populates Route53 records from Ingress annotations. Idle on kind (nothing routable), meaningful on EKS. Same Application pattern.
-- **2.6 — AWS Load Balancer Controller.** ALB provisioning from Ingress objects. Only relevant on EKS; installed but idle on kind.
-- **2.7 — status update after 2.4/2.5/2.6 land** — will mark app-of-apps as fully populated with 5 platform components.
-- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + expected reconcile time.
+- **2.6 — AWS Load Balancer Controller.** ALB provisioning from Ingress objects. Only relevant on EKS; installed but idle on kind. Together with 2.5 completes the "declare an Ingress, get a public HTTPS URL" story we've been building toward.
+- **2.7 — status update after 2.5/2.6 land** — will mark app-of-apps as fully populated.
+- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + Vault re-init + unseal + reseed test-secret + expected reconcile time.
 - **2.9 — Phase 2 close-out recording.** Full destroy-rebuild demo, top-to-bottom, on video. The portfolio finale for Phase 2.
 
 ## Interview talking points (running list, will grow)
@@ -288,3 +358,8 @@ Documented as a postscript on ADR-0015 for permanent-reference indexing.
 - *"Why is the application-controller a StatefulSet?"* — stable pod ordinal identity for sharding. Deployments would give random pod hashes, breaking `myShard = hash(cluster) % replicas == ordinal` across rollouts.
 - *"What's `directory.recurse: false` doing in your Application YAML?"* — trick question. It's NOT there anymore; can't be. K8s strips omitempty bool fields when they equal the zero value, so setting `false` explicitly causes permanent GitOps drift between git (present) and cluster (stripped). Real bug we hit. Same class of issue bites Terraform, Pulumi, Crossplane. Documented as ADR-0015 postscript.
 - *"Why SelfSigned issuer for kind, not Let's Encrypt staging?"* — zero external dependencies (offline dev works), zero LE quota consumed on dev churn, exercises exactly the same wiring (Certificate → CertificateRequest → cert bytes → Secret) as any other issuer. Wrong choice for prod; right choice for local. When we hit EKS, we uncomment the LE-staging + LE-prod ClusterIssuers already sitting in the same file as commented templates.
+- *"Why ESO over Vault Secrets Operator (VSO)?"* — VSO only handles Vault. ESO handles Vault (kind), AWS Secrets Manager (EKS via IRSA), GCP Secret Manager, Azure Key Vault, and many others with the same `ExternalSecret` API. Multi-backend clusters (Vault for internal secrets + Secrets Manager for AWS-managed ones) need ESO. If you're single-backend and it's Vault, VSO wins on deep integration; if you might ever be multi-backend, ESO is the right abstraction.
+- *"Walk me through Vault's manual unseal ceremony."* — Vault splits its master key via Shamir into 5 shares with threshold 3. Every restart starts sealed. Three unseal keys → master key reconstructed in memory → data decryptable. Auto-unseal delegates this to KMS (AWS/GCP) or another Vault (Transit). We deliberately picked manual on kind to practice the ceremony that most operators only run once in prod and then forget.
+- *"How does Vault's Kubernetes auth method work?"* — Vault needs `system:auth-delegator` on its own SA so it can call `TokenReview` on kube-apiserver. Workload presents its own SA JWT; Vault validates via TokenReview; if valid + matching a role's `bound_service_account_names`, Vault issues a scoped-policy token. No static credentials between workloads and Vault; the same mechanism secures ESO's access.
+- *"What's the difference between Vault's KV v1 and KV v2?"* — v2 adds versioning + soft-delete. Also splits the path: data at `secret/data/*`, metadata at `secret/metadata/*`. Policies must reference the split paths (`path "secret/data/*"` for read). ESO handles the prefix internally when configured with `version: v2`. Confusing at first; well-documented.
+- *"Tell me about a time you rotated Vault's root token."* — Ran `vault operator generate-root -init` → OTP + nonce → provided 3 unseal keys → encoded token → decoded with OTP → verified new root worked → revoked old. Failed the ceremony 3 times on OTP/encoded-token mismatch before succeeding. HashiCorp calls out this class of user error in their docs; getting it right requires treating OTP + encoded_token as a bound pair from the same `-init` operation.
