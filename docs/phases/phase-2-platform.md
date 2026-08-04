@@ -56,7 +56,9 @@ LOCAL LAPTOP
 │                ├── external-secrets namespace  ◄─── 2.4 shipped│
 │                ├── vault namespace          ◄─── 2.4 shipped   │
 │                ├── external-dns namespace   ◄─── 2.5 shipped   │
-│                └── kube-system (AWS LBC)    ◄─── 2.6           │
+│                └── kube-system (AWS LBC)    ◄─── 2.6 deferred  │
+│                                                (Phase 9 EKS —  │
+│                                                 ADR-0022)      │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -73,8 +75,8 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 | 2.3 | cert-manager (operator + SelfSigned ClusterIssuer, end-to-end proven) | ✅ | Shipped 2026-07-28; see Task 2.3 log below |
 | 2.4 | External Secrets Operator (ESO) + HashiCorp Vault (kind backend) + ClusterSecretStore + end-to-end proven + root token rotated | ✅ | Shipped 2026-08-01; see Task 2.4 log below |
 | 2.5 | ExternalDNS (inmemory provider on kind, end-to-end proven) | ✅ | Shipped 2026-08-04; see Task 2.5 log below |
-| 2.6 | AWS Load Balancer Controller | 🔲 pending | — |
-| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔄 in progress | 7 Applications live: cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config, external-dns. AWS LBC still to come. |
+| 2.6 | AWS Load Balancer Controller — **deferred to Phase 9 EKS activation** (no honest dev-mode on kind) | ✅ documented | Shipped 2026-08-04 as ADR-0022 with Phase 9 activation reference; see Task 2.6 log below |
+| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | ✅ | **7 Applications live** (cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config, external-dns), all Synced/Healthy. AWS LBC deferred per ADR-0022 — Phase 9 activation adds the 8th Application. |
 | 2.8 | Runbook: `docs/runbooks/kind-recovery.md` | 🔲 pending | — |
 | 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 🔲 pending | — |
 
@@ -375,6 +377,59 @@ Six sub-tasks:
 - No metrics scraping wired up — `metricsAddress::7979` is configured by default but no Prometheus watching. Phase 3.
 - 1-minute reconcile interval means DNS record propagation is bounded by that — fine for our workloads, worth tuning if we ever need faster reactions to Ingress churn.
 
+## Task 2.6 — AWS Load Balancer Controller (detailed log)
+
+**Shipped 2026-08-04**, single sub-hour session — the fastest task of Phase 2 by design. Deliberately skipped on kind; documented in full as Phase 9 activation reference.
+
+### What we did
+
+Four sub-tasks:
+
+| # | Step | Notes |
+|---|---|---|
+| 2.6.a | Weighed 4 options for kind: **A** — full skip + ADR-only (chosen), **B** — install with `replicas: 0` (semi-fake, ArgoCD Application reports Healthy but operator idle), **C** — install with fake AWS creds (permanently-Degraded Application, bad portfolio look), **D** — LocalStack (novel but LBC's specific API dependencies aren't well-tested against LocalStack). | The pattern break was deliberate — AWS LBC is the one Phase 2 component with no honest dev-mode. |
+| 2.6.b | Drafted ADR-0022 with the full Phase 9 activation reference embedded: chart pin recommendation (v3.4.3 = n-1 with soak, given v3.5.0 shipped 2026-08-03), IAM policy download commands, IRSA trust policy JSON template, VPC subnet tagging requirements, complete `platform/argocd/apps/aws-lbc.yaml` manifest with placeholders, 12-item activation checklist. | ADR-0022 doubles as the Phase 9 runbook — no separate document. |
+| 2.6.c | Commit `d04ec00` + push. | |
+| 2.6.d | This commit. Phase log update. | |
+
+### Why the pattern break is a portfolio strength
+
+Every previous Phase 2 component had an honest dev-mode:
+
+- cert-manager → SelfSigned issuer (real X.509 issuance, no external CA)
+- ESO → Vault-in-kind (real Vault, real k8s auth method)
+- Vault → its own standalone mode with file backend (real Vault, no cloud dependency)
+- ExternalDNS → `inmemory` provider (first-class upstream test mode, logs "would-do" actions)
+
+**AWS LBC has none.** Its entire job is talking to AWS ELBv2 API. Any install on kind is either non-functional (semi-fake) or Degraded (crashlooping on missing AWS access). The honest answer is *"we defer what genuinely can't be proven locally"* — and that's a stronger interview narrative than *"we installed everything but this one thing crashloops on kind."*
+
+The mitigation for the pattern break: **ADR-0022 IS the Phase 9 runbook.** Chart pin, IAM policy, IRSA trust policy, VPC tagging, complete manifest, sequenced checklist — all one Ctrl-F away when Phase 9 hits.
+
+### Non-obvious things worth banking
+
+- **ALB provisioning requires VPC subnet tags.** `kubernetes.io/role/elb=1` for internet-facing, `kubernetes.io/role/internal-elb=1` for internal, `kubernetes.io/cluster/<cluster-name>=owned` or `shared`. If missing at LBC deploy time, controller comes up but Ingresses stall — LBC can't find subnets to place ALBs in. Tagging must be added to Phase 1's VpcStack BEFORE the Phase 9 LBC activation.
+- **Fargate-only EKS (ADR-0010) needs attention for ALB target types.** Fargate pods don't have node IPs — the ALB target-group binding must use `TargetType: ip` (not `instance`). Chart default handles this correctly when it detects Fargate, but worth verifying at Phase 9 activation.
+- **AWS LBC and ExternalDNS have compatible but coordinated data flow.** LBC provisions the ALB and writes `Ingress.status.loadBalancer.hostname`. ExternalDNS watches that field, creates the Route53 A record pointing at the hostname. If either is missing, the whole Ingress-to-URL path breaks — LBC without ExternalDNS gives you an ALB with no DNS; ExternalDNS without LBC has nothing to point DNS at.
+- **Chart v3.5.0 vs v3.4.3 pin recommendation.** v3.5.0 shipped 2026-08-03 (1 day old); pinning to v3.4.3 gives ~1 week of community soak time for the Phase 9 activation which is at least months away. Re-check the calculus at actual activation time — "latest with soak" is time-sensitive advice.
+- **LBC lives in `kube-system`, not its own namespace.** Matches AWS's own install docs. Slight inconsistency with our other operators (`cert-manager`, `external-secrets`, `vault`, `external-dns` all get dedicated namespaces) — but going against the community convention here would just cause confusion.
+
+### PR-style review
+
+**Strengths:**
+
+- Honest — no fake install, no Degraded Application on kind.
+- ADR-0022 is a complete Phase 9 runbook (12-item checklist, full manifest, IAM policy commands). Nothing left to derive at activation.
+- Pattern break is documented and defended — the interview narrative is intact.
+- All Phase 9 dependencies flagged (VPC subnet tagging, Fargate TargetType, IRSA setup shared with cert-manager DNS-01).
+- Cluster stays clean — 7 Applications, all Synced/Healthy, all doing real work.
+
+**Weaknesses (deferred, not blockers):**
+
+- Zero actual install proven on kind — first real deploy is Phase 9 EKS.
+- The `platform/argocd/apps/` pattern gets a footnote (4 operator Apps instead of 5). Documented.
+- Chart pin recommendation in ADR-0022 will be stale by Phase 9 activation — re-check `gh release list` at that time.
+- Phase 6 golden-path templates that generate Ingresses will need `ingressClassName: alb` (only meaningful on EKS) — Phase 6 tasks must handle the "no LBC on kind" reality (probably by using a different Ingress class on kind, or by templating conditionally).
+
 ## ADRs written this phase (so far)
 
 | # | Decision | Why interesting for portfolio |
@@ -387,13 +442,14 @@ Six sub-tasks:
 | [ADR-0019](../adr/0019-vault-install-for-eso-kind-backend.md) | Install HashiCorp Vault (standalone + manual unseal) as the ESO backend on kind | Documents 5 install-mode options weighed with the auto-unseal migration path noted. Includes BSL licensing note for interview readiness. |
 | [ADR-0020](../adr/0020-eso-backend-strategy.md) | ESO backend strategy: Vault on kind, AWS Secrets Manager on EKS | Per-env backend matrix with same `ExternalSecret` shape working on both. Cross-refs ADR-0008 (KMS) + ADR-0009 (IRSA) as Phase 1 dependencies for the EKS side. |
 | [ADR-0021](../adr/0021-external-dns-install-and-provider-strategy.md) | Install ExternalDNS via Helm; inmemory provider on kind, Route53 via IRSA on EKS | Same "install-minimally-on-kind, activate-fully-on-EKS" pattern as ESO. Weighs 4 kind provider options; documents the TXT registry + txtOwnerId multi-environment coexistence guarantee. |
+| [ADR-0022](../adr/0022-aws-load-balancer-controller-defer-to-eks.md) | Defer AWS Load Balancer Controller install to Phase 9 EKS; document Phase 9 activation reference | The one Phase 2 component with no honest dev-mode. Doubles as the Phase 9 runbook — chart pin, IAM policy commands, IRSA trust policy, VPC subnet tagging, complete manifest, 12-item activation checklist. |
 
 ## What's next
 
-- **2.6 — AWS Load Balancer Controller.** ALB provisioning from Ingress objects. Only meaningfully functional on EKS. On kind we have the same design question as ExternalDNS — install-and-idle (proves the wiring, controller runs, ~0 useful work) vs skip-entirely-until-Phase-9. Together with 2.5 completes the "declare an Ingress, get a public HTTPS URL" story we've been building toward.
-- **2.7 — status update after 2.6 lands** — will mark app-of-apps fully populated with all 5 platform components (cert-manager, ESO, Vault, ExternalDNS, AWS LBC).
-- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + Vault re-init + unseal + reseed test-secret + expected reconcile times per operator.
+- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + Vault re-init + unseal + reseed test-secret + expected reconcile times per operator. Also documents "what to expect" per Application when root reconciles (7 Applications appear in sequence).
 - **2.9 — Phase 2 close-out recording.** Full destroy-rebuild demo, top-to-bottom, on video. The portfolio finale for Phase 2.
+
+*Task 2.7 is retrospectively complete* — app-of-apps has been fully populated for all 4 kind-installable operators (cert-manager, ESO, Vault, ExternalDNS) since Task 2.4, and Task 2.6 established AWS LBC as Phase 9-only. The "5 platform components under app-of-apps" original target now reads as "5 components with 4 installed on kind + 1 documented for EKS activation."
 
 ## Interview talking points (running list, will grow)
 
@@ -411,3 +467,5 @@ Six sub-tasks:
 - *"Tell me about a time you rotated Vault's root token."* — Ran `vault operator generate-root -init` → OTP + nonce → provided 3 unseal keys → encoded token → decoded with OTP → verified new root worked → revoked old. Failed the ceremony 3 times on OTP/encoded-token mismatch before succeeding. HashiCorp calls out this class of user error in their docs; getting it right requires treating OTP + encoded_token as a bound pair from the same `-init` operation.
 - *"How does ExternalDNS prevent two instances from fighting over the same DNS zone?"* — TXT registry pattern. Every A record ExternalDNS creates gets a companion TXT record with `heritage=external-dns, owner=<txtOwnerId>, resource=<source-object>`. Instances with different owner IDs ignore each other's records on reconcile. Enables safe multi-environment DNS management (kind-dev + eks-staging + eks-prod coexisting on the same zone) with no coordination between them.
 - *"Why did you install ExternalDNS with the inmemory provider on kind if kind has no DNS?"* — Proves the wiring end-to-end. Application manifest, RBAC, values, reconciliation loop are all real; only the DNS backend is dry-run. Migration to real Route53 in Phase 9 is a values-only diff (swap `provider.name: inmemory` → `aws`, add IRSA annotations), not a rewrite. Also: `inmemory` is what ExternalDNS's own test suite uses, so it's a first-class supported provider, not a hack.
+- *"Why didn't you install AWS Load Balancer Controller on kind like the others?"* — LBC is the one Phase 2 component with no honest dev-mode. cert-manager has SelfSigned, ESO has Vault-local, ExternalDNS has inmemory — LBC has nothing equivalent because its entire job is talking to AWS ELBv2 API. Installing it anyway would either be non-functional (semi-fake with `replicas: 0`) or Degraded (crashlooping without AWS creds). Both worse portfolio material than an honest defer with a fully-documented Phase 9 activation reference (ADR-0022). "Deferring what can't be proven locally" is a portfolio strength, not a weakness.
+- *"How do ExternalDNS and AWS LBC coordinate for the 'declare an Ingress, get a URL' flow?"* — LBC provisions the ALB from the Ingress spec, waits for AWS to assign the hostname, writes it to `Ingress.status.loadBalancer.hostname`. ExternalDNS watches that status field, creates the Route53 A record pointing at the hostname. If either is missing the whole chain breaks. On EKS both are needed; on kind we skip LBC per ADR-0022 and prove ExternalDNS's wiring via inmemory + manual target override annotation.
