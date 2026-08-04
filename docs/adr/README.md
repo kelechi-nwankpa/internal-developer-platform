@@ -55,6 +55,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0019](0019-vault-install-for-eso-kind-backend.md) | Install HashiCorp Vault (standalone + manual unseal) as the ESO backend on kind | Accepted | 2026-07-28 |
 | [0020](0020-eso-backend-strategy.md) | ESO backend strategy: Vault on kind, AWS Secrets Manager on EKS | Accepted | 2026-07-28 |
 | [0021](0021-external-dns-install-and-provider-strategy.md) | Install ExternalDNS via Helm; inmemory provider on kind, Route53 via IRSA on EKS | Accepted | 2026-08-03 |
+| [0022](0022-aws-load-balancer-controller-defer-to-eks.md) | Defer AWS Load Balancer Controller install to Phase 9 EKS; document Phase 9 activation reference | Accepted | 2026-08-04 |
 
 ## References
 
