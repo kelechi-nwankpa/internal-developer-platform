@@ -1,0 +1,123 @@
+---
+# external-dns — Kubernetes-native DNS record management.
+#
+# Fifth GitOps-managed operator under app-of-apps root. Same install pattern
+# as cert-manager and ESO (ADR-0016, ADR-0018, ADR-0019): upstream Helm chart
+# wrapped in an ArgoCD Application, pinned to a specific chart version.
+#
+# INSTALL MODE: inmemory provider (kind local dev). ExternalDNS runs, watches
+# Ingress + Service objects, and LOGS what DNS records it would create —
+# without touching a real DNS provider. Zero external state. Proves the wiring
+# end-to-end; no AWS creds required. See ADR-0021 for the reasoning + Phase 9
+# migration path to real Route53 via IRSA.
+#
+# See: docs/adr/0021-external-dns-install-and-provider-strategy.md
+#      docs/phases/phase-2-platform.md (Task 2.5)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # Official k8s-sigs Helm repo. Chart 1.21.1 pins app v0.21.0
+    # internally (confirmed in the chart's Chart.yaml). Chart cadence
+    # is deliberately slow — expect months between minor releases.
+    repoURL: https://kubernetes-sigs.github.io/external-dns/
+    chart: external-dns
+    targetRevision: 1.21.1
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Provider — the DNS backend ExternalDNS talks to
+        # ─────────────────────────────────────────────────────────────
+        provider:
+          # inmemory: internal test provider. Tracks intended records in
+          # memory only. Logs what it WOULD do without external side
+          # effects. Great for demonstrating the reconciliation loop on
+          # kind where no real DNS provider is reachable.
+          #
+          # For EKS (Phase 9), swap to:
+          #   name: aws
+          # Plus:
+          #   - Set env AWS_REGION via `env: [...]` or `extraEnvVars`
+          #   - Annotate the SA with an IRSA role ARN (serviceAccount.annotations)
+          #   - Grant the role route53:ChangeResourceRecordSets on the
+          #     idp.seniormankelz.dev hosted zone
+          #   - Set domainFilters to lock ExternalDNS to that zone
+          name: inmemory
+
+        # ─────────────────────────────────────────────────────────────
+        # Sources — which Kubernetes objects to watch for DNS annotations
+        # ─────────────────────────────────────────────────────────────
+        sources:
+          # Ingress objects with external-dns.alpha.kubernetes.io/hostname
+          # annotations. Primary source for Phase 6+ workloads.
+          - ingress
+          # Service objects of type LoadBalancer. Useful when a service
+          # is exposed directly without an Ingress in front (rare on our
+          # platform; ~all traffic will go through Ingress + ALB).
+          - service
+
+        # ─────────────────────────────────────────────────────────────
+        # Domain filters — what zones ExternalDNS can manage
+        # ─────────────────────────────────────────────────────────────
+        domainFilters:
+          # For inmemory this has no security effect (no real provider to
+          # protect); documenting the domain we intend to manage here
+          # means the Phase 9 EKS migration inherits the correct scope
+          # without a values file diff. Real security is Route53 IAM +
+          # this filter on EKS.
+          - idp.seniormankelz.dev
+
+        # ─────────────────────────────────────────────────────────────
+        # Policy — what ExternalDNS is allowed to do
+        # ─────────────────────────────────────────────────────────────
+        #   sync         — creates and DELETES records to match state
+        #   upsert-only  — creates and updates but NEVER deletes
+        #
+        # `sync` is right for a GitOps platform (Ingress removed → DNS
+        # record removed). `upsert-only` is a footgun-protection for
+        # environments where you're not sure ExternalDNS understands
+        # ownership; we do, because of the TXT registry below.
+        policy: sync
+
+        # ─────────────────────────────────────────────────────────────
+        # Registry — how ExternalDNS tracks record ownership
+        # ─────────────────────────────────────────────────────────────
+        # TXT registry writes a companion TXT record alongside each A/CNAME
+        # ExternalDNS creates. The TXT contains this instance's owner ID.
+        # Two ExternalDNS instances with the same domain but different owner
+        # IDs won't fight — each ignores records the other owns. Essential
+        # once we run ExternalDNS in multiple environments (kind + EKS +
+        # Phase 8 staging, etc.).
+        registry: txt
+        txtOwnerId: idp-kind-dev
+
+        # ─────────────────────────────────────────────────────────────
+        # Log level — how verbose the ExternalDNS pod logs
+        # ─────────────────────────────────────────────────────────────
+        # `info` shows every intended change ("would create record X").
+        # `debug` shows the reconciliation loop internals. Both are
+        # helpful for the Task 2.5.e manual verification; leaving on
+        # `info` after that is fine — logs stay useful without being noisy.
+        logLevel: info
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Conventional namespace for external-dns.
+    namespace: external-dns
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

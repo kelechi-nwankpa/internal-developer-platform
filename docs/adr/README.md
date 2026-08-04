@@ -54,6 +54,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0018](0018-external-secrets-install-via-helm.md) | Install External Secrets Operator (ESO) via the upstream Helm chart, as an ArgoCD Application | Accepted | 2026-07-28 |
 | [0019](0019-vault-install-for-eso-kind-backend.md) | Install HashiCorp Vault (standalone + manual unseal) as the ESO backend on kind | Accepted | 2026-07-28 |
 | [0020](0020-eso-backend-strategy.md) | ESO backend strategy: Vault on kind, AWS Secrets Manager on EKS | Accepted | 2026-07-28 |
+| [0021](0021-external-dns-install-and-provider-strategy.md) | Install ExternalDNS via Helm; inmemory provider on kind, Route53 via IRSA on EKS | Accepted | 2026-08-03 |
 
 ## References
 
