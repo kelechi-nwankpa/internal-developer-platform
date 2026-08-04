@@ -77,7 +77,7 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 | 2.5 | ExternalDNS (inmemory provider on kind, end-to-end proven) | ✅ | Shipped 2026-08-04; see Task 2.5 log below |
 | 2.6 | AWS Load Balancer Controller — **deferred to Phase 9 EKS activation** (no honest dev-mode on kind) | ✅ documented | Shipped 2026-08-04 as ADR-0022 with Phase 9 activation reference; see Task 2.6 log below |
 | 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | ✅ | **7 Applications live** (cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config, external-dns), all Synced/Healthy. AWS LBC deferred per ADR-0022 — Phase 9 activation adds the 8th Application. |
-| 2.8 | Runbook: `docs/runbooks/kind-recovery.md` | 🔲 pending | — |
+| 2.8 | Runbook: `docs/runbooks/kind-recovery.md` — 4 failure modes documented | ✅ | Shipped 2026-08-04; see Task 2.8 log below |
 | 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 🔲 pending | — |
 
 ## Task 2.2 — ArgoCD bootstrap (detailed log)
@@ -444,10 +444,55 @@ The mitigation for the pattern break: **ADR-0022 IS the Phase 9 runbook.** Chart
 | [ADR-0021](../adr/0021-external-dns-install-and-provider-strategy.md) | Install ExternalDNS via Helm; inmemory provider on kind, Route53 via IRSA on EKS | Same "install-minimally-on-kind, activate-fully-on-EKS" pattern as ESO. Weighs 4 kind provider options; documents the TXT registry + txtOwnerId multi-environment coexistence guarantee. |
 | [ADR-0022](../adr/0022-aws-load-balancer-controller-defer-to-eks.md) | Defer AWS Load Balancer Controller install to Phase 9 EKS; document Phase 9 activation reference | The one Phase 2 component with no honest dev-mode. Doubles as the Phase 9 runbook — chart pin, IAM policy commands, IRSA trust policy, VPC subnet tagging, complete manifest, 12-item activation checklist. |
 
+## Task 2.8 — kind-recovery runbook (detailed log)
+
+**Shipped 2026-08-04**, single session. Wrote [docs/runbooks/kind-recovery.md](../runbooks/kind-recovery.md) — 4 failure modes with symptom / impact / diagnosis / remediation / prevention for each, plus two reference sections (expected reconcile times per Application, command cheat sheet).
+
+### What we did
+
+Two sub-tasks:
+
+| # | Step | Notes |
+|---|---|---|
+| 2.8.a | Drafted `docs/runbooks/kind-recovery.md` — 4 failure modes ordered from least to most invasive: (1) Vault sealed after pod restart, (2) ArgoCD CLI JWT expired, (3) single Application stuck, (4) full cluster rebuild. Plus reference sections with expected reconcile times and command cheat sheet. Updated `docs/runbooks/README.md` index. | Runbook doubles as institutional memory — recovery flows we've done informally throughout Phase 2 are now written down and copy-pasteable. |
+| 2.8.b | Phase log update. | |
+
+### What the runbook covers (why 4 failure modes)
+
+Deliberately ordered so someone waking up to a broken cluster doesn't reach for the nuclear option first:
+
+1. **Vault sealed** — by far the most common (happens every laptop reboot per ADR-0019). 30-second fix, no state lost.
+2. **ArgoCD CLI JWT expired** — extremely common (24h TTL). Two paths: `argocd login` or just use `kubectl` instead.
+3. **Single Application stuck** — targeted fix; usually `kubectl annotate ... refresh=hard`, occasionally the `omitempty` drift trap from ADR-0015.
+4. **Full cluster rebuild** — the nuclear option. ~15–20 min including Vault re-configuration. Includes the exact Vault post-install commands from Task 2.4.h/i as a copy-paste script.
+
+### Non-obvious things worth banking
+
+- **The runbook table for expected reconcile times is data** — captured from Task 2.4 and 2.5 install experiences. Anyone watching a rebuild can compare against it to know if something is genuinely stuck vs just normal wait time.
+- **Vault re-configuration commands are now in git.** After a rebuild, Vault's internal state (auth methods, policies, roles, secrets) is gone even though the ClusterRoleBinding is recreated by ArgoCD. The runbook's step 4c is the copy-paste script that Task 2.4.h/i established informally.
+- **Password manager entries are prerequisites, not remediation.** The "if you lost your password manager entries, you must fall through to full rebuild" line is deliberate — losing them means losing rotation history, so a clean rebuild is the only sound recovery.
+- **`kubectl annotate application <name> argocd.argoproj.io/refresh=hard`** is the escape hatch for every "argocd CLI expired + need to trigger reconcile" situation. Documented in the cheat sheet.
+- **Runbook cross-links to every relevant ADR.** Anyone diagnosing a specific failure can jump to the ADR that explains the design decision that led to it.
+
+### PR-style review
+
+**Strengths:**
+
+- 4 failure modes ordered from least to most invasive — good on-call ergonomics.
+- Each failure mode has symptom/impact/diagnosis/remediation/prevention — matches `docs/runbooks/README.md` template.
+- Vault re-configuration is now copy-paste, not tribal knowledge.
+- Command cheat sheet at the bottom for quick reference.
+- Cross-references every relevant ADR — recovery decisions traceable back to design decisions.
+
+**Weaknesses (deferred, not blockers):**
+
+- Vault re-configuration is still manual multi-step (~10 min). A `make vault-configure` Makefile target would collapse it to one command. Deferred to Phase 8 hardening as noted in the runbook prevention section.
+- Auto-unseal (which would eliminate ~1/3 of the runbook's content) also Phase 8+.
+- No runbook for "Docker Desktop misbehaving" — that's macOS/OS-level troubleshooting rather than platform-specific.
+
 ## What's next
 
-- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + Vault re-init + unseal + reseed test-secret + expected reconcile times per operator. Also documents "what to expect" per Application when root reconciles (7 Applications appear in sequence).
-- **2.9 — Phase 2 close-out recording.** Full destroy-rebuild demo, top-to-bottom, on video. The portfolio finale for Phase 2.
+- **2.9 — Phase 2 close-out recording.** The portfolio finale. Full destroy-rebuild demo on video: `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` → 7 Applications appear → Vault init + unseal + reconfigure → optional end-to-end verification. The runbook (2.8) IS the script for this recording.
 
 *Task 2.7 is retrospectively complete* — app-of-apps has been fully populated for all 4 kind-installable operators (cert-manager, ESO, Vault, ExternalDNS) since Task 2.4, and Task 2.6 established AWS LBC as Phase 9-only. The "5 platform components under app-of-apps" original target now reads as "5 components with 4 installed on kind + 1 documented for EKS activation."
 
