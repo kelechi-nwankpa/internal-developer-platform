@@ -55,7 +55,7 @@ LOCAL LAPTOP
 │                ├── cert-manager namespace   ◄─── 2.3 shipped   │
 │                ├── external-secrets namespace  ◄─── 2.4 shipped│
 │                ├── vault namespace          ◄─── 2.4 shipped   │
-│                ├── external-dns namespace   ◄─── 2.5           │
+│                ├── external-dns namespace   ◄─── 2.5 shipped   │
 │                └── kube-system (AWS LBC)    ◄─── 2.6           │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
@@ -72,9 +72,9 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 | 2.2.f | App-of-apps root wired — ArgoCD now GitOps-manages itself | ✅ | Shipped 2026-07-21; see Task 2.2.f log below |
 | 2.3 | cert-manager (operator + SelfSigned ClusterIssuer, end-to-end proven) | ✅ | Shipped 2026-07-28; see Task 2.3 log below |
 | 2.4 | External Secrets Operator (ESO) + HashiCorp Vault (kind backend) + ClusterSecretStore + end-to-end proven + root token rotated | ✅ | Shipped 2026-08-01; see Task 2.4 log below |
-| 2.5 | ExternalDNS | 🔲 pending | — |
+| 2.5 | ExternalDNS (inmemory provider on kind, end-to-end proven) | ✅ | Shipped 2026-08-04; see Task 2.5 log below |
 | 2.6 | AWS Load Balancer Controller | 🔲 pending | — |
-| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔄 in progress | 6 Applications live: cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config. ExternalDNS + AWS LBC still to come. |
+| 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | 🔄 in progress | 7 Applications live: cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config, external-dns. AWS LBC still to come. |
 | 2.8 | Runbook: `docs/runbooks/kind-recovery.md` | 🔲 pending | — |
 | 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 🔲 pending | — |
 
@@ -329,6 +329,52 @@ Fourteen sub-tasks:
 - SSA field manager coexistence on the CRB (`argocd-controller` + `kubectl-create`). Harmless artefact but visible. Fixable with a manual `kubectl patch` if it ever matters.
 - Vault's internal state (auth methods, policies, roles, secrets) is NOT managed by GitOps — configured via manual `vault write` commands documented in this log. A real prod deployment would use the Terraform Vault provider. For portfolio value, the manual commands are more educational.
 
+## Task 2.5 — ExternalDNS (detailed log)
+
+**Shipped 2026-08-04**, single study session (technically a session spanning 2026-08-02 → 2026-08-04 with mostly discussion + drafting). Lighter than Task 2.4 because no external state (no Vault-equivalent to install); the interesting design decision was purely *"what provider to configure on kind where no external DNS exists?"*.
+
+### What we did
+
+Six sub-tasks:
+
+| # | Step | Notes |
+|---|---|---|
+| 2.5.a | Confirmed install source (Helm via ArgoCD, established pattern) + backend provider for kind. Weighed 4 options: full skip, inmemory (chosen), real Route53 with static creds (rejected — anti-pattern), CoreDNS (novel but weak story). | ADR-0021 records the reasoning. |
+| 2.5.b | Pinned **ExternalDNS chart `1.21.1`** (app `v0.21.0`). Notably slower release cadence than other components — chart is ~3 months old with no v0.22 pending. Not stale, just steady. Chart + app version scheme same as ESO (separate tags, ship together). | |
+| 2.5.c | Drafted `platform/argocd/apps/external-dns.yaml` — chart 1.21.1, `provider.name: inmemory`, `sources: [ingress, service]`, `domainFilters: [idp.seniormankelz.dev]`, `txtOwnerId: idp-kind-dev`, `policy: sync`, `registry: txt`. Inline comments walk through the Phase 9 migration to real Route53 (swap `provider.name: inmemory` → `aws`, add IRSA annotations, add `AWS_REGION` env). | ADR-0021 records install method + provider strategy. |
+| 2.5.d | Commit `b1619e7` + push. Root-app reconciled after `kubectl annotate ... refresh=hard` (argocd CLI JWT was expired again — kubectl workaround from Task 2.4.k). external-dns Application appeared, single pod Running 1/1 within 23s. Startup log confirmed the full config: `Provider:inmemory, DomainFilter:[idp.seniormankelz.dev], TXTOwnerID:idp-kind-dev, Interval:1m0s`. | |
+| 2.5.e | **Manual Ingress test.** Applied test Ingress with annotations `external-dns.alpha.kubernetes.io/hostname: demo.idp.seniormankelz.dev` + `external-dns.alpha.kubernetes.io/target: 203.0.113.42` (documentation IP from RFC 5737, guaranteed non-routable). Within ~65s, the next ExternalDNS reconcile logged both a `CREATE: demo.idp.seniormankelz.dev 0 IN A 203.0.113.42` **and** the companion `TXT` record with `heritage=external-dns, owner=idp-kind-dev, resource=ingress/default/test-external-dns`. Deleted the Ingress; next reconcile returned to `"All records are already up to date"`. | The whole ExternalDNS promise in two log lines: intended DNS record + ownership metadata. |
+| 2.5.f | This commit. Phase log update. | |
+
+### Non-obvious things worth banking
+
+- **The TXT registry pattern is the whole safety guarantee.** Every A record ExternalDNS creates gets a companion TXT record carrying `heritage=external-dns, owner=<txtOwnerId>, resource=<source-object>`. When kind-dev and EKS-prod both run ExternalDNS with different owner IDs, each ignores the other's records. Prevents the whole "two controllers fighting over the same DNS zone" class of incident. Ownership check happens on every reconcile.
+- **RFC 5737 documentation IPs are the right choice for tests.** `203.0.113.0/24` is reserved specifically for docs and examples — cannot route to a real IP. Using it in the test Ingress means the intent is unambiguous and there's zero risk of accidentally pointing DNS at something real.
+- **ExternalDNS's inmemory provider is used by its own test suite.** Not a toy — exercises the full reconciliation loop, tracks intended state, logs "would-create" actions. On kind where no real DNS is reachable, it's the honest choice.
+- **Chart 1.21.1 pins app 0.21.0 internally.** Same "chart version ≠ app version" pattern as ESO and Vault. `Chart.yaml`'s `appVersion` field is authoritative — you pin the chart, the chart pins the app image.
+- **`domainFilters` set now even though inmemory doesn't enforce it.** Documents intended production scope inline; Phase 9 EKS activation is a values-only diff (swap provider), not a rewrite. Same "prepare-for-migration" pattern as the commented LE-staging templates in `platform/cert-manager/clusterissuers.yaml`.
+- **inmemory does not emit `DELETE:` log lines.** On deletion, state just goes back to consistent and the reconcile logs `"All records are already up to date"`. On EKS with real Route53, you'd see explicit `DELETE:` calls. Minor logging inconsistency worth knowing about.
+- **ExternalDNS reconciles every 1m by default.** Configurable via `interval`. Watching a test action requires either waiting the full minute or `kubectl exec` to send a HUP-equivalent trigger (not straightforward — ExternalDNS uses interval-based, not event-driven, by default).
+- **Ingress annotations `hostname` + `target` are the pair for testing without a real LB.** In production the target comes from Ingress `.status.loadBalancer` populated by AWS LBC. On kind (no LB provisioner), the `target` annotation supplies the value directly.
+
+### PR-style review
+
+**Strengths:**
+
+- ExternalDNS runs, reconciliation loop exercised, manifest + values + RBAC all real. Only the DNS backend is dry-run.
+- Full manifest ready for Phase 9 activation — swap 2 values (`provider.name` + add IRSA annotations), everything else unchanged.
+- TXT registry + txtOwnerId configured now so multi-environment coexistence is safe from day one.
+- Pattern consistent with cert-manager, ESO, Vault (Helm via ArgoCD; dev-mode backend on kind; real backend on EKS).
+- `domainFilters: [idp.seniormankelz.dev]` set inline — production scope documented.
+- Manual test uses RFC 5737 documentation IP — no risk of accidentally pointing DNS at anything real.
+
+**Weaknesses (deferred, not blockers):**
+
+- Still `spec.project: default` on the Application. Tighter `platform` AppProject is Phase 8 hardening.
+- inmemory state is truly ephemeral — every ExternalDNS pod restart forgets everything. On real Route53 the records survive.
+- No metrics scraping wired up — `metricsAddress::7979` is configured by default but no Prometheus watching. Phase 3.
+- 1-minute reconcile interval means DNS record propagation is bounded by that — fine for our workloads, worth tuning if we ever need faster reactions to Ingress churn.
+
 ## ADRs written this phase (so far)
 
 | # | Decision | Why interesting for portfolio |
@@ -340,13 +386,13 @@ Fourteen sub-tasks:
 | [ADR-0018](../adr/0018-external-secrets-install-via-helm.md) | Install External Secrets Operator (ESO) via the upstream Helm chart, as an ArgoCD Application | Explicit "same pattern as cert-manager" ADR — records the choice + explicitly rules out Vault Secrets Operator (VSO) because it can't handle AWS Secrets Manager which Phase 9 needs. |
 | [ADR-0019](../adr/0019-vault-install-for-eso-kind-backend.md) | Install HashiCorp Vault (standalone + manual unseal) as the ESO backend on kind | Documents 5 install-mode options weighed with the auto-unseal migration path noted. Includes BSL licensing note for interview readiness. |
 | [ADR-0020](../adr/0020-eso-backend-strategy.md) | ESO backend strategy: Vault on kind, AWS Secrets Manager on EKS | Per-env backend matrix with same `ExternalSecret` shape working on both. Cross-refs ADR-0008 (KMS) + ADR-0009 (IRSA) as Phase 1 dependencies for the EKS side. |
+| [ADR-0021](../adr/0021-external-dns-install-and-provider-strategy.md) | Install ExternalDNS via Helm; inmemory provider on kind, Route53 via IRSA on EKS | Same "install-minimally-on-kind, activate-fully-on-EKS" pattern as ESO. Weighs 4 kind provider options; documents the TXT registry + txtOwnerId multi-environment coexistence guarantee. |
 
 ## What's next
 
-- **2.5 — ExternalDNS.** Auto-populates Route53 records from Ingress annotations. Idle on kind (nothing routable), meaningful on EKS. Same Application pattern.
-- **2.6 — AWS Load Balancer Controller.** ALB provisioning from Ingress objects. Only relevant on EKS; installed but idle on kind. Together with 2.5 completes the "declare an Ingress, get a public HTTPS URL" story we've been building toward.
-- **2.7 — status update after 2.5/2.6 land** — will mark app-of-apps as fully populated.
-- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + Vault re-init + unseal + reseed test-secret + expected reconcile time.
+- **2.6 — AWS Load Balancer Controller.** ALB provisioning from Ingress objects. Only meaningfully functional on EKS. On kind we have the same design question as ExternalDNS — install-and-idle (proves the wiring, controller runs, ~0 useful work) vs skip-entirely-until-Phase-9. Together with 2.5 completes the "declare an Ingress, get a public HTTPS URL" story we've been building toward.
+- **2.7 — status update after 2.6 lands** — will mark app-of-apps fully populated with all 5 platform components (cert-manager, ESO, Vault, ExternalDNS, AWS LBC).
+- **2.8 — `docs/runbooks/kind-recovery.md`** — the "kind cluster died, what do I do?" runbook. Covers `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` + Vault re-init + unseal + reseed test-secret + expected reconcile times per operator.
 - **2.9 — Phase 2 close-out recording.** Full destroy-rebuild demo, top-to-bottom, on video. The portfolio finale for Phase 2.
 
 ## Interview talking points (running list, will grow)
@@ -363,3 +409,5 @@ Fourteen sub-tasks:
 - *"How does Vault's Kubernetes auth method work?"* — Vault needs `system:auth-delegator` on its own SA so it can call `TokenReview` on kube-apiserver. Workload presents its own SA JWT; Vault validates via TokenReview; if valid + matching a role's `bound_service_account_names`, Vault issues a scoped-policy token. No static credentials between workloads and Vault; the same mechanism secures ESO's access.
 - *"What's the difference between Vault's KV v1 and KV v2?"* — v2 adds versioning + soft-delete. Also splits the path: data at `secret/data/*`, metadata at `secret/metadata/*`. Policies must reference the split paths (`path "secret/data/*"` for read). ESO handles the prefix internally when configured with `version: v2`. Confusing at first; well-documented.
 - *"Tell me about a time you rotated Vault's root token."* — Ran `vault operator generate-root -init` → OTP + nonce → provided 3 unseal keys → encoded token → decoded with OTP → verified new root worked → revoked old. Failed the ceremony 3 times on OTP/encoded-token mismatch before succeeding. HashiCorp calls out this class of user error in their docs; getting it right requires treating OTP + encoded_token as a bound pair from the same `-init` operation.
+- *"How does ExternalDNS prevent two instances from fighting over the same DNS zone?"* — TXT registry pattern. Every A record ExternalDNS creates gets a companion TXT record with `heritage=external-dns, owner=<txtOwnerId>, resource=<source-object>`. Instances with different owner IDs ignore each other's records on reconcile. Enables safe multi-environment DNS management (kind-dev + eks-staging + eks-prod coexisting on the same zone) with no coordination between them.
+- *"Why did you install ExternalDNS with the inmemory provider on kind if kind has no DNS?"* — Proves the wiring end-to-end. Application manifest, RBAC, values, reconciliation loop are all real; only the DNS backend is dry-run. Migration to real Route53 in Phase 9 is a values-only diff (swap `provider.name: inmemory` → `aws`, add IRSA annotations), not a rewrite. Also: `inmemory` is what ExternalDNS's own test suite uses, so it's a first-class supported provider, not a hack.
