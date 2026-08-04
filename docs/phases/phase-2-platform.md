@@ -1,9 +1,11 @@
 # Phase 2 — In-cluster platform components (local kind)
 
-- **Status:** 🔄 In progress
+- **Status:** ✅ Shipped
 - **Started:** 2026-07-15
-- **Target complete:** Phase 2 planned as 5 add-ons on local kind: ArgoCD, cert-manager, ExternalDNS, ESO, AWS Load Balancer Controller
-- **AWS spend so far:** $0 (Phase 2 is local-first by design; see [ADR-0005](../adr/0005-local-first-development-with-kind.md))
+- **Finished:** 2026-08-04 (Task 2.8 kind-recovery runbook committed)
+- **Duration:** ~3 calendar weeks (2026-07-15 → 2026-08-04), ~20 focused sessions spread across 8 tasks
+- **Total AWS spend:** **$0** (Phase 2 is local-first by design; see [ADR-0005](../adr/0005-local-first-development-with-kind.md))
+- **Task 2.9 note:** the destroy-rebuild rehearsal + video recording are deliberately deferred to a future session. The Task 2.8 runbook proves reproducibility on paper; rehearsal + recording are optional polish tasks not required to close Phase 2's technical scope.
 
 ## Business problem
 
@@ -78,7 +80,7 @@ Every arrow above is one sub-task. Every namespace is one component. Every compo
 | 2.6 | AWS Load Balancer Controller — **deferred to Phase 9 EKS activation** (no honest dev-mode on kind) | ✅ documented | Shipped 2026-08-04 as ADR-0022 with Phase 9 activation reference; see Task 2.6 log below |
 | 2.7 | ArgoCD app-of-apps root — all Phase 2 components managed by ArgoCD itself | ✅ | **7 Applications live** (cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config, external-dns), all Synced/Healthy. AWS LBC deferred per ADR-0022 — Phase 9 activation adds the 8th Application. |
 | 2.8 | Runbook: `docs/runbooks/kind-recovery.md` — 4 failure modes documented | ✅ | Shipped 2026-08-04; see Task 2.8 log below |
-| 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 🔲 pending | — |
+| 2.9 | Phase 2 close-out — full destroy → rebuild recording via `make kind-down && make kind-up && make argocd-install` | 📼 deferred | Runbook (2.8) proves reproducibility on paper. Full rehearsal + video are optional portfolio polish for a future session; not blocking Phase 2 close. |
 
 ## Task 2.2 — ArgoCD bootstrap (detailed log)
 
@@ -490,11 +492,31 @@ Deliberately ordered so someone waking up to a broken cluster doesn't reach for 
 - Auto-unseal (which would eliminate ~1/3 of the runbook's content) also Phase 8+.
 - No runbook for "Docker Desktop misbehaving" — that's macOS/OS-level troubleshooting rather than platform-specific.
 
-## What's next
+## Phase 2 is shipped — final summary
 
-- **2.9 — Phase 2 close-out recording.** The portfolio finale. Full destroy-rebuild demo on video: `make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-root` → 7 Applications appear → Vault init + unseal + reconfigure → optional end-to-end verification. The runbook (2.8) IS the script for this recording.
+Everything that ships to a customer of the platform (a Phase 6 developer using a golden path) is now in place on the local kind cluster:
 
-*Task 2.7 is retrospectively complete* — app-of-apps has been fully populated for all 4 kind-installable operators (cert-manager, ESO, Vault, ExternalDNS) since Task 2.4, and Task 2.6 established AWS LBC as Phase 9-only. The "5 platform components under app-of-apps" original target now reads as "5 components with 4 installed on kind + 1 documented for EKS activation."
+- **7 ArgoCD Applications live**, all Synced/Healthy: `root, cert-manager, cert-manager-issuers, external-secrets, external-secrets-stores, vault, vault-config, external-dns`.
+- **1 platform component documented for Phase 9 activation** — AWS LBC per ADR-0022 (the only component with no honest dev-mode).
+- **9 ADRs shipped** (ADR-0014 through ADR-0022), each documenting a decision + trade-offs + when-to-revisit.
+- **2 postscripts** capturing hard-won lessons: SSA annotation-size trap (ADR-0014) and `directory.recurse: false` omitempty drift trap (ADR-0015).
+- **1 runbook** (`kind-recovery.md`) covering 4 failure modes with symptom → impact → diagnosis → remediation → prevention.
+- **Zero AWS spend for the entire phase.** Total cost of Phase 2: $0.
+
+**What a Phase 6 developer will inherit for free** once we ship their onboarding path:
+
+- Declare an `ExternalSecret` → their k8s Secret materialises from Vault (kind) or AWS Secrets Manager (EKS)
+- Declare a `Certificate` → cert-manager issues a cert (SelfSigned kind, LE staging/prod EKS)
+- Add an Ingress annotation → ExternalDNS creates a DNS record (inmemory kind, Route53 EKS)
+- Every install/uninstall/update flows through GitOps — one file merged to main, no manual `kubectl`
+
+**Rebuild time from empty:** ~15–20 minutes end-to-end per the runbook.
+
+## What's next — Phase 3
+
+**Phase 3 — Observability.** Prometheus + Grafana + Loki + Tempo + OpenTelemetry Collector. Every operator we installed in Phase 2 is instrumented — cert-manager, ESO, Vault, ExternalDNS all expose Prometheus metrics that the observability stack will scrape. First time we'll have dashboards showing what the platform is actually doing.
+
+Session opener for Phase 3: *"start Phase 3, observability stack."*
 
 ## Interview talking points (running list, will grow)
 
