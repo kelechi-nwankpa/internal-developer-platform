@@ -1,0 +1,65 @@
+---
+# metrics-server — Kubernetes Metrics API (kubectl top, HPA).
+#
+# First observability-adjacent operator under app-of-apps root. NOT the same
+# thing as Prometheus (that's Task 3.3). metrics-server serves the built-in
+# Kubernetes Metrics API — basic CPU/memory only, ~1 minute retention,
+# in-memory — used by `kubectl top` and HorizontalPodAutoscaler. Prometheus
+# does everything else (rich metrics, dashboards, alerting, history).
+# Both are needed on a real cluster; they complement, don't replace.
+#
+# See: docs/adr/0023-metrics-server-vs-prometheus.md
+#      docs/phases/phase-2-platform.md and phase-3-observability.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metrics-server
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # Official kubernetes-sigs Helm repo. Chart 3.13.1 pins app v0.8.1
+    # internally — the chart maintainer hasn't yet rev'd to include app
+    # v0.9.0. Accepting the tested (chart, app) pair here rather than
+    # forcing a newer image via image.tag override. See ADR-0023.
+    repoURL: https://kubernetes-sigs.github.io/metrics-server/
+    chart: metrics-server
+    targetRevision: 3.13.1
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # kind-specific TLS override — the #1 gotcha
+        # ─────────────────────────────────────────────────────────────
+        # metrics-server scrapes each kubelet's /metrics/resource endpoint
+        # over HTTPS and by default verifies the kubelet's TLS certificate
+        # chain. kind's kubelets use SELF-SIGNED certs (not chained to any
+        # recognised CA), so verification fails and metrics-server can't
+        # scrape → `kubectl top` returns errors indefinitely.
+        #
+        # `--kubelet-insecure-tls` disables that verification. Safe on
+        # kind (single-node local dev, no untrusted cluster network).
+        # DO NOT set on EKS — EKS kubelets have proper cert chains via
+        # the cluster CA; verification succeeds without the flag.
+        args:
+          - --kubelet-insecure-tls
+
+        # Everything else = chart defaults. metrics-server is a minimal
+        # component — no dashboards, no config beyond scrape target.
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Conventional namespace for metrics-server. Chart creates it.
+    namespace: kube-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
