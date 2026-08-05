@@ -47,6 +47,26 @@ spec:
             # bumps to 15d or longer + Thanos for long-term storage.
             retention: 24h
 
+            # ─────────────────────────────────────────────────────────
+            # Discover ALL ServiceMonitors regardless of labels (Task 3.5)
+            # ─────────────────────────────────────────────────────────
+            # By default (chart default = true), Prometheus is configured
+            # to only discover ServiceMonitors labelled `release:
+            # kube-prometheus-stack`. Chart-created SMs get this label
+            # automatically; SMs from OTHER charts (cert-manager, ESO,
+            # ExternalDNS) or hand-rolled (ArgoCD) do NOT — so they get
+            # silently ignored. Setting these `NilUsesHelmValues: false`
+            # opens Prometheus to discovering everything. Fine for
+            # single-tenant kind; on EKS with multiple tenants we might
+            # revisit and use explicit label scoping instead.
+            #
+            # See ADR-0025 (ServiceMonitor strategy) for the broader
+            # context.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+
             # Persistent storage via PVC. Uses kind's local-path-provisioner
             # by default. 2 GiB is comfortable headroom for 24h of Phase
             # 2's metrics (~500 MiB actually needed).
