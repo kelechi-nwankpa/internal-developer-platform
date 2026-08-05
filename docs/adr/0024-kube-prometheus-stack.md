@@ -93,3 +93,41 @@ Total PVC allocation: 4 GiB. Kind's Docker Desktop VM has ~30 GiB by default; co
 ## Interview framing
 
 The one-liner: _"kube-prometheus-stack is a meta-chart bundling Prometheus + Grafana + Alertmanager + prometheus-operator + kube-state-metrics + node-exporter into one Helm release. Community-standard, ships ~180 pre-built dashboards, coordinates versions. We install it as a single ArgoCD Application. Per-component ServiceMonitors for our Phase 2 operators are a separate concern (Task 3.5). Storage is PVC-backed with 24h retention on kind; EKS bumps to 15d or Thanos for long-term. Grafana admin follows the same 'rotate + delete initial secret' discipline as ArgoCD."_
+
+## Postscript — the ServiceMonitor selector filter trap (learned during Task 3.5)
+
+After shipping ServiceMonitors for all four Phase 2 operators (cert-manager, ESO, ExternalDNS, ArgoCD) in Task 3.5, `kubectl get servicemonitor -A` showed all 10 SMs deployed successfully — but Prometheus was scraping none of them. Target count stayed at 14 (only kube-prometheus-stack's own SMs from the `monitoring` namespace), not the expected 24+.
+
+**Root cause.** kube-prometheus-stack renders the Prometheus CR with a default `serviceMonitorSelector`:
+
+```yaml
+spec:
+  serviceMonitorSelector:
+    matchLabels:
+      release: kube-prometheus-stack
+```
+
+This tells Prometheus: **only discover ServiceMonitors labelled `release=kube-prometheus-stack`.** Chart-created SMs automatically get this label. Sub-chart-created SMs (cert-manager, ESO, ExternalDNS's own chart-native SMs) and hand-rolled SMs (our ArgoCD ones) do NOT — so Prometheus silently ignores them.
+
+The `podMonitorSelector`, `probeSelector`, and `ruleSelector` on the Prometheus CR have the same default behaviour — same trap for `PodMonitor`, `Probe`, and `PrometheusRule` CRs.
+
+**Fix.** Four Helm values overrides on the Prometheus CR:
+
+```yaml
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+```
+
+When true (chart default), the chart auto-injects a `release=<name>` label filter whenever the corresponding selector value is nil/empty. When false, the chart leaves the selector genuinely empty on the rendered Prometheus CR — an empty selector matches everything.
+
+Baked into `platform/argocd/apps/kube-prometheus-stack.yaml` in commit `ec49c6f` so it never bites again.
+
+**Trade-off.** This opens Prometheus discovery to all ServiceMonitors in the cluster. Fine for single-tenant kind; on multi-tenant EKS a stricter posture might be desired (label-based scoping, e.g. `matchLabels: {tenant: platform}` on each managed SM). Not a Phase 3 concern; documented here for when Phase 9 EKS activation revisits.
+
+**Why this bites everyone.** kube-prometheus-stack's default is _safe by design_ — a shared cluster where multiple teams install their own Prometheus + SMs shouldn't cross-contaminate. But the chart doesn't loudly document this behaviour, and every single-tenant install hits the "why aren't my SMs being scraped?" mystery. Searching "prometheus not scraping servicemonitor" returns dozens of Stack Overflow hits, all with this same root cause.
+
+**Interview framing:** _"By default, kube-prometheus-stack's Prometheus is configured to only discover ServiceMonitors labelled `release=kube-prometheus-stack` — its own name. SMs from other charts or hand-rolled ones get silently ignored. The fix is four `*SelectorNilUsesHelmValues: false` values in the Helm chart, which opens Prometheus to discover everything in the cluster. It's a well-known trap — the chart's default is safe for multi-tenant clusters but confusing for single-tenant installs. If you Google 'prometheus not scraping servicemonitor', this is the answer 80% of the time."_
