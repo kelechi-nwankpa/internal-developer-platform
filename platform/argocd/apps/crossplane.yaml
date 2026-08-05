@@ -1,0 +1,63 @@
+---
+# crossplane — the Kubernetes-native infrastructure API core.
+#
+# First component of Phase 4. Installs the Crossplane operator + CRDs
+# (Provider, Configuration, XRD, Composition, Function, etc.). Providers
+# (family-aws, aws-s3, aws-iam) are separate Provider CRs — Task 4.3.
+# XRDs + Compositions we author ourselves — Task 4.4+.
+#
+# Pinned to v1 track (v1.20.11 = latest v1.20 patch as of 2026-08-05).
+# Rationale in ADR-0026: ecosystem maturity, provider compatibility,
+# docs alignment. Migration to v2.x is Phase 8+ concern.
+#
+# On kind: Crossplane installs but MRs won't reconcile without a
+# ProviderConfig with real AWS credentials — deliberately skipped.
+# Task 4.5 uses `crossplane render` (dry-run) for Composition validation
+# without needing AWS access. Real MR reconciliation waits for Phase 9
+# EKS with IRSA-authed ProviderConfig.
+#
+# See: docs/adr/0026-crossplane-install-and-version.md
+#      docs/phases/phase-4-crossplane.md (Task 4.2)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # Official Crossplane Helm repo. Chart version = app version.
+    repoURL: https://charts.crossplane.io/stable
+    chart: crossplane
+    targetRevision: 1.20.11
+    helm:
+      # No values overrides — chart defaults are sensible for kind and
+      # for a fresh install. Everything interesting (providers, XRDs,
+      # Compositions, ProviderConfigs) is a separate concern managed
+      # via CRs in later Task 4 sub-tasks.
+      #
+      # When we do want to tune something (e.g., resource limits on the
+      # crossplane pod, enable specific composition function packages
+      # by default), they'd go here as `resources: {...}` or similar.
+      valuesObject: {}
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Chart convention. Chart creates the namespace.
+    namespace: crossplane-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # ServerSideApply required — Crossplane's CRDs (Provider,
+      # Configuration, XRD, Composition, Function) have large OpenAPI
+      # schemas that trigger the same 256KB client-side-apply
+      # annotation limit as ArgoCD's ApplicationSet CRD in ADR-0014.
+      - ServerSideApply=true
