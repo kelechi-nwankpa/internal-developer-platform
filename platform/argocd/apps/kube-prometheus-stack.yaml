@@ -163,6 +163,44 @@ spec:
     # Conventional namespace for the observability stack. Chart creates it.
     namespace: monitoring
 
+  # ─────────────────────────────────────────────────────────────
+  # ignoreDifferences — deliberate drift we don't want ArgoCD to fight
+  # ─────────────────────────────────────────────────────────────
+  # After Task 3.3.d we rotated the Grafana admin password via
+  # `grafana cli admin reset-admin-password` (bypassing the Secret
+  # → wrote directly to Grafana's DB) and deleted the stale
+  # admin-password field from the Secret. Grafana authenticates
+  # against its DB, not the Secret — so the Secret's admin-password
+  # is inert once rotated.
+  #
+  # But the chart re-generates a new random admin-password every
+  # render (its "if empty, auto-generate" logic sees our deletion as
+  # "empty" and fills it back in). Without ignoring this specific
+  # field, ArgoCD flags the Application OutOfSync every reconcile,
+  # tries to re-add the field, we're back where we started.
+  #
+  # This tells ArgoCD: "don't diff data.admin-password on this Secret,
+  # and don't diff the checksum annotation on the Deployment that
+  # depends on it." Grafana keeps working; cluster state matches git
+  # everywhere else.
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: kube-prometheus-stack-grafana
+      namespace: monitoring
+      jsonPointers:
+        - /data/admin-password
+    - group: apps
+      kind: Deployment
+      name: kube-prometheus-stack-grafana
+      namespace: monitoring
+      # Grafana's Deployment includes a checksum annotation that
+      # tracks the Secret's content — deleting admin-password
+      # changes the checksum → Deployment shows drift too. Ignore
+      # the annotation.
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+
   syncPolicy:
     automated:
       prune: true
