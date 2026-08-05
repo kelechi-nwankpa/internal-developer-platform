@@ -1,0 +1,45 @@
+---
+# crossplane-providers — the AWS providers Crossplane loads.
+#
+# Same operator-vs-config split we've been applying throughout Phase 2/3:
+# crossplane.yaml is the operator install (Helm chart, ADR-0026), this
+# Application is the configuration (Provider CRs that tell Crossplane
+# which OCI packages to pull).
+#
+# When XRDs and Compositions land (Task 4.4+), they'll go in a third
+# Application (crossplane-config or similar) — different lifecycle
+# from providers.
+#
+# See: docs/adr/0026-crossplane-install-and-version.md
+#      docs/phases/phase-4-crossplane.md (Task 4.3)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane-providers
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/crossplane
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Providers themselves are cluster-scoped resources (Provider CRs
+    # live in the API server without a namespace), but the provider's
+    # controller pods run in the crossplane-system namespace where
+    # crossplane core lives.
+    namespace: crossplane-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

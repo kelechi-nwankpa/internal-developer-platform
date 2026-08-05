@@ -1,0 +1,52 @@
+---
+# Crossplane providers — the AWS-side controllers that turn MRs into
+# real AWS resources.
+#
+# Three providers for our initial cut per ADR-0026:
+#   - provider-family-aws — base package, shared AWS config
+#   - provider-aws-s3     — Bucket, BucketPolicy, ObjectOwnership, etc.
+#   - provider-aws-iam    — Role, Policy, PolicyAttachment, etc.
+#
+# All pinned to v2.6.0 (latest as of 2026-08-05, from crossplane-contrib/
+# provider-upjet-aws mono-repo, published as separate OCI packages under
+# xpkg.upbound.io/upbound/).
+#
+# On kind these install and their controller pods run, BUT NO MR EVER
+# RECONCILES SUCCESSFULLY because we deliberately skip ProviderConfig
+# with real AWS credentials (per ADR-0026 decision). We get CRDs, we
+# can write XRDs referencing them (Task 4.4), and we can use
+# `crossplane render` for dry-run Composition validation. Real
+# reconciliation waits for Phase 9 EKS with IRSA.
+#
+# Each Provider installs a LOT of CRDs (30-50 for s3, 20-30 for iam) —
+# expect kubectl get crd | wc -l to jump significantly after these
+# land.
+
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-family-aws
+spec:
+  package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.0
+  # No controllerConfigRef on kind. Phase 9 EKS activation adds one
+  # with IRSA annotations on the provider's ServiceAccount.
+
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-s3
+spec:
+  # Provider dependencies are declared in the OCI package's crossplane.yaml
+  # and resolved by Crossplane's package manager. provider-aws-s3 requires
+  # provider-family-aws >=v2.6.0; Crossplane won't install this Provider
+  # until family-aws is Healthy.
+  package: xpkg.upbound.io/upbound/provider-aws-s3:v2.6.0
+
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-iam:v2.6.0
