@@ -1,0 +1,122 @@
+---
+# ArgoCD ServiceMonitors — one per component.
+#
+# ArgoCD was installed from raw manifests (ADR-0014, not Helm), so no chart
+# ServiceMonitor value to enable. Writing SMs by hand — 5 total, one per
+# metrics-exposing component (application-controller, server, repo-server,
+# applicationset-controller, notifications-controller).
+#
+# All ArgoCD services have consistent labels:
+#   app.kubernetes.io/part-of: argocd
+#   app.kubernetes.io/name:    <service-specific>
+#   app.kubernetes.io/component: <component-specific>
+#
+# We select by app.kubernetes.io/name (most specific match to the -metrics
+# Service). Metrics port on each Service is named "metrics" — we target
+# by port name so port-number changes don't break scraping.
+#
+# See: docs/adr/0025-servicemonitor-strategy.md
+
+# ─────────────────────────────────────────────────────────────
+# application-controller — the reconciler (StatefulSet)
+# ─────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-application-controller
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/component: application-controller
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+
+---
+# ─────────────────────────────────────────────────────────────
+# server — the API + UI
+# ─────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-server
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/component: server
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+
+---
+# ─────────────────────────────────────────────────────────────
+# repo-server — Git repo + Helm rendering
+# ─────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-repo-server
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/component: repo-server
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+
+---
+# ─────────────────────────────────────────────────────────────
+# applicationset-controller — templated Application generation
+# ─────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-applicationset-controller
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/component: applicationset-controller
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-applicationset-controller
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+
+---
+# ─────────────────────────────────────────────────────────────
+# notifications-controller — Slack/webhook routing (Phase 8)
+# ─────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-notifications-controller
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/component: notifications-controller
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-notifications-controller-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics

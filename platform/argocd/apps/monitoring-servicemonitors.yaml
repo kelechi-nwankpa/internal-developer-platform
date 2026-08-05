@@ -1,0 +1,44 @@
+---
+# monitoring-servicemonitors — hand-rolled ServiceMonitors that don't come
+# from a chart.
+#
+# Most Phase 2 operators had ServiceMonitors added via their own chart values
+# (cert-manager, ESO, ExternalDNS — Task 3.5 edits to their Application files).
+# ArgoCD is the exception because it's a raw-manifest install (ADR-0014, not
+# Helm) — so we hand-write its 5 ServiceMonitors here.
+#
+# Vault will land here too when its own sub-task ships (deferred per Task
+# 3.5's Vault special case — requires telemetry config in the Vault HCL
+# stanza, worth its own investigation).
+#
+# See: docs/adr/0025-servicemonitor-strategy.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-servicemonitors
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/monitoring
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Defensive default namespace. ServiceMonitors themselves declare their
+    # own namespace via metadata.namespace (each SM lives in the same
+    # namespace as the Service it targets — ArgoCD SMs in `argocd`).
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -58,6 +58,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0022](0022-aws-load-balancer-controller-defer-to-eks.md) | Defer AWS Load Balancer Controller install to Phase 9 EKS; document Phase 9 activation reference | Accepted | 2026-08-04 |
 | [0023](0023-metrics-server-vs-prometheus.md) | Install metrics-server separately from the Prometheus stack; use `--kubelet-insecure-tls` on kind | Accepted | 2026-08-05 |
 | [0024](0024-kube-prometheus-stack.md) | Install kube-prometheus-stack bundle (Prometheus + Grafana + Alertmanager + operator) as one ArgoCD Application | Accepted | 2026-08-05 |
+| [0025](0025-servicemonitor-strategy.md) | ServiceMonitor strategy: enable via chart values where supported, hand-write only where necessary | Accepted | 2026-08-05 |
 
 ## References
 

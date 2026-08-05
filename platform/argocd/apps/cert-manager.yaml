@@ -46,6 +46,20 @@ spec:
           # down. Acceptable — safer default for a platform component.
           keep: true
 
+        # ─────────────────────────────────────────────────────────────
+        # Prometheus scraping (Task 3.5)
+        # ─────────────────────────────────────────────────────────────
+        # Enable the chart's built-in ServiceMonitor CR so Prometheus
+        # scrapes cert-manager's /metrics endpoint. Requires the
+        # ServiceMonitor CRD, which lands with kube-prometheus-stack
+        # (ADR-0024). Chart writes SMs for all three cert-manager pods
+        # (controller, webhook, cainjector). See ADR-0025 for the
+        # "chart values over hand-rolled ServiceMonitors" pattern.
+        prometheus:
+          enabled: true
+          servicemonitor:
+            enabled: true
+
   destination:
     # https://kubernetes.default.svc is the synthetic "in-cluster" entry —
     # same one we saw in `argocd cluster list`. ArgoCD authenticates via the

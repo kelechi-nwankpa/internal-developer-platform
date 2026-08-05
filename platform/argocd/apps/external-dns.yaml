@@ -109,6 +109,16 @@ spec:
         # `info` after that is fine — logs stay useful without being noisy.
         logLevel: info
 
+        # ─────────────────────────────────────────────────────────────
+        # Prometheus scraping (Task 3.5)
+        # ─────────────────────────────────────────────────────────────
+        # Enable the chart's built-in ServiceMonitor so Prometheus scrapes
+        # ExternalDNS's /metrics endpoint (port 7979). Requires the
+        # ServiceMonitor CRD from kube-prometheus-stack (ADR-0024).
+        # See ADR-0025 for the "chart values over hand-rolled" pattern.
+        serviceMonitor:
+          enabled: true
+
   destination:
     server: https://kubernetes.default.svc
     # Conventional namespace for external-dns.
