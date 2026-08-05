@@ -1,0 +1,156 @@
+---
+# kube-prometheus-stack — the Phase 3 observability foundation.
+#
+# Bundles Prometheus + Grafana + Alertmanager + prometheus-operator +
+# kube-state-metrics + node-exporter into one Helm release. ~10 pods total.
+# ~180 pre-built Kubernetes dashboards land automatically.
+#
+# NOT the same thing as metrics-server (Task 3.2, ADR-0023). This is rich
+# observability with history; metrics-server is the k8s Metrics API for
+# HPA and kubectl top. Both needed, complementary.
+#
+# ServiceMonitors for our Phase 2 operators (cert-manager, ESO, Vault,
+# ExternalDNS, ArgoCD) land in Task 3.5 — this Application installs the
+# stack; the ServiceMonitor CRs that make scraping actually happen are
+# a separate concern with a separate lifecycle.
+#
+# See: docs/adr/0024-kube-prometheus-stack.md
+#      docs/phases/phase-3-observability.md (Task 3.3)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    # Chart maintainers ship patch releases very frequently (community-
+    # scale user base surfaces regressions within hours). Latest patch
+    # in the same minor is almost always safe.
+    targetRevision: 88.1.5
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # PROMETHEUS — the metrics database + scraper
+        # ─────────────────────────────────────────────────────────────
+        prometheus:
+          enabled: true
+          prometheusSpec:
+            # 24h retention on kind (limited local storage). EKS in Phase 9
+            # bumps to 15d or longer + Thanos for long-term storage.
+            retention: 24h
+
+            # Persistent storage via PVC. Uses kind's local-path-provisioner
+            # by default. 2 GiB is comfortable headroom for 24h of Phase
+            # 2's metrics (~500 MiB actually needed).
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  # storageClassName: null → kind default (local-path).
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 2Gi
+
+            # Scrape config — chart defaults are extensive and sensible.
+            # Chart auto-adds ServiceMonitors for its own components
+            # (Alertmanager, Grafana, kubelet cAdvisor, node-exporter,
+            # kube-state-metrics, prometheus itself). We add ServiceMonitors
+            # for our Phase 2 operators in Task 3.5.
+
+        # ─────────────────────────────────────────────────────────────
+        # GRAFANA — dashboards + Explore + user management
+        # ─────────────────────────────────────────────────────────────
+        grafana:
+          enabled: true
+
+          # Empty adminPassword = chart auto-generates a random password
+          # and stores it in Secret/prometheus-grafana at key admin-password.
+          # We retrieve it once for first login, then rotate + delete the
+          # secret (same hygiene pattern as ArgoCD admin — Task 2.2.d).
+          adminPassword: ""
+
+          persistence:
+            enabled: true
+            size: 1Gi
+            # storageClassName: null → kind default (local-path).
+
+          # Grafana ships with hundreds of dashboards pre-configured for
+          # Kubernetes clusters — no manual import needed. Node, pod,
+          # cluster, kubelet, apiserver, etcd, workload, resource views.
+          # Chart default enables all of them via the `defaultDashboards`
+          # flag; leave on.
+
+        # ─────────────────────────────────────────────────────────────
+        # ALERTMANAGER — alert routing (destinations wired in Phase 8)
+        # ─────────────────────────────────────────────────────────────
+        alertmanager:
+          enabled: true
+          alertmanagerSpec:
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 1Gi
+          # No routing destinations configured yet. Phase 8 wires Slack /
+          # PagerDuty. Right now Alertmanager runs but has no outbound
+          # webhook targets — alerts land in its UI, don't leave the cluster.
+
+        # ─────────────────────────────────────────────────────────────
+        # SUPPORTING COMPONENTS — chart defaults, all enabled
+        # ─────────────────────────────────────────────────────────────
+        # prometheus-operator: manages Prometheus, Alertmanager,
+        # ServiceMonitor, PodMonitor, PrometheusRule CRDs. Required.
+        prometheusOperator:
+          enabled: true
+
+        # kube-state-metrics: exports Kubernetes object state as metrics
+        # (kube_pod_status_phase, kube_deployment_status_replicas, etc.).
+        # Most dashboards depend on it — required.
+        kubeStateMetrics:
+          enabled: true
+
+        # node-exporter: OS-level metrics per node (CPU, memory, disk,
+        # network). DaemonSet. Useful even for single-node kind for
+        # baseline resource tracking.
+        nodeExporter:
+          enabled: true
+
+        # ─────────────────────────────────────────────────────────────
+        # OPTIONAL COMPONENTS — deferred
+        # ─────────────────────────────────────────────────────────────
+        # prometheus-adapter: custom-metric HPA (scale on request rate,
+        # p99 latency, external metrics). Not needed for CPU/memory HPA
+        # (metrics-server handles that). Add in Phase 8 if we develop
+        # custom-metric autoscaling requirements.
+        # (Not a chart sub-value — installed separately if needed.)
+
+        # thanosRuler / Thanos sidecar: long-term Prometheus storage on
+        # object storage. Only meaningful on EKS with S3. Deferred to
+        # Phase 9. Not enabled here.
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Conventional namespace for the observability stack. Chart creates it.
+    namespace: monitoring
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Server-side apply required — prometheus-operator's CRDs are large
+      # (ServiceMonitor, PrometheusRule, Alertmanager, Prometheus itself
+      # all have rich OpenAPI schemas). Same ADR-0014 lesson we've been
+      # applying to every operator with big CRDs.
+      - ServerSideApply=true
