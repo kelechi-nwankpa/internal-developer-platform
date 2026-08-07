@@ -104,6 +104,16 @@ spec:
             # Placeholder integrations block — real GitHub token wired
             # up in Wave 2 or Phase 8 when we add Software Templates.
             integrations: {}
+            # Backstage 1.32.0's schema REQUIRES a techdocs block even
+            # if we're not using TechDocs. Minimal local-only config
+            # satisfies the schema without depending on S3/GCS/Azure.
+            # Real TechDocs setup lands in Wave 2 or Phase 8.
+            techdocs:
+              builder: local
+              publisher:
+                type: local
+              generator:
+                runIn: local
 
         # ─────────────────────────────────────────────────────────────
         # PostgreSQL sub-chart (bitnami/postgresql)
