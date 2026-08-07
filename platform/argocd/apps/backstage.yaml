@@ -1,0 +1,100 @@
+---
+# backstage — developer portal + service catalog + software templates.
+#
+# Phase 5 MVP install. Uses the official Backstage Helm chart with:
+#   - Default upstream image (ghcr.io/backstage/backstage:latest) — see
+#     ADR-0028 for the explicit tech-debt on :latest. Migration to a
+#     custom-built image lands in Wave 2 or Phase 8.
+#   - PostgreSQL sub-chart enabled (persistent state: catalog, ownership,
+#     template runs) — chart bundles bitnami/postgresql.
+#   - Ingress off — port-forward for kind. Phase 5 Wave 2 or Phase 8
+#     wires cert-manager + Ingress at portal.idp.seniormankelz.dev.
+#   - Guest auth (chart default). No SSO wiring for MVP. Phase 5 Wave 2
+#     could add GitHub OAuth.
+#
+# See: docs/adr/0028-backstage-install-and-image-strategy.md
+#      docs/phases/phase-5-backstage.md (Task 5.2)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backstage
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # Official Backstage-team-maintained Helm repo.
+    repoURL: https://backstage.github.io/charts
+    chart: backstage
+    targetRevision: 2.8.2
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Backstage app container
+        # ─────────────────────────────────────────────────────────────
+        # Accept chart's default image (ghcr.io/backstage/backstage:latest).
+        # TECH DEBT per ADR-0028 — :latest violates our no-latest-in-manifests
+        # rule (CLAUDE.md §9), but pinning here doesn't help: real deployments
+        # build their own custom image via backstage-cli. Wave 2 or Phase 8
+        # replaces this with a custom-built + version-pinned image.
+        backstage:
+          image:
+            registry: ghcr.io
+            repository: backstage/backstage
+            tag: latest
+          replicas: 1
+
+          # Backstage reads DB connection from env vars automatically when
+          # postgresql sub-chart is enabled. No override needed.
+
+        # ─────────────────────────────────────────────────────────────
+        # PostgreSQL sub-chart (bitnami/postgresql)
+        # ─────────────────────────────────────────────────────────────
+        # Real DB matches prod shape and survives pod restart. SQLite
+        # (chart default when postgresql.enabled=false) would be ephemeral.
+        postgresql:
+          enabled: true
+          auth:
+            # Auto-generate a random password on first install (chart
+            # writes to a Secret). Same rotation discipline as ArgoCD
+            # + Grafana admin credentials would apply if we ever rotated.
+            # For MVP: accept chart-generated + never touch it.
+            password: ""
+            database: backstage
+            username: backstage
+          primary:
+            persistence:
+              enabled: true
+              # Small — catalog + template runs won't fill this on kind.
+              # EKS gets RDS via Phase 9 Crossplane XRD (nice callback
+              # to Phase 4).
+              size: 2Gi
+
+        # ─────────────────────────────────────────────────────────────
+        # Ingress + Service — port-forward for kind, deferred for later
+        # ─────────────────────────────────────────────────────────────
+        service:
+          type: ClusterIP
+        ingress:
+          # No Ingress on kind (no LB provisioner + no real DNS). Phase 5
+          # Wave 2 or Phase 8 wires cert-manager Certificate + Ingress at
+          # portal.idp.seniormankelz.dev.
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: backstage
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Backstage chart resources aren't especially large — SSA is still
+      # good defensive default per our established pattern (ADR-0014).
+      - ServerSideApply=true
