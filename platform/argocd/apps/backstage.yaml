@@ -48,8 +48,55 @@ spec:
             tag: latest
           replicas: 1
 
-          # Backstage reads DB connection from env vars automatically when
-          # postgresql sub-chart is enabled. No override needed.
+          # ───────────────────────────────────────────────────────────
+          # App config overrides — required for guest auth to work
+          # ───────────────────────────────────────────────────────────
+          # Backstage v1.30+ dropped implicit guest auth for security.
+          # Without these overrides the backend returns 401 on every
+          # /api/catalog request and the UI shows "Failed to load
+          # entities." Explicitly enabling guest auth here.
+          #
+          # Chart renders this into a ConfigMap and mounts it into the
+          # container as app-config.extra.yaml, which merges with the
+          # default app-config.yaml at boot.
+          appConfig:
+            app:
+              title: IDP Portal
+              baseUrl: http://localhost:7007
+            backend:
+              baseUrl: http://localhost:7007
+              listen:
+                port: 7007
+              cors:
+                origin: http://localhost:7007
+                methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+                credentials: true
+              # Backstage requires a signing key for its internal service
+              # tokens. Random string here — real deployment would source
+              # from ESO. MVP good enough.
+              auth:
+                keys:
+                  - secret: development-only-signing-key-do-not-use-in-prod
+            auth:
+              # `development` environment allows guest auth without extra
+              # opt-in. `production` requires dangerouslyAllowOutsideDevelopment.
+              # For MVP kind: development is fine.
+              environment: development
+              providers:
+                guest: {}
+            catalog:
+              # Rules: what entity kinds Backstage will accept from
+              # configured locations. Full list for maximum flexibility.
+              rules:
+                - allow: [Component, System, API, Resource, Location, User, Group, Template, Domain]
+              # Empty locations — Task 5.4 will add entries pointing at
+              # this repo's catalog-info.yaml files. Removes the noisy
+              # "file:/examples/entities.yaml does not exist" warnings
+              # from the default config.
+              locations: []
+            # Placeholder integrations block — real GitHub token wired
+            # up in Wave 2 or Phase 8 when we add Software Templates.
+            integrations: {}
 
         # ─────────────────────────────────────────────────────────────
         # PostgreSQL sub-chart (bitnami/postgresql)
