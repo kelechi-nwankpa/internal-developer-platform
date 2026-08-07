@@ -36,16 +36,23 @@ spec:
         # ─────────────────────────────────────────────────────────────
         # Backstage app container
         # ─────────────────────────────────────────────────────────────
-        # Accept chart's default image (ghcr.io/backstage/backstage:latest).
-        # TECH DEBT per ADR-0028 — :latest violates our no-latest-in-manifests
-        # rule (CLAUDE.md §9), but pinning here doesn't help: real deployments
-        # build their own custom image via backstage-cli. Wave 2 or Phase 8
-        # replaces this with a custom-built + version-pinned image.
+        # Pinned to 1.32.0 — a known-internally-consistent demo image
+        # that predates the notifications-plugin frontend/backend
+        # mismatch on newer :latest builds. Discovered this the hard
+        # way when :latest broke the whole UI with
+        # "NotImplementedError: No implementation available for
+        # apiRef{plugin.notifications.service}".
+        #
+        # This is a middle ground on ADR-0028's tech debt: still the
+        # upstream demo image (can't add custom plugins), but at least
+        # a pinned tag (satisfies our no-:latest rule, reproducible).
+        # Full Wave 2 fix (custom-built image via backstage-cli) still
+        # in the deferred pile.
         backstage:
           image:
             registry: ghcr.io
             repository: backstage/backstage
-            tag: latest
+            tag: "1.32.0"
           replicas: 1
 
           # ───────────────────────────────────────────────────────────
