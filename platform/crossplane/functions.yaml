@@ -1,0 +1,42 @@
+---
+# Crossplane Composition Functions — pluggable rendering logic invoked by
+# Compositions during pipeline mode.
+#
+# Two Functions for our first XRD (Task 4.4):
+#   - function-go-templating: renders MRs from Go templates given XR fields
+#   - function-auto-ready: marks XR Ready:True when all rendered MRs are Ready
+#
+# These pair in the Composition's pipeline — templating creates the MRs,
+# auto-ready watches their status and rolls up to the XR. Together they
+# replace the legacy patch-and-transform composition mode (which will be
+# removed in Crossplane v2.x per ADR-0026).
+#
+# NOTE: same directory as providers.yaml — the crossplane-providers
+# ArgoCD Application picks up both files. The Application name is a
+# legacy artifact from when this directory only held providers; conceptually
+# it now manages the whole "Crossplane packages" collection.
+
+apiVersion: pkg.crossplane.io/v1beta1
+kind: Function
+metadata:
+  name: function-go-templating
+spec:
+  # Community-maintained Go-templating function. Feels like Helm templates —
+  # loops, conditionals, computed values, sprig functions. The go-to for any
+  # Composition with more than trivial field mapping.
+  package: xpkg.upbound.io/crossplane-contrib/function-go-templating:v0.12.3
+
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  # Rolls up the Ready status of composed MRs to the parent XR/XRC. Without
+  # this, XRs stay perpetually NotReady even when all MRs are Ready — you'd
+  # have to write custom status logic in your Composition.
+  #
+  # Note: v0.7.0 marked "Latest" by maintainer despite v0.6.7 being newer
+  # chronologically — v0.6.7 is a v0.6-track bugfix, v0.7.0 is the
+  # forward-recommended path.
+  package: xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.7.0
