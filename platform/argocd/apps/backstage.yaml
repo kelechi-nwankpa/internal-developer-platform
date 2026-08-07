@@ -54,6 +54,15 @@ spec:
             repository: backstage/backstage
             tag: "1.32.0"
           replicas: 1
+          # Override chart default NODE_ENV=production. Some Backstage
+          # auth flows (particularly guest and dev-only shortcuts) are
+          # gated behind NODE_ENV=development. Trying this as a Path C
+          # attempt before committing to Wave 2 custom image work.
+          # If Backstage doesn't come up cleanly with this, we pivot to
+          # Path B (defer + document).
+          extraEnvVars:
+            - name: NODE_ENV
+              value: development
 
           # ───────────────────────────────────────────────────────────
           # App config overrides — required for guest auth to work
