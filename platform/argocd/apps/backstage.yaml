@@ -105,11 +105,36 @@ spec:
               # configured locations. Full list for maximum flexibility.
               rules:
                 - allow: [Component, System, API, Resource, Location, User, Group, Template, Domain]
-              # Empty locations — Task 5.4 will add entries pointing at
-              # this repo's catalog-info.yaml files. Removes the noisy
-              # "file:/examples/entities.yaml does not exist" warnings
-              # from the default config.
-              locations: []
+              # Task 5.4 — self-catalog the platform. Each file describes
+              # a slice of the entity model (see catalog/README.md):
+              #   owners:     the identity model (User + Group)
+              #   systems:    the grouping model (Domain + Systems)
+              #   components: 14 platform Components, one per ArgoCD App
+              #   apis:       the infra APIs the platform offers (XRDs)
+              #
+              # Why raw.githubusercontent.com and not github.com/.../blob:
+              # blob URLs would require a GitHub integration token in
+              # `appConfig.integrations.github` to avoid API rate limits.
+              # Raw URLs go through the anonymous CDN — fine for a public
+              # repo. When we add the GitHub integration in Wave 2 (for
+              # scaffolder templates + pretty source links), we can switch.
+              locations:
+                - type: url
+                  target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/catalog/owners.yaml
+                  rules:
+                    - allow: [User, Group]
+                - type: url
+                  target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/catalog/systems.yaml
+                  rules:
+                    - allow: [Domain, System]
+                - type: url
+                  target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/catalog/components.yaml
+                  rules:
+                    - allow: [Component]
+                - type: url
+                  target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/catalog/apis.yaml
+                  rules:
+                    - allow: [API]
             # Placeholder integrations block — real GitHub token wired
             # up in Wave 2 or Phase 8 when we add Software Templates.
             integrations: {}

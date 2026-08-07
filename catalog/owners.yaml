@@ -1,0 +1,37 @@
+---
+# owners.yaml — the identity model. Every other entity references these.
+#
+# Backstage requires every entity to have an owner. MVP has one Group
+# (platform-team) owning everything, and one User (kaycee) who is that
+# group's sole member. Real orgs sync Users + Groups from an identity
+# provider (GitHub org, Okta, LDAP) via a Backstage plugin; that's out
+# of scope for Wave 1.
+#
+# The email field is deliberately omitted — this is a public repo and
+# adding a personal address here would expose it to catalog scrapers.
+# Real deployments would populate email from the identity provider.
+
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: kaycee
+  description: "Platform engineer + project owner. Solo IC building the IDP."
+spec:
+  memberOf:
+    - platform-team
+  profile:
+    displayName: Kaycee
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-team
+  description: "Owns the IDP platform — control plane, security, observability, infra APIs, and the developer portal."
+spec:
+  type: team
+  # No parent group — platform-team is a top-level team. Real orgs might
+  # nest under a "platform-engineering" department.
+  children: []
+  profile:
+    displayName: Platform Team

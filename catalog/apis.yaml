@@ -1,0 +1,74 @@
+---
+# apis.yaml — infrastructure APIs the platform offers to developers.
+#
+# In an IDP, "APIs" isn't limited to REST/GraphQL. Every XRD is an API:
+# a stable contract a developer can `kubectl apply` against without
+# knowing (or caring) how the platform materialises it into cloud
+# resources.
+#
+# Wave 1 has one XRD (ObjectBucket from Phase 4). Wave 2 / Phase 6
+# adds PostgresDatabase, Namespace, ManagedSecret. Each lands as an
+# additional API entity here.
+#
+# spec.type: `openapi` — XRDs use OpenAPI v3 schemas under the hood
+# (see the XRD's spec.versions[].schema.openAPIV3Schema block). This
+# is the closest Backstage-native type match.
+
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: object-bucket-xrd
+  description: "Self-serve S3 bucket + IAM read/write policies. Developer applies an ObjectBucket claim, Crossplane materialises Bucket + BucketVersioning + BucketPublicAccessBlock + IAM Policy."
+  annotations:
+    backstage.io/kubernetes-id: object-bucket-xrd
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/crossplane/xrd-objectbucket.yaml
+  tags: [platform, api, iac, aws, s3]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0027-first-xrd-objectbucket.md
+      title: ADR-0027 (API surface + Composition pattern + naming)
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/crossplane/xrd-objectbucket.yaml
+      title: XRD source
+      icon: github
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/crossplane/composition-objectbucket.yaml
+      title: Composition source
+      icon: github
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-infra
+  # The literal XRD's OpenAPI v3 schema — inline for MVP visibility.
+  # A future improvement would be a Backstage plugin that reads the
+  # live XRD from the cluster and renders its schema (would keep this
+  # in sync automatically). For now, hand-authored + reviewed on XRD
+  # bumps.
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: ObjectBucket
+      version: v1alpha1
+      description: |
+        A developer-facing S3 bucket API. Encapsulates the ~4 AWS
+        Managed Resources (Bucket, Versioning, PublicAccessBlock,
+        IAM Policy) that would otherwise all need to be authored
+        by hand.
+    paths: {}
+    components:
+      schemas:
+        ObjectBucketSpec:
+          type: object
+          required: [region]
+          properties:
+            region:
+              type: string
+              enum: [eu-west-1, us-east-1]
+              description: AWS region for the bucket.
+            publicRead:
+              type: boolean
+              default: false
+              description: If true, allows anonymous s3:GetObject. Off by default (deny-by-default per project principle).
+            versioning:
+              type: boolean
+              default: true
+              description: If true, enables S3 object versioning for point-in-time recovery.

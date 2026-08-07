@@ -1,0 +1,337 @@
+---
+# components.yaml — 14 platform Components, one per ArgoCD Application
+# (plus ArgoCD itself, which self-manages via a raw manifest and is not
+# an Application on the cluster but IS still a platform component).
+#
+# Every Component follows the same shape:
+#   - spec.type: service       (all are running services, closest fit)
+#   - spec.lifecycle: experimental  (we're on kind; nothing is prod yet)
+#   - spec.owner: platform-team
+#   - spec.system: one of platform-security / platform-observability /
+#     platform-infra
+#
+# Annotations that matter for Task 5.5 plugin wiring:
+#   - backstage.io/kubernetes-id: the label the Kubernetes plugin looks
+#     for on pods/deployments. We keep it equal to the component name.
+#   - argocd/app-name: the ArgoCD Application name. Same rule: equal to
+#     the component name. `argocd` component omits this — it has no
+#     Application because it manages itself.
+#   - backstage.io/source-location: link to the file that defines the
+#     component in git. Renders as "View source" in the UI.
+
+# ─────────────────────────────────────────────────────────────────────
+# platform-security
+# ─────────────────────────────────────────────────────────────────────
+
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cert-manager
+  description: "TLS certificate lifecycle — issuance, renewal, rotation across the cluster. Chart-installed, ArgoCD-managed."
+  annotations:
+    backstage.io/kubernetes-id: cert-manager
+    argocd/app-name: cert-manager
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/cert-manager.yaml
+  tags: [platform, security, tls]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0016-cert-manager-install-via-helm.md
+      title: ADR-0016
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-security
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cert-manager-issuers
+  description: "ClusterIssuers — SelfSigned for kind, Let's Encrypt (DNS-01 via Route53) for EKS. See ADR-0017 for the switch strategy."
+  annotations:
+    backstage.io/kubernetes-id: cert-manager-issuers
+    argocd/app-name: cert-manager-issuers
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/cert-manager-issuers.yaml
+  tags: [platform, security, tls]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0017-cert-manager-issuer-strategy.md
+      title: ADR-0017
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-security
+  dependsOn:
+    - component:cert-manager
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: external-secrets
+  description: "External Secrets Operator (ESO) — syncs external secret backends into native Kubernetes Secrets. Vault on kind, AWS Secrets Manager on EKS (ADR-0020)."
+  annotations:
+    backstage.io/kubernetes-id: external-secrets
+    argocd/app-name: external-secrets
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/external-secrets.yaml
+  tags: [platform, security, secrets]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0018-external-secrets-install-via-helm.md
+      title: ADR-0018
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0020-eso-backend-strategy.md
+      title: ADR-0020
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-security
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: external-secrets-stores
+  description: "ClusterSecretStore + SecretStore CRs pointing ESO at Vault via Kubernetes auth. Materialises the backend-strategy ADR into cluster objects."
+  annotations:
+    backstage.io/kubernetes-id: external-secrets-stores
+    argocd/app-name: external-secrets-stores
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/external-secrets-stores.yaml
+  tags: [platform, security, secrets]
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-security
+  dependsOn:
+    - component:external-secrets
+    - component:vault
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: vault
+  description: "HashiCorp Vault — standalone install with manual unseal. Kind-local secret backend. Re-init cycle documented in kind-recovery runbook FM1."
+  annotations:
+    backstage.io/kubernetes-id: vault
+    argocd/app-name: vault
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/vault.yaml
+  tags: [platform, security, secrets, kind-only]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0019-vault-install-for-eso-kind-backend.md
+      title: ADR-0019
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/runbooks/kind-recovery.md
+      title: kind-recovery runbook
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-security
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: vault-config
+  description: "Vault Auth backend + policies + KV engine bootstrap. Post-install job that runs `vault write auth/kubernetes/config` and creates ESO policies."
+  annotations:
+    backstage.io/kubernetes-id: vault-config
+    argocd/app-name: vault-config
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/vault-config.yaml
+  tags: [platform, security, secrets]
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-security
+  dependsOn:
+    - component:vault
+
+# ─────────────────────────────────────────────────────────────────────
+# platform-observability
+# ─────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: kube-prometheus-stack
+  description: "Prometheus + Grafana + Alertmanager + prometheus-operator bundled as one chart. The whole metrics stack in one Application."
+  annotations:
+    backstage.io/kubernetes-id: kube-prometheus-stack
+    argocd/app-name: kube-prometheus-stack
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/kube-prometheus-stack.yaml
+  tags: [platform, observability, metrics]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0024-kube-prometheus-stack.md
+      title: ADR-0024
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-observability
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: metrics-server
+  description: "Kubernetes metrics source for HPA/VPA and `kubectl top`. Installed separately from Prometheus (ADR-0023). `--kubelet-insecure-tls` on kind."
+  annotations:
+    backstage.io/kubernetes-id: metrics-server
+    argocd/app-name: metrics-server
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/metrics-server.yaml
+  tags: [platform, observability, metrics]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0023-metrics-server-vs-prometheus.md
+      title: ADR-0023
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-observability
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: monitoring-servicemonitors
+  description: "Hand-written ServiceMonitor CRs for components whose charts don't ship one (ArgoCD, ESO stores). See ADR-0025 for the strategy."
+  annotations:
+    backstage.io/kubernetes-id: monitoring-servicemonitors
+    argocd/app-name: monitoring-servicemonitors
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/monitoring-servicemonitors.yaml
+  tags: [platform, observability, metrics]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0025-servicemonitor-strategy.md
+      title: ADR-0025
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-observability
+  dependsOn:
+    - component:kube-prometheus-stack
+
+# ─────────────────────────────────────────────────────────────────────
+# platform-infra
+# ─────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: argocd
+  # No argocd/app-name annotation — ArgoCD manages itself via a pinned
+  # raw manifest install (ADR-0014), not an ArgoCD Application. The
+  # `root` app-of-apps is the closest analogue but conceptually meta.
+  description: "GitOps control plane — reconciles cluster state to git. Installed via raw pinned manifest (ADR-0014), then app-of-apps takes over (ADR-0015)."
+  annotations:
+    backstage.io/kubernetes-id: argocd
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/tree/main/platform/argocd
+  tags: [platform, infrastructure, gitops]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0014-argocd-raw-install-vs-helm.md
+      title: ADR-0014
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0015-argocd-app-of-apps-pattern.md
+      title: ADR-0015
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-infra
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: external-dns
+  description: "DNS record sync — reads Kubernetes Ingress/Service annotations, writes DNS records. `inmemory` provider on kind, Route53 via IRSA on EKS (ADR-0021)."
+  annotations:
+    backstage.io/kubernetes-id: external-dns
+    argocd/app-name: external-dns
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/external-dns.yaml
+  tags: [platform, infrastructure, dns]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0021-external-dns-install-and-provider-strategy.md
+      title: ADR-0021
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-infra
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: crossplane
+  description: "Crossplane core — the Kubernetes-native infrastructure API layer. XRDs + Compositions turn 'apply this YAML' into 'provision that cloud resource'."
+  annotations:
+    backstage.io/kubernetes-id: crossplane
+    argocd/app-name: crossplane
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/crossplane.yaml
+  tags: [platform, infrastructure, iac]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0026-crossplane-install-and-version.md
+      title: ADR-0026
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-infra
+  providesApis:
+    - object-bucket-xrd
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: crossplane-providers
+  description: "AWS providers (family + s3 + iam) plus Functions (fn-go-templating + fn-auto-ready). The layer that turns Crossplane XRs into AWS API calls."
+  annotations:
+    backstage.io/kubernetes-id: crossplane-providers
+    argocd/app-name: crossplane-providers
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/crossplane-providers.yaml
+  tags: [platform, infrastructure, iac, aws]
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-infra
+  dependsOn:
+    - component:crossplane
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: backstage
+  description: "This app — the developer portal. Catalogs itself here. Wave 1 MVP install per ADR-0028 accepts the demo image as tech debt with a documented Wave 2 migration path."
+  annotations:
+    backstage.io/kubernetes-id: backstage
+    argocd/app-name: backstage
+    backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/backstage.yaml
+  tags: [platform, infrastructure, portal]
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0028-backstage-install-and-image-strategy.md
+      title: ADR-0028
+      icon: docs
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: platform-infra

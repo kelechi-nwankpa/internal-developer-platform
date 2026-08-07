@@ -1,0 +1,95 @@
+---
+# systems.yaml — the grouping model. Domain > System > Component.
+#
+# Backstage's Domain and System entities let us organise the ~14 platform
+# Components into meaningful buckets. Without them, the catalog is a flat
+# list; with them, it becomes navigable (click Domain → see its Systems,
+# click System → see its Components).
+#
+# Three Systems, split by concern:
+#   - platform-security: TLS, secrets, secret backends
+#   - platform-observability: metrics, dashboards, alerts (Wave 2/Phase 8
+#     adds logs + traces)
+#   - platform-infra: GitOps, DNS, infra-API layer, developer portal
+#
+# All Systems roll up to one Domain (`idp`) — the whole thing IS the
+# Internal Developer Platform. Domains matter more when you have multiple
+# platforms (e.g. `idp` + `data-platform` + `ml-platform` in one Backstage).
+
+apiVersion: backstage.io/v1alpha1
+kind: Domain
+metadata:
+  name: idp
+  description: "Internal Developer Platform — the whole thing. Reduces microservice onboarding from ~2 days to ~10 minutes."
+  tags:
+    - platform
+    - domain
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform
+      title: Repository
+      icon: github
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/CLAUDE.md
+      title: Contributor guide (CLAUDE.md)
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/tree/main/docs/adr
+      title: Architecture Decision Records
+      icon: docs
+spec:
+  owner: platform-team
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: platform-security
+  description: "TLS certificate lifecycle, secret backends, and secret injection. Deny-by-default posture across the cluster."
+  tags:
+    - platform
+    - security
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0016-cert-manager-install-via-helm.md
+      title: ADR-0016 cert-manager install
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0019-vault-install-for-eso-kind-backend.md
+      title: ADR-0019 Vault install
+      icon: docs
+spec:
+  owner: platform-team
+  domain: idp
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: platform-observability
+  description: "Metrics, dashboards, and alerts. Prometheus + Grafana + Alertmanager. Logs and traces land in Wave 2 / Phase 8."
+  tags:
+    - platform
+    - observability
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0024-kube-prometheus-stack.md
+      title: ADR-0024 kube-prometheus-stack
+      icon: docs
+spec:
+  owner: platform-team
+  domain: idp
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: platform-infra
+  description: "GitOps control plane, DNS, cloud-infra API layer (Crossplane), and the developer portal itself."
+  tags:
+    - platform
+    - infrastructure
+  links:
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0015-argocd-app-of-apps-pattern.md
+      title: ADR-0015 ArgoCD app-of-apps
+      icon: docs
+    - url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0026-crossplane-install-and-version.md
+      title: ADR-0026 Crossplane install
+      icon: docs
+spec:
+  owner: platform-team
+  domain: idp
