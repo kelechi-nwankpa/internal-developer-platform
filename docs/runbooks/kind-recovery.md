@@ -59,7 +59,17 @@ kubectl -n vault exec vault-0 -- vault status
 # Sealed: false ← required before ESO can auth
 ```
 
-**No further action needed.** ESO's next reconcile (default 30s) resumes normal operation.
+**Usually no further action needed.** ESO's next reconcile (default 30s) resumes normal operation.
+
+**BUT** — if ESO's ClusterSecretStore still shows `Ready: False` after ~2 minutes, ESO's reconciler has backed off (exponential backoff up to 5-10 min after several failures). Kick the pod to force an immediate retry:
+
+```bash
+kubectl -n external-secrets delete pod -l app.kubernetes.io/name=external-secrets
+```
+
+Within ~30s of the fresh pod starting, `ClusterSecretStore/vault-kv` flips back to `Ready: True`. The `external-secrets-stores` Application follows within another 30s.
+
+**Discovered during Phase 4 troubleshooting after a Docker Desktop restart** — updated so future me doesn't wait for a 10-minute backoff timer at 3am when the fix is a 30-second pod kick.
 
 ### Prevention
 
@@ -401,6 +411,84 @@ kubectl delete secret test-from-vault -n default
 - The runbook itself is the prevention — every step is documented so future-you can execute mechanically at 3am.
 - Long-term Phase 8+: script the Vault re-configuration commands as a `make vault-configure` target so step 4c becomes one command.
 - Long-term Phase 8+: auto-unseal via k8s Secret ([ADR-0019](../adr/0019-vault-install-for-eso-kind-backend.md)) removes step 4b from every recovery.
+
+---
+
+## Failure Mode 5: Chart-generated Secret drift after post-install rotation
+
+Any operator where a Helm chart auto-generates a credential Secret on first install (Grafana admin, some Alertmanager receivers, some database operators) can hit this pattern. Grafana is the canonical example.
+
+### Symptom
+
+- ArgoCD Application shows `Synced/Healthy` momentarily, then flips to `OutOfSync/Healthy` on next reconcile
+- `argocd app diff <name>` shows drift on 2 resources:
+  - The chart-generated `Secret` — a specific field (e.g., `data.admin-password`)
+  - A `Deployment` (or StatefulSet) with a `checksum/secret` annotation that follows the Secret
+- Even after force-syncing, the drift reappears within one reconcile cycle
+- The Application stays `Healthy` throughout (the operator works fine)
+
+### Impact
+
+- **Application-level.** Cosmetic drift indicator, but the underlying workload works.
+- **No user-facing impact** if you're using the rotated credential (which lives in the operator's own DB / config), not the Secret.
+- **BUT:** if `syncPolicy.automated.selfHeal: true`, ArgoCD will reset the Secret every reconcile — cycling with the chart's re-generation. Grafana's login DB won't be affected (it authenticates against DB, not Secret), but you'll see a lot of noise.
+
+### Diagnosis
+
+```bash
+# Which specific resources are OutOfSync?
+kubectl -n argocd get application <name> -o json | jq -r '.status.resources[] | select(.status != "Synced") | "\(.kind)/\(.name): \(.status)"'
+
+# What annotations does the Deployment have?
+kubectl -n <namespace> get deploy <name> -o jsonpath='{.spec.template.metadata.annotations}' | jq .
+```
+
+If you see a chart-generated Secret + a `checksum/*` annotation on the Deployment, this is the pattern.
+
+### Root cause
+
+Helm charts often use `randAlphaNum` or `lookup` functions to generate credentials on first render. When you rotate the credential post-install (via `grafana cli admin reset-admin-password` or equivalent) and delete the field from the Secret for hygiene, the chart's next render sees the field as empty and re-generates a fresh random value. Every render = different value. ArgoCD sees the difference and flags it. If it applies, chart generates again on next render, infinitely.
+
+Grafana specifically: the Deployment has `checksum/secret` annotation set to a hash of the Secret's contents (Helm's way of forcing pod restart when Secret changes). Delete/re-add the admin-password → checksum changes → Deployment shows drift too.
+
+### Remediation
+
+Add `spec.ignoreDifferences` to the ArgoCD Application manifest, targeting the specific fields:
+
+```yaml
+spec:
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: <chart-secret-name>
+      namespace: <namespace>
+      jsonPointers:
+        - /data/<field-name>
+    - group: apps
+      kind: Deployment
+      name: <chart-deployment-name>
+      namespace: <namespace>
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+```
+
+Commit + push. **Trigger a ROOT refresh, not the child** — the ignoreDifferences lives in the child Application's spec, which is set by root reconciling the git file. Refreshing the child alone won't pick up the new ignoreDifferences.
+
+```bash
+kubectl -n argocd annotate application root argocd.argoproj.io/refresh=hard --overwrite
+# wait 30s for root to reconcile
+kubectl -n argocd annotate application <child> argocd.argoproj.io/refresh=hard --overwrite
+# child now uses the new ignoreDifferences → drift skipped → Synced
+```
+
+### Prevention
+
+- **Long-term** (Phase 4+): reference an `ExternalSecret`-managed Secret instead of chart-generated. Chart values usually have an `existingSecret` field for this. ESO reads from Vault (or AWS Secrets Manager on EKS) and materialises the Secret; chart uses that instead of generating its own. Zero drift because the Secret's contents are controlled by the ExternalSecret spec, not the chart's random generator.
+- **Short-term**: the `ignoreDifferences` remediation above. Live with the noise until the ESO integration is in place.
+
+### Real occurrence
+
+Hit during Phase 4 troubleshooting on `kube-prometheus-stack` (Grafana admin-password). See commit `df76bfb` for the exact `ignoreDifferences` block applied to `platform/argocd/apps/kube-prometheus-stack.yaml`.
 
 ---
 

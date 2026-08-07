@@ -20,7 +20,7 @@ Every runbook in this directory follows the same shape:
 | Runbook | Introduced in | Trigger |
 |---|---|---|
 | [dns-delegation.md](dns-delegation.md) | Phase 1 (Task 1.8) | After every `cdk deploy DnsStack` — copy Route53 nameservers into Namecheap |
-| [kind-recovery.md](kind-recovery.md) | Phase 2 (Task 2.8) | 4 failure modes for the local kind cluster: Vault sealed, ArgoCD CLI JWT expired, single Application stuck, full cluster rebuild |
+| [kind-recovery.md](kind-recovery.md) | Phase 2 (Task 2.8), extended Phase 4 | 5 failure modes for the local kind cluster: Vault sealed (with ESO backoff addendum), ArgoCD CLI JWT expired, single Application stuck, full cluster rebuild, chart-generated Secret drift after post-install rotation |
 
 ## References
 
