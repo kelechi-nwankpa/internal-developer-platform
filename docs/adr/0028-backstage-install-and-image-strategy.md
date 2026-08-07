@@ -110,3 +110,63 @@ Run `backstage-cli new-app` → customize `app-config.yaml` + add plugins → `y
 ## Interview framing
 
 The one-liner: *"For Phase 5 Wave 1 we accept the Backstage upstream demo image with `:latest` tag as documented tech debt. Custom-built images are the real prod pattern for Backstage (framework + plugins + config are all per-deployment), and doing that setup before validating catalog/template integration would delay MVP by 1-2 sessions. ADR-0028 records the trade-off explicitly with an unambiguous migration path: as soon as we add our first custom plugin (Wave 2 or Phase 8), we run `backstage-cli new-app`, build our own image, and swap 3 values in the Application manifest. `:latest` in a portfolio-quality repo is only defensible if it's flagged, understood, and scheduled to be paid down — that's the whole point of this ADR."*
+
+---
+
+## Postscript (2026-08-07) — the four-attempt debugging arc, and why NODE_ENV was the missing piece
+
+Getting the MVP install actually working required four attempts. Recording them all here so a future contributor doesn't re-derive.
+
+### Attempt 1 — chart default `:latest`
+
+Followed ADR-0028's Option A verbatim: `backstage.image.tag` unset (chart default), auth block minimal.
+
+**Failed on:** frontend crashed at load with `NotImplementedError: No implementation available for apiRef{plugin.notifications.service}`. The `:latest` demo image's frontend bundle references a notifications API that its backend didn't implement in the version they built. Classic `:latest` bit-rot — the tag was fine yesterday.
+
+**Lesson:** even the "documented tech debt" `:latest` isn't stable enough to build against. Pin something.
+
+### Attempt 2 — pin `image.tag: "1.32.0"`
+
+Chose 1.32.0 — a known-internally-consistent Backstage release that predates the notifications-plugin frontend/backend mismatch.
+
+**Failed on:** backend refused to start. Config schema validation error — 1.32.0's schema *requires* a `techdocs` block even if you're not using TechDocs. `:latest` was permissive; 1.32.0 wasn't.
+
+**Lesson:** newer Backstage minor versions tighten schema validation. Every pinned release carries its own minimum-required-config surface.
+
+### Attempt 3 — add minimal `techdocs` block
+
+Added `builder: local`, `publisher.type: local`, `generator.runIn: local` — a local-only stub that satisfies the schema without depending on S3/GCS/Azure.
+
+**Failed on:** backend healthy, pod running, port-forward worked. But every frontend page load returned `403` on `/api/auth/guest/refresh`. The frontend was expecting a session cookie that would have been set by a prior call to `/api/auth/guest/start` — and never made that call. The catalog page rendered as an unauthenticated shell that immediately hit the refresh endpoint and got rejected.
+
+**Root cause (partial):** Backstage v1.30+ dropped implicit guest auth for security. The `auth.environment: development` + `providers.guest: {}` in app-config is *necessary* but not sufficient — the frontend bundle in the demo image doesn't have auto-guest-sign-in wired up in the `App.tsx` build.
+
+### Attempt 4 — Path C: add `NODE_ENV=development` env var
+
+Overrode the chart's default `NODE_ENV=production` via `backstage.extraEnvVars`. This is a Node.js env var (prod-hardening convention), *not* a Backstage config value.
+
+**Worked.** Frontend loaded, catalog page rendered as guest, sidebar populated.
+
+**Why it worked:** the Backstage backend has code paths gated on `process.env.NODE_ENV === 'development'` — dev-only shortcuts that skip stricter session checks, permit looser refresh-without-start flows, and enable auto-guest fallbacks. Setting `NODE_ENV=development` at the container level flipped those gates open. `auth.environment: development` in app-config is a *separate signal* the app config layer reads; both need to align for guest auth on the demo image.
+
+### The takeaway that reinforces the ADR
+
+The Wave 2 custom-built-image migration is even more clearly the right long-term answer than the ADR originally stated. In a custom-built image, we would:
+
+- **Control the frontend bundle** — wire `SignInPage` in `packages/app/src/App.tsx` to auto-sign-in as guest explicitly, no `NODE_ENV` hacks
+- **Pin all plugin versions** — no notifications-plugin bit-rot possible
+- **Own the config schema surface** — no surprise required blocks in minor version bumps
+- **Not depend on `NODE_ENV=development` as a security-relevant gate** — dev-mode gates are for local machines, not for cluster deployments (even kind-clusters that will eventually promote patterns to EKS)
+
+**Path C is a workaround, not a solution.** It's fine for MVP validation (portable across sessions, deterministic, documented) but it's the exact kind of thing a Staff engineer would flag in a real review. The line in the values file that reads `NODE_ENV=development` is a red flag we're leaving in place to keep MVP momentum, and Wave 2 will remove it.
+
+### Updated migration triggers
+
+Add to the existing "when to revisit" list:
+
+- **Immediately when we can spare 1-2 sessions.** The debugging cost of `:latest` + demo-image workarounds has already exceeded the delta of doing Option B properly. What was "1-2 sessions of setup" in the original ADR is closer to break-even now that we've spent a session debugging Path A→B→C.
+- **Before demoing to any interviewer.** The `NODE_ENV=development` line in a Kubernetes manifest is the single most quotable "this is not prod-grade" signal in the whole repo. Fix it before it becomes the first thing anyone screenshots.
+
+### Runbook implication
+
+If Backstage stops rendering after a Backstage release or chart bump, first thing to check is whether the `NODE_ENV=development` workaround still works. If a future Backstage release closes those dev-mode gates for security reasons, Path C dies and Wave 2 becomes forced. Not a scheduled migration then — an emergency one.
