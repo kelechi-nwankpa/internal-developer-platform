@@ -60,6 +60,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0024](0024-kube-prometheus-stack.md) | Install kube-prometheus-stack bundle (Prometheus + Grafana + Alertmanager + operator) as one ArgoCD Application | Accepted | 2026-08-05 |
 | [0025](0025-servicemonitor-strategy.md) | ServiceMonitor strategy: enable via chart values where supported, hand-write only where necessary | Accepted | 2026-08-05 |
 | [0026](0026-crossplane-install-and-version.md) | Install Crossplane core (chart 1.20.11, v1 track) as one ArgoCD Application | Accepted | 2026-08-05 |
+| [0027](0027-first-xrd-objectbucket.md) | First XRD (ObjectBucket): API surface, Composition pattern, naming | Accepted | 2026-08-07 |
 
 ## References
 

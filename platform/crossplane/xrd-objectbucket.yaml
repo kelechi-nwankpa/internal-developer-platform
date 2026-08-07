@@ -1,0 +1,106 @@
+---
+# XRD (Composite Resource Definition) — the developer-facing API for an
+# S3 bucket abstraction.
+#
+# App engineers write ObjectBucket (namespace-scoped Claim/XRC); Crossplane
+# creates the paired XObjectBucket (cluster-scoped XR) automatically. The
+# Composition (composition-objectbucket.yaml) renders MRs (S3 Bucket,
+# BucketPublicAccessBlock, BucketVersioning, BucketServerSideEncryption)
+# from the XR field values.
+#
+# API discipline for v1alpha1: 3 fields only. Deliberately narrow — every
+# field is a public API commitment. Add fields when a real use case demands
+# them. Removing fields is much harder.
+#
+# See: docs/adr/0027-first-xrd-objectbucket.md
+#      docs/phases/phase-4-crossplane.md (Task 4.4)
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xobjectbuckets.platform.idp.io
+spec:
+  # Our platform's API group — matches CLAUDE.md's mission for "platform-
+  # authored APIs a developer consumes."
+  group: platform.idp.io
+
+  names:
+    # Cluster-scoped composite resource. Rarely written directly; usually
+    # created automatically when a Claim is created.
+    kind: XObjectBucket
+    plural: xobjectbuckets
+
+  claimNames:
+    # Namespace-scoped claim. THIS is what developers write. Binds 1:1
+    # to an XObjectBucket at claim creation.
+    kind: ObjectBucket
+    plural: objectbuckets
+
+  # Standard v1 XRD default mode. Crossplane's control plane will accept
+  # both XObjectBucket and ObjectBucket resources and reconcile them
+  # through the paired Composition (matched by compositeTypeRef).
+  defaultCompositionRef:
+    name: xobjectbuckets.platform.idp.io
+
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # Convention: user-facing fields nested under `parameters`.
+                # Crossplane injects other spec fields (compositionRef,
+                # publishConnectionDetailsTo, etc.) alongside this.
+                parameters:
+                  type: object
+                  properties:
+                    region:
+                      type: string
+                      enum:
+                        - eu-west-1
+                        - us-east-1
+                      description: >
+                        AWS region for the bucket. Must be one of the
+                        pre-approved list (matches ADR-0004 single-region
+                        posture, with room to grow).
+                    publicRead:
+                      type: boolean
+                      default: false
+                      description: >
+                        Whether the bucket allows anonymous public read.
+                        Default false. When true, no BucketPublicAccessBlock
+                        MR is rendered — bucket is exposed to the internet.
+                        Use with extreme care.
+                    versioning:
+                      type: boolean
+                      default: false
+                      description: >
+                        Whether object versioning is enabled. Default false.
+                        When true, deleted/overwritten objects retain
+                        previous versions (with associated storage cost).
+                  required:
+                    - region
+              required:
+                - parameters
+
+            # Status fields — populated by the Composition/Function based
+            # on MR state. Starting minimal in v1alpha1; will grow as
+            # real consumers ask for more.
+            status:
+              type: object
+              properties:
+                bucketName:
+                  type: string
+                  description: >
+                    The generated S3 bucket name (claim-name + random suffix).
+                    Populated once the Bucket MR reports Ready.
+                bucketArn:
+                  type: string
+                  description: >
+                    ARN of the created bucket. Populated once the Bucket MR
+                    reports Ready.

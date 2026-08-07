@@ -1,0 +1,163 @@
+---
+# Composition — the recipe that renders MRs from an XObjectBucket XR.
+#
+# Uses fn-go-templating for rendering (installed as function-go-templating)
+# + fn-auto-ready for status rollup (installed as function-auto-ready).
+# Pipeline mode is the modern Crossplane approach — replaces the legacy
+# patch-and-transform mode.
+#
+# Renders 2-4 MRs depending on XR field values:
+#   - Bucket                                          (always)
+#   - BucketPublicAccessBlock                         (unless publicRead:true)
+#   - BucketVersioning                                (if versioning:true)
+#   - BucketServerSideEncryptionConfiguration         (always — AES256 default)
+#
+# See: docs/adr/0027-first-xrd-objectbucket.md
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xobjectbuckets.platform.idp.io
+  labels:
+    provider: aws
+    component: object-bucket
+spec:
+  # Bind this Composition to the XObjectBucket XR type. Multiple Compositions
+  # can target the same XR type (for different environments, regions, etc.);
+  # this one is the default.
+  compositeTypeRef:
+    apiVersion: platform.idp.io/v1alpha1
+    kind: XObjectBucket
+
+  # Pipeline mode: rendering is orchestrated by a sequence of Functions.
+  # Each function receives the observed state (XR + previously-composed MRs)
+  # and returns desired state (updated MRs).
+  mode: Pipeline
+
+  pipeline:
+    # ─────────────────────────────────────────────────────────────
+    # Step 1 — render the MRs from XR field values via Go templates
+    # ─────────────────────────────────────────────────────────────
+    - step: render-mrs
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- /* Convenience variables */ -}}
+            {{- $xr := .observed.composite.resource -}}
+            {{- $spec := $xr.spec.parameters -}}
+            {{- $name := $xr.metadata.name -}}
+            {{- /*
+                S3 bucket names are globally unique. Generate a stable
+                6-char suffix from the XR's UID (so re-reconciles don't
+                flip names) — first 6 hex chars, lowercased. If UID
+                is unavailable during first render, fall back to
+                randAlphaNum (a run-time random string).
+            */ -}}
+            {{- $uid := $xr.metadata.uid | default "" -}}
+            {{- $suffix := (substr 0 6 ($uid | replace "-" "")) | default (randAlphaNum 6 | lower) -}}
+            {{- $bucketName := printf "%s-%s" $name $suffix -}}
+
+            # ─────────────────────────────────────────────
+            # S3 Bucket — the actual bucket
+            # ─────────────────────────────────────────────
+            apiVersion: s3.aws.upbound.io/v1beta1
+            kind: Bucket
+            metadata:
+              name: {{ $name }}
+              annotations:
+                # Tells the function which resource slot in the Composition
+                # this MR occupies (required by fn-go-templating).
+                gotemplating.fn.crossplane.io/composition-resource-name: bucket
+                # Tells the provider what to name the bucket in AWS.
+                # Without this, the provider uses metadata.name — but that
+                # would collide across k8s namespaces for same-named claims.
+                crossplane.io/external-name: {{ $bucketName }}
+            spec:
+              forProvider:
+                region: {{ $spec.region }}
+              providerConfigRef:
+                name: default   # No ProviderConfig on kind by design — Phase 9 EKS
+
+            {{- /* BucketPublicAccessBlock — always-on, UNLESS publicRead:true */ -}}
+            {{- if not $spec.publicRead }}
+            ---
+            # ─────────────────────────────────────────────
+            # Public access block — locks down anonymous access
+            # ─────────────────────────────────────────────
+            apiVersion: s3.aws.upbound.io/v1beta1
+            kind: BucketPublicAccessBlock
+            metadata:
+              name: {{ $name }}-pab
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: public-access-block
+            spec:
+              forProvider:
+                region: {{ $spec.region }}
+                bucketRef:
+                  name: {{ $name }}
+                blockPublicAcls: true
+                blockPublicPolicy: true
+                ignorePublicAcls: true
+                restrictPublicBuckets: true
+              providerConfigRef:
+                name: default
+            {{- end }}
+
+            {{- /* BucketVersioning — enabled if versioning:true */ -}}
+            {{- if $spec.versioning }}
+            ---
+            # ─────────────────────────────────────────────
+            # Bucket versioning — retains deleted/overwritten object versions
+            # ─────────────────────────────────────────────
+            apiVersion: s3.aws.upbound.io/v1beta1
+            kind: BucketVersioning
+            metadata:
+              name: {{ $name }}-versioning
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: versioning
+            spec:
+              forProvider:
+                region: {{ $spec.region }}
+                bucketRef:
+                  name: {{ $name }}
+                versioningConfiguration:
+                  - status: Enabled
+              providerConfigRef:
+                name: default
+            {{- end }}
+
+            ---
+            # ─────────────────────────────────────────────
+            # Server-side encryption — AES256 always-on (opinionated default)
+            # ─────────────────────────────────────────────
+            apiVersion: s3.aws.upbound.io/v1beta1
+            kind: BucketServerSideEncryptionConfiguration
+            metadata:
+              name: {{ $name }}-sse
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: sse
+            spec:
+              forProvider:
+                region: {{ $spec.region }}
+                bucketRef:
+                  name: {{ $name }}
+                rule:
+                  - applyServerSideEncryptionByDefault:
+                      - sseAlgorithm: AES256
+              providerConfigRef:
+                name: default
+
+    # ─────────────────────────────────────────────────────────────
+    # Step 2 — roll up composed MRs' Ready status to the XR
+    # ─────────────────────────────────────────────────────────────
+    # Without this, XR stays perpetually NotReady even when all MRs are Ready.
+    # fn-auto-ready inspects .observed.resources.*.resource.status.conditions
+    # and marks the XR Ready:True when all MRs are Ready.
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready
