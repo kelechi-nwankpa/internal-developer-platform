@@ -215,48 +215,48 @@ spec:
                       # so we let the plugin render per-pod CPU/mem.
                       # If metrics-server flakes, flip to true.
                       skipMetricsLookup: false
+              # IMPORTANT constraint discovered in Task 5.5 verification:
+              # the Backstage Kubernetes plugin's default customResources
+              # code path scopes every API query to the entity's
+              # `backstage.io/kubernetes-namespace` annotation. For
+              # cluster-scoped CRs (all Crossplane XR/XRD/MRs, ESO
+              # ClusterSecretStore, cert-manager ClusterIssuer, etc.),
+              # this produces a bogus `/namespaces/NS/PLURAL` path that
+              # returns 404.
+              #
+              # Fix here: only list NAMESPACED custom resources in this
+              # block. Cluster-scoped CRs are omitted from the plugin
+              # config (they still work in the ClusterRole grant, which
+              # a Wave 2 community plugin will use — e.g.
+              # @backstage-community/plugin-crossplane knows how to
+              # query cluster-scoped resources properly, but requires a
+              # custom-built image per ADR-0028's migration plan).
               customResources:
                 - group: argoproj.io
                   apiVersion: v1alpha1
                   plural: applications
-                - group: apiextensions.crossplane.io
-                  apiVersion: v1
-                  plural: compositions
-                - group: apiextensions.crossplane.io
-                  apiVersion: v1
-                  plural: compositeresourcedefinitions
-                - group: pkg.crossplane.io
-                  apiVersion: v1
-                  plural: providers
-                - group: pkg.crossplane.io
-                  apiVersion: v1beta1
-                  plural: functions
-                - group: platform.idp.io
-                  apiVersion: v1alpha1
-                  plural: xobjectbuckets
+                # ObjectBucket is a Composite Resource Claim — Crossplane's
+                # Claims are namespaced (belong to a team's namespace).
+                # The XR (xobjectbuckets) it materialises IS cluster-scoped
+                # and thus not listable here.
                 - group: platform.idp.io
                   apiVersion: v1alpha1
                   plural: objectbuckets
-                - group: s3.aws.upbound.io
-                  apiVersion: v1beta1
-                  plural: buckets
-                # ESO CRDs serve both v1 and v1beta1, but the plugin's
-                # path against v1beta1 404s (may only be reachable via
-                # the stored version). Pinning to v1 — the current
-                # stable — resolves the NOT_FOUND errors surfaced in
-                # Task 5.5 verification.
                 - group: external-secrets.io
                   apiVersion: v1
                   plural: externalsecrets
+                # SecretStore is namespaced; ClusterSecretStore is cluster-
+                # scoped and omitted per the rule above.
                 - group: external-secrets.io
                   apiVersion: v1
-                  plural: clustersecretstores
+                  plural: secretstores
+                # Certificate is namespaced; ClusterIssuer is cluster-scoped
+                # and omitted. Issuer (namespaced) could be added if we
+                # ever use per-namespace issuers (we don't — Phase 2
+                # standardised on ClusterIssuer).
                 - group: cert-manager.io
                   apiVersion: v1
                   plural: certificates
-                - group: cert-manager.io
-                  apiVersion: v1
-                  plural: clusterissuers
                 - group: monitoring.coreos.com
                   apiVersion: v1
                   plural: servicemonitors
