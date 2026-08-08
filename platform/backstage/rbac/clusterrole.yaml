@@ -1,0 +1,180 @@
+---
+# clusterrole.yaml — read-only cluster access for the Backstage
+# Kubernetes plugin.
+#
+# Scope: cluster-wide `get`/`list`/`watch` on the workload resources
+# and CRDs that the plugin renders on Component pages. NO write verbs
+# (`create`/`update`/`patch`/`delete`) — the plugin is strictly a read
+# surface; write access would open the "delete a pod from the UI" hole.
+#
+# Sync rule: the customResources list in
+# platform/argocd/apps/backstage.yaml (kubernetes.customResources)
+# MUST stay in sync with the CRD groups in this file's rules block.
+# Adding one without the other means the plugin either fails silently
+# or returns Forbidden errors on rendering.
+#
+# See platform/backstage/README.md for the deliberate omissions
+# (secrets, nodes, write verbs) and their reasoning.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kubernetes-plugin-reader
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: platform
+rules:
+
+  # ─────────────────────────────────────────────────────────────────
+  # Standard workload resources
+  # ─────────────────────────────────────────────────────────────────
+
+  # Core resources. `events` needed so the plugin can render "why did
+  # this pod crash?" on the Component page. Omitting `secrets` — see
+  # README rationale.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - configmaps
+      - limitranges
+      - persistentvolumeclaims
+      - events
+    verbs: [get, list, watch]
+
+  # apps/ — the whole controller family Backstage renders.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: [get, list, watch]
+
+  # batch/ — for CronJob-driven components (our Vault init, ESO
+  # rotation jobs, backup pipelines).
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: [get, list, watch]
+
+  # networking.k8s.io — Ingress objects render as clickable URLs in
+  # the plugin's "Networking" tab. Only relevant on EKS (no Ingress on
+  # kind per Phase 5 Wave 2 deferral) but harmless to include now.
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: [get, list, watch]
+
+  # autoscaling — HPA state per Deployment. Useful for showing "this
+  # service is currently scaled to N pods because of CPU."
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: [get, list, watch]
+
+  # policy — PDBs affect rolling updates. Rendered as constraint info.
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: [get, list, watch]
+
+  # metrics.k8s.io — enables `skipMetricsLookup: false` in plugin
+  # config to render per-pod CPU/memory bars. Needs metrics-server
+  # (Phase 3 Task 3.2, installed).
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - pods
+    verbs: [get, list, watch]
+
+  # ─────────────────────────────────────────────────────────────────
+  # Custom Resources — MUST match `kubernetes.customResources` in
+  # platform/argocd/apps/backstage.yaml. Cross-reference comment
+  # points here from there.
+  # ─────────────────────────────────────────────────────────────────
+
+  # argoproj.io — ArgoCD Applications. Each of our 14 platform
+  # Components has `argocd/app-name` annotation matching an Application
+  # in the `argocd` namespace. The Kubernetes plugin (with this read
+  # grant) renders sync state; the ArgoCD plugin (Task 5.5b) will
+  # render deeper via ArgoCD's own API.
+  - apiGroups: ["argoproj.io"]
+    resources:
+      - applications
+      - appprojects
+    verbs: [get, list, watch]
+
+  # apiextensions.crossplane.io — Compositions and XRDs. Renders the
+  # infra-API layer as visible cluster state.
+  - apiGroups: ["apiextensions.crossplane.io"]
+    resources:
+      - compositions
+      - compositeresourcedefinitions
+    verbs: [get, list, watch]
+
+  # pkg.crossplane.io — Provider install state (Installed / Healthy).
+  # Complements the Crossplane component's "is my provider up?"
+  # visibility.
+  - apiGroups: ["pkg.crossplane.io"]
+    resources:
+      - providers
+      - providerrevisions
+      - functions
+      - functionrevisions
+    verbs: [get, list, watch]
+
+  # platform.idp.io — our own XRD group. XR + Claim visible.
+  # ObjectBucket for now; PostgresDatabase / Namespace / ManagedSecret
+  # land in Phase 6.
+  - apiGroups: ["platform.idp.io"]
+    resources:
+      - xobjectbuckets
+      - objectbuckets
+    verbs: [get, list, watch]
+
+  # s3.aws.upbound.io — the actual AWS S3 Bucket MRs materialised by
+  # our XR. Lets a developer trace claim → composition → MR in the UI.
+  - apiGroups: ["s3.aws.upbound.io"]
+    resources:
+      - buckets
+      - bucketversionings
+      - bucketpublicaccessblocks
+    verbs: [get, list, watch]
+
+  # iam.aws.upbound.io — IAM policy MRs (also materialised by the
+  # ObjectBucket XR — the read/write policy attached to the bucket).
+  - apiGroups: ["iam.aws.upbound.io"]
+    resources:
+      - policies
+    verbs: [get, list, watch]
+
+  # external-secrets.io — ESO CRs. Renders "which secrets does this
+  # component pull from Vault?" per Component.
+  - apiGroups: ["external-secrets.io"]
+    resources:
+      - externalsecrets
+      - clustersecretstores
+      - secretstores
+    verbs: [get, list, watch]
+
+  # cert-manager.io — Certificates + ClusterIssuers. Renders "which
+  # TLS cert does this Ingress use, when does it expire?"
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificates
+      - certificaterequests
+      - issuers
+      - clusterissuers
+    verbs: [get, list, watch]
+
+  # monitoring.coreos.com — ServiceMonitors + PodMonitors + Prom rules.
+  # Renders "which alerts fire on this component?"
+  - apiGroups: ["monitoring.coreos.com"]
+    resources:
+      - servicemonitors
+      - podmonitors
+      - prometheusrules
+    verbs: [get, list, watch]

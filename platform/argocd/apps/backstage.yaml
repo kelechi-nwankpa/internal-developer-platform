@@ -48,6 +48,18 @@ spec:
         # a pinned tag (satisfies our no-:latest rule, reproducible).
         # Full Wave 2 fix (custom-built image via backstage-cli) still
         # in the deferred pile.
+        # ─────────────────────────────────────────────────────────────
+        # ServiceAccount — pinned name so RBAC binding is stable
+        # ─────────────────────────────────────────────────────────────
+        # The chart's default is `serviceAccount.create: true` with a
+        # release-name-derived SA name. We pin the name to `backstage`
+        # so platform/backstage/rbac/clusterrolebinding.yaml can
+        # reference it stably. If we ever rename the Helm release, the
+        # SA stays `backstage` and RBAC keeps working.
+        serviceAccount:
+          create: true
+          name: backstage
+
         backstage:
           image:
             registry: ghcr.io
@@ -167,6 +179,82 @@ spec:
                 type: local
               generator:
                 runIn: local
+
+            # ─────────────────────────────────────────────────────────
+            # Kubernetes plugin — live cluster state per Component
+            # ─────────────────────────────────────────────────────────
+            # Renders "Kubernetes" tab on each Component page with real
+            # pods, deployments, services, events. Uses the annotations
+            # already on catalog Components (backstage.io/kubernetes-id
+            # matches label selectors on cluster resources).
+            #
+            # Auth: the pod uses its in-cluster ServiceAccount token
+            # (mounted at /var/run/secrets/kubernetes.io/serviceaccount/)
+            # to call kube-apiserver at https://kubernetes.default.svc.
+            # RBAC granted separately via platform/backstage/rbac —
+            # split so the two lifecycles don't couple.
+            #
+            # customResources: MUST stay in sync with the CRD groups
+            # in platform/backstage/rbac/clusterrole.yaml. Adding one
+            # here without granting read there = "Forbidden" errors
+            # rendering; adding there without listing here = plugin
+            # ignores the CR entirely.
+            kubernetes:
+              serviceLocatorMethod:
+                type: multiTenant
+              clusterLocatorMethods:
+                - type: config
+                  clusters:
+                    - url: https://kubernetes.default.svc
+                      name: kind-idp
+                      # `serviceAccount` provider = use the projected
+                      # SA token from the standard mount. Backstage
+                      # auto-detects the path.
+                      authProvider: serviceAccount
+                      # metrics-server is installed (Phase 3 Task 3.2),
+                      # so we let the plugin render per-pod CPU/mem.
+                      # If metrics-server flakes, flip to true.
+                      skipMetricsLookup: false
+              customResources:
+                - group: argoproj.io
+                  apiVersion: v1alpha1
+                  plural: applications
+                - group: apiextensions.crossplane.io
+                  apiVersion: v1
+                  plural: compositions
+                - group: apiextensions.crossplane.io
+                  apiVersion: v1
+                  plural: compositeresourcedefinitions
+                - group: pkg.crossplane.io
+                  apiVersion: v1
+                  plural: providers
+                - group: pkg.crossplane.io
+                  apiVersion: v1beta1
+                  plural: functions
+                - group: platform.idp.io
+                  apiVersion: v1alpha1
+                  plural: xobjectbuckets
+                - group: platform.idp.io
+                  apiVersion: v1alpha1
+                  plural: objectbuckets
+                - group: s3.aws.upbound.io
+                  apiVersion: v1beta1
+                  plural: buckets
+                - group: external-secrets.io
+                  apiVersion: v1beta1
+                  plural: externalsecrets
+                - group: external-secrets.io
+                  apiVersion: v1beta1
+                  plural: clustersecretstores
+                - group: cert-manager.io
+                  apiVersion: v1
+                  plural: certificates
+                - group: cert-manager.io
+                  apiVersion: v1
+                  plural: clusterissuers
+                - group: monitoring.coreos.com
+                  apiVersion: v1
+                  plural: servicemonitors
 
         # ─────────────────────────────────────────────────────────────
         # PostgreSQL sub-chart (bitnami/postgresql)

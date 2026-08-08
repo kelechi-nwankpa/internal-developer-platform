@@ -1,0 +1,51 @@
+---
+# backstage-rbac — cluster-side RBAC for the Backstage Kubernetes
+# plugin.
+#
+# Split from backstage.yaml because:
+#   - backstage.yaml is the Helm chart install — lifecycle = Backstage
+#     release cadence + chart version bumps.
+#   - backstage-rbac.yaml is a raw-manifest sync of a ClusterRole +
+#     ClusterRoleBinding — lifecycle = "which CRDs do we want the
+#     plugin to render?" Adding a new XRD or provider = touch this,
+#     not the chart values.
+#
+# Same split-by-lifecycle pattern as vault-config / vault (Phase 2)
+# and cert-manager-issuers / cert-manager (Phase 2).
+#
+# See: platform/backstage/README.md
+#      platform/backstage/rbac/clusterrole.yaml (the actual permissions)
+#      docs/adr/0028-backstage-install-and-image-strategy.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backstage-rbac
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/backstage/rbac
+    # No directory.recurse field — see ADR-0015 postscript on the
+    # omitempty drift trap.
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Cluster-scoped resources (ClusterRole + ClusterRoleBinding) —
+    # namespace here is a defensive default for any future namespaced
+    # additions to this directory.
+    namespace: backstage
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # SSA is our established defensive default per ADR-0014.
+      - ServerSideApply=true

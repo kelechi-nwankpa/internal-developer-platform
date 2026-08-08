@@ -1,0 +1,33 @@
+---
+# clusterrolebinding.yaml — bind the read-only ClusterRole to the
+# ServiceAccount created by the Backstage Helm chart.
+#
+# The chart creates the ServiceAccount when we set
+# `serviceAccount.create: true` in values (see
+# platform/argocd/apps/backstage.yaml). We pin its name to `backstage`
+# via `serviceAccount.name: backstage` so this binding references it
+# by a stable name and won't break if the Helm release is renamed.
+#
+# Sync order gotcha: ArgoCD may sync this ClusterRoleBinding before
+# the Helm chart has created the ServiceAccount, in which case the
+# binding briefly references a non-existent subject. Kubernetes doesn't
+# error on that — the binding is just inert until the SA appears. Once
+# the chart's SA lands, RBAC evaluation catches up on the next request.
+# No sync-wave manipulation needed.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-kubernetes-plugin-reader
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-kubernetes-plugin-reader
+subjects:
+  - kind: ServiceAccount
+    name: backstage
+    namespace: backstage
