@@ -172,7 +172,10 @@ metadata:
   annotations:
     backstage.io/kubernetes-id: kube-prometheus-stack
     backstage.io/kubernetes-namespace: monitoring
-    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=kube-prometheus-stack
+    # The chart bundles multiple StatefulSets/Deployments each with a
+    # sub-instance label (kube-prometheus-stack, ...-alertmanager,
+    # ...-prometheus). Set-based match catches all 6+ pods.
+    backstage.io/kubernetes-label-selector: "app.kubernetes.io/instance in (kube-prometheus-stack,kube-prometheus-stack-alertmanager,kube-prometheus-stack-prometheus)"
     argocd/app-name: kube-prometheus-stack
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/kube-prometheus-stack.yaml
   tags: [platform, observability, metrics]

@@ -31,8 +31,10 @@ rules:
   # ─────────────────────────────────────────────────────────────────
 
   # Core resources. `events` needed so the plugin can render "why did
-  # this pod crash?" on the Component page. Omitting `secrets` — see
-  # README rationale.
+  # this pod crash?" on the Component page. `resourcequotas` needed
+  # because the plugin queries /api/v1/resourcequotas on every entity
+  # page load (added after 403 error surfaced in Task 5.5 verification).
+  # Omitting `secrets` — see README rationale.
   - apiGroups: [""]
     resources:
       - pods
@@ -42,6 +44,7 @@ rules:
       - limitranges
       - persistentvolumeclaims
       - events
+      - resourcequotas
     verbs: [get, list, watch]
 
   # apps/ — the whole controller family Backstage renders.

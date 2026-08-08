@@ -240,11 +240,16 @@ spec:
                 - group: s3.aws.upbound.io
                   apiVersion: v1beta1
                   plural: buckets
+                # ESO CRDs serve both v1 and v1beta1, but the plugin's
+                # path against v1beta1 404s (may only be reachable via
+                # the stored version). Pinning to v1 — the current
+                # stable — resolves the NOT_FOUND errors surfaced in
+                # Task 5.5 verification.
                 - group: external-secrets.io
-                  apiVersion: v1beta1
+                  apiVersion: v1
                   plural: externalsecrets
                 - group: external-secrets.io
-                  apiVersion: v1beta1
+                  apiVersion: v1
                   plural: clustersecretstores
                 - group: cert-manager.io
                   apiVersion: v1
