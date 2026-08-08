@@ -93,6 +93,25 @@ spec:
               auth:
                 keys:
                   - secret: development-only-signing-key-do-not-use-in-prod
+              # SSRF protection allow-list. Backstage's UrlReader refuses
+              # to fetch from any host that isn't either a configured
+              # integration or explicitly allowed here. Learned this the
+              # hard way — first attempt at Task 5.4 shipped catalog URL
+              # locations pointing at raw.githubusercontent.com and got
+              # NotAllowedError on every catalog processor poll.
+              #
+              # Two ways to fix:
+              #   1. Add host here (what we do — one line, no token)
+              #   2. Configure `integrations.github` (requires token for
+              #      real API use; anonymous works for public repos but
+              #      hits stricter rate limits)
+              #
+              # Wave 2 will add the GitHub integration proper (for
+              # scaffolder templates + PR creation), and we can switch
+              # target URLs to the nicer github.com/.../blob form then.
+              reading:
+                allow:
+                  - host: raw.githubusercontent.com
             auth:
               # `development` environment allows guest auth without extra
               # opt-in. `production` requires dangerouslyAllowOutsideDevelopment.
