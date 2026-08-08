@@ -30,6 +30,8 @@ metadata:
   description: "TLS certificate lifecycle — issuance, renewal, rotation across the cluster. Chart-installed, ArgoCD-managed."
   annotations:
     backstage.io/kubernetes-id: cert-manager
+    backstage.io/kubernetes-namespace: cert-manager
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=cert-manager
     argocd/app-name: cert-manager
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/cert-manager.yaml
   tags: [platform, security, tls]
@@ -74,6 +76,8 @@ metadata:
   description: "External Secrets Operator (ESO) — syncs external secret backends into native Kubernetes Secrets. Vault on kind, AWS Secrets Manager on EKS (ADR-0020)."
   annotations:
     backstage.io/kubernetes-id: external-secrets
+    backstage.io/kubernetes-namespace: external-secrets
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=external-secrets
     argocd/app-name: external-secrets
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/external-secrets.yaml
   tags: [platform, security, secrets]
@@ -118,6 +122,8 @@ metadata:
   description: "HashiCorp Vault — standalone install with manual unseal. Kind-local secret backend. Re-init cycle documented in kind-recovery runbook FM1."
   annotations:
     backstage.io/kubernetes-id: vault
+    backstage.io/kubernetes-namespace: vault
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=vault
     argocd/app-name: vault
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/vault.yaml
   tags: [platform, security, secrets, kind-only]
@@ -165,6 +171,8 @@ metadata:
   description: "Prometheus + Grafana + Alertmanager + prometheus-operator bundled as one chart. The whole metrics stack in one Application."
   annotations:
     backstage.io/kubernetes-id: kube-prometheus-stack
+    backstage.io/kubernetes-namespace: monitoring
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=kube-prometheus-stack
     argocd/app-name: kube-prometheus-stack
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/kube-prometheus-stack.yaml
   tags: [platform, observability, metrics]
@@ -186,6 +194,8 @@ metadata:
   description: "Kubernetes metrics source for HPA/VPA and `kubectl top`. Installed separately from Prometheus (ADR-0023). `--kubelet-insecure-tls` on kind."
   annotations:
     backstage.io/kubernetes-id: metrics-server
+    backstage.io/kubernetes-namespace: kube-system
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=metrics-server
     argocd/app-name: metrics-server
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/metrics-server.yaml
   tags: [platform, observability, metrics]
@@ -237,6 +247,12 @@ metadata:
   description: "GitOps control plane — reconciles cluster state to git. Installed via raw pinned manifest (ADR-0014), then app-of-apps takes over (ADR-0015)."
   annotations:
     backstage.io/kubernetes-id: argocd
+    backstage.io/kubernetes-namespace: argocd
+    # No shared label across the 7 ArgoCD pods (raw manifest doesn't
+    # set `app.kubernetes.io/instance` — each pod's `name` label is its
+    # sub-component's own name). Set-based match enumerates them all.
+    # Wave 2 could add a Kustomize overlay injecting a shared label.
+    backstage.io/kubernetes-label-selector: "app.kubernetes.io/name in (argocd-server,argocd-application-controller,argocd-repo-server,argocd-redis,argocd-notifications-controller,argocd-applicationset-controller,argocd-dex-server)"
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/tree/main/platform/argocd
   tags: [platform, infrastructure, gitops]
   links:
@@ -260,6 +276,8 @@ metadata:
   description: "DNS record sync — reads Kubernetes Ingress/Service annotations, writes DNS records. `inmemory` provider on kind, Route53 via IRSA on EKS (ADR-0021)."
   annotations:
     backstage.io/kubernetes-id: external-dns
+    backstage.io/kubernetes-namespace: external-dns
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=external-dns
     argocd/app-name: external-dns
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/external-dns.yaml
   tags: [platform, infrastructure, dns]
@@ -281,6 +299,8 @@ metadata:
   description: "Crossplane core — the Kubernetes-native infrastructure API layer. XRDs + Compositions turn 'apply this YAML' into 'provision that cloud resource'."
   annotations:
     backstage.io/kubernetes-id: crossplane
+    backstage.io/kubernetes-namespace: crossplane-system
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=crossplane
     argocd/app-name: crossplane
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/crossplane.yaml
   tags: [platform, infrastructure, iac]
@@ -304,6 +324,11 @@ metadata:
   description: "AWS providers (family + s3 + iam) plus Functions (fn-go-templating + fn-auto-ready). The layer that turns Crossplane XRs into AWS API calls."
   annotations:
     backstage.io/kubernetes-id: crossplane-providers
+    backstage.io/kubernetes-namespace: crossplane-system
+    # Every provider/function pod has `pkg.crossplane.io/provider=<name>`
+    # (different value per provider, but the KEY exists on all of them).
+    # Label-existence selector matches any pod carrying the key.
+    backstage.io/kubernetes-label-selector: pkg.crossplane.io/provider
     argocd/app-name: crossplane-providers
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/crossplane-providers.yaml
   tags: [platform, infrastructure, iac, aws]
@@ -323,6 +348,8 @@ metadata:
   description: "This app — the developer portal. Catalogs itself here. Wave 1 MVP install per ADR-0028 accepts the demo image as tech debt with a documented Wave 2 migration path."
   annotations:
     backstage.io/kubernetes-id: backstage
+    backstage.io/kubernetes-namespace: backstage
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/instance=backstage
     argocd/app-name: backstage
     backstage.io/source-location: url:https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/platform/argocd/apps/backstage.yaml
   tags: [platform, infrastructure, portal]
