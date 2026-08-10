@@ -170,3 +170,24 @@ Add to the existing "when to revisit" list:
 ### Runbook implication
 
 If Backstage stops rendering after a Backstage release or chart bump, first thing to check is whether the `NODE_ENV=development` workaround still works. If a future Backstage release closes those dev-mode gates for security reasons, Path C dies and Wave 2 becomes forced. Not a scheduled migration then — an emergency one.
+
+---
+
+## Postscript (2026-08-10) — ArgoCD plugin deferred to Wave 2
+
+Task 5.5 shipped the Kubernetes plugin (5.5a) and deferred the ArgoCD plugin (5.5b) to Wave 2. This wasn't planned at ADR authoring time; recording the reasoning here so future contributors don't wonder why Wave 1 has one but not the other.
+
+### Why deferred
+
+1. **Wave 1's Path A→B→C→D on the Kubernetes plugin already burned significant session time.** The ArgoCD plugin has an equivalent surface area of demo-image limitations to hit — auth wiring (needs an ArgoCD API token), token injection (needs ESO or a Secret mount), plugin schema (custom-image-territory config), same class of frontend-bundle constraints as guest auth.
+2. **ArgoCD state is already accessible via `argocd-server`'s own UI.** Port-forward `svc/argocd-server:443` when needed. Same source of truth. The plugin adds pane-of-glass convenience, not new capability.
+3. **The Kubernetes plugin — harder + higher-value — is delivering the "live cluster state per Component" promise already.** ArgoCD-in-Backstage is polish, not core.
+4. **Portfolio narrative is stronger with a properly closed-out Wave 1** than with a half-implemented Wave 1 + a half-implemented ArgoCD plugin.
+
+### What Wave 2 will do
+
+Custom-built Backstage image → wire ArgoCD plugin + community `plugin-crossplane` (which handles cluster-scoped CRs) + GitHub OAuth + Software Templates + Scaffolder → all together as one polish pass, one deploy. Estimated 6-10 sessions total. See `docs/phases/phase-5-backstage.md#deferred-to-wave-2--concrete-punch-list` for the full 9-item punch list with triggers + effort estimates.
+
+### Interview framing update
+
+The one-liner from earlier still holds — MVP-first pacing accepted `:latest` and demo-image constraints. The additional line is: *"Wave 1 shipped a working self-catalogued portal with a live Kubernetes ops view. Wave 2 is one custom-image build that unlocks 4-5 features simultaneously (ArgoCD plugin, Crossplane cluster-scoped-CR plugin, OAuth, Scaffolder, TechDocs). That bundling is why we deferred — each feature costs ~1 session on top of the custom image, but the custom image is a one-time ~1-2 session investment."*
