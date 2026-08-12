@@ -278,6 +278,22 @@ spec:
     server: https://kubernetes.default.svc
     namespace: observability
 
+  # ignoreDifferences: FM6 pattern applied to chart-rendered StatefulSets.
+  # K8s auto-injects `persistentVolumeClaimRetentionPolicy: {whenDeleted:
+  # Retain, whenScaled: Retain}` on every StatefulSet at apply time, but
+  # the Loki chart's template doesn't declare it. Result: 3 StatefulSets
+  # (compactor, index-gateway, ingester) show OutOfSync forever.
+  #
+  # Unlike our own ExternalSecret where we could declare CRD-injected
+  # defaults in git, we don't own the chart's StatefulSet template. So
+  # we use ignoreDifferences instead — same escape hatch as the Grafana
+  # admin-password chart-regeneration fix (kube-prometheus-stack Application).
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/persistentVolumeClaimRetentionPolicy
+
   syncPolicy:
     automated:
       prune: true
