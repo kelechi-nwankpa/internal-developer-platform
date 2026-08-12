@@ -85,10 +85,13 @@ spec:
           # ───────────────────────────────────────────────────────────
           # Storage — MinIO via S3 API
           # ───────────────────────────────────────────────────────────
-          # Env var references (${...}) are expanded at Loki startup
-          # via the `-config.expand-env=true` extraArg below. Env vars
-          # sourced from the observability-storage-credentials Secret
-          # via extraEnv.
+          # No accessKeyId/secretAccessKey inline — the AWS SDK Loki
+          # uses auto-detects `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+          # from env (populated via extraEnvFrom on each component). This
+          # avoids needing `-config.expand-env=true` args + inline
+          # `${...}` config expansion (chart 6.x doesn't propagate
+          # loki.extraArgs to pods — that value is Loki-config args, not
+          # pod args).
           storage:
             type: s3
             bucketNames:
@@ -100,8 +103,6 @@ spec:
             s3:
               endpoint: minio.minio.svc.cluster.local:9000
               region: us-east-1  # required but arbitrary on MinIO
-              secretAccessKey: ${MINIO_SECRET_ACCESS_KEY}
-              accessKeyId: ${MINIO_ACCESS_KEY_ID}
               s3ForcePathStyle: true
               insecure: true  # http (in-cluster only, TLS via Phase 8)
 
@@ -116,32 +117,6 @@ spec:
             ingestion_burst_size_mb: 20
 
           # ───────────────────────────────────────────────────────────
-          # Env-var expansion in config
-          # ───────────────────────────────────────────────────────────
-          # Enables ${MINIO_ACCESS_KEY_ID} / ${MINIO_SECRET_ACCESS_KEY}
-          # substitution in the storage.s3 block above.
-          # Applied to all Loki components (distributor, ingester,
-          # querier, etc.) via the chart's global extraArgs.
-          # NOTE: chart 6.x uses `loki.extraArgs` at the loki: level.
-          extraArgs:
-            - "-config.expand-env=true"
-
-          # ───────────────────────────────────────────────────────────
-          # Env vars sourced from the ESO Secret
-          # ───────────────────────────────────────────────────────────
-          extraEnv:
-            - name: MINIO_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: observability-storage-credentials
-                  key: rootUser
-            - name: MINIO_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: observability-storage-credentials
-                  key: rootPassword
-
-          # ───────────────────────────────────────────────────────────
           # Compactor — required in Distributed mode for retention
           # ───────────────────────────────────────────────────────────
           compactor:
@@ -151,18 +126,33 @@ spec:
             replication_factor: 1  # single-tenant, single-replica ingester
 
         # ─────────────────────────────────────────────────────────────
-        # Distributed topology — per-component replica counts
+        # Distributed topology — per-component config
         # ─────────────────────────────────────────────────────────────
-        # Kind-friendly single-replica for each. Real prod scales
-        # ingesters + queriers based on cardinality + query rate.
+        # Every component gets `extraEnvFrom` pointing at the ESO Secret
+        # so AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are available for
+        # the AWS SDK's default credential chain. Chart 6.x doesn't have
+        # a shared extraEnv/extraEnvFrom that propagates to all components,
+        # so we declare per-component.
         distributor:
           replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
 
         ingester:
           replicas: 1
+          # Disable zone-aware replication — chart default creates 3
+          # ingester zones (a/b/c) with pod anti-affinity requiring
+          # different nodes. On single-node kind, only zone-a schedules;
+          # zone-b + zone-c stay Pending forever.
+          zoneAwareReplication:
+            enabled: false
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
           persistence:
             enabled: true
             size: 5Gi
@@ -172,23 +162,40 @@ spec:
 
         querier:
           replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
 
         queryFrontend:
           replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
 
-        # queryScheduler is optional for horizontal-scale query
-        # distribution. Skip on kind (queryFrontend handles it).
+        # queryScheduler MUST exist in Distributed mode — query-frontend
+        # can't operate without one (would show "number of schedulers
+        # connected: 0" and never accept queries). Single replica for
+        # kind — real prod scales based on query volume.
         queryScheduler:
-          replicas: 0
+          replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
 
         compactor:
           replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
           persistence:
             enabled: true
             size: 2Gi
@@ -198,6 +205,9 @@ spec:
 
         indexGateway:
           replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
           persistence:
             enabled: true
             size: 2Gi
@@ -207,7 +217,8 @@ spec:
 
         # NGINX gateway — routes API requests to the right component
         # (writes → distributor, reads → query-frontend). Alloy talks
-        # to this endpoint; so does Grafana's Loki datasource.
+        # to this endpoint; so does Grafana's Loki datasource. Doesn't
+        # need MinIO creds (it's just an nginx reverse proxy).
         gateway:
           enabled: true
           replicas: 1
