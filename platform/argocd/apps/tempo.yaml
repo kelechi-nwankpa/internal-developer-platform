@@ -1,0 +1,214 @@
+---
+# tempo — Grafana Tempo (distributed) for distributed tracing. Phase 3 Wave 2.
+#
+# Chart source: Grafana Labs' official Helm repo. tempo-distributed is
+# a separate chart from `tempo` (which is single-binary). The distributed
+# chart runs 5+ components: distributor (receives spans), ingester
+# (persists), querier (retrieves), query-frontend (fronts querier),
+# compactor (merges blocks). Chose distributed per ADR-0030 — matches
+# real prod pattern.
+#
+# Storage: MinIO via S3 API, same bucket (tempo-blocks) pre-created in
+# Task 3.5.2. Credentials from observability-storage-credentials Secret
+# (ESO-synced from Vault; same Secret Loki uses). Chart's S3 config
+# reads AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from env — no inline
+# credentials needed.
+#
+# Pre-emptive fixes applied from Loki install lessons (Task 3.5.3):
+# 1. extraEnvFrom per component (not shared) — chart doesn't propagate
+#    global env to component pods
+# 2. Zone-aware replication disabled for ingester (single-node kind)
+# 3. Ingester affinity override — chart's default podAntiAffinity blocks
+#    scheduling during rollouts
+# 4. ServerSideDiff + RespectIgnoreDifferences for StatefulSet drift
+# 5. ignoreDifferences on volumeClaimTemplates + persistentVolumeClaim
+#    RetentionPolicy — K8s-injected defaults
+#
+# sync-wave: 0 — Tempo is independent of Loki. OTel Collector at wave 1
+# depends on Tempo's endpoint being reachable.
+#
+# See: docs/adr/0030-observability-wave-2-stack.md
+#      docs/adr/0029-object-storage-strategy.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: tempo-distributed
+    # Pinned to 1.24.0 — a known-stable release. Bump on chart review.
+    targetRevision: 1.24.0
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Storage — MinIO via S3 API
+        # ─────────────────────────────────────────────────────────────
+        # AWS SDK auto-detects AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+        # from env (populated via extraEnvFrom on each component). No
+        # inline access_key/secret_key needed.
+        storage:
+          trace:
+            backend: s3
+            s3:
+              bucket: tempo-blocks
+              endpoint: minio.minio.svc.cluster.local:9000
+              region: us-east-1  # required but arbitrary on MinIO
+              insecure: true      # http (in-cluster only; TLS in Phase 8)
+              forcepathstyle: true
+
+        # ─────────────────────────────────────────────────────────────
+        # Retention — 3 days per ADR-0030 (tempo-blocks bucket is
+        # smaller than loki-chunks; traces compress well)
+        # ─────────────────────────────────────────────────────────────
+        compactor:
+          replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          config:
+            compaction:
+              block_retention: 72h  # 3 days
+              # After 24h, blocks are moved to "cold" storage tier —
+              # kept in same bucket but read less frequently.
+              compacted_block_retention: 1h
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Distributor — receives spans from OTel Collector
+        # ─────────────────────────────────────────────────────────────
+        # Chart enables OTLP receiver (gRPC + HTTP) by default. OTel
+        # Collector at Task 3.5.5 will push traces here.
+        distributor:
+          replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          config:
+            log_received_spans:
+              enabled: false  # noisy at MVP; enable when debugging
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Ingester — persists spans to disk, then flushes blocks to S3
+        # ─────────────────────────────────────────────────────────────
+        # zoneAwareReplication + affinity overrides same as Loki
+        # ingester (Bugs 4 + 6 of Task 3.5.3).
+        ingester:
+          replicas: 1
+          zoneAwareReplication:
+            enabled: false
+          # Chart hardcodes requiredDuringScheduling podAntiAffinity;
+          # blocks scheduling on single-node kind. Override to empty.
+          affinity: {}
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          persistence:
+            enabled: true
+            size: 5Gi
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 1000m, memory: 1Gi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Querier — reads blocks from S3, serves queries
+        # ─────────────────────────────────────────────────────────────
+        querier:
+          replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Query-frontend — fronts querier, aggregates results
+        # ─────────────────────────────────────────────────────────────
+        # Note: Tempo's query-frontend does NOT need a query-scheduler
+        # like Loki does. It handles scheduling internally.
+        queryFrontend:
+          replicas: 1
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # metrics-generator — generates service graphs + span metrics
+        # from traces. Feeds them to Prometheus.
+        # ─────────────────────────────────────────────────────────────
+        # Disabled for MVP. When enabled in Wave 3 or Phase 8, it emits
+        # a `traces_service_graph_*` metric family Prometheus can scrape
+        # → Grafana "Service Graph" panel from trace data alone.
+        metricsGenerator:
+          enabled: false
+
+        # ─────────────────────────────────────────────────────────────
+        # Gateway (nginx) — routes API requests, single entry point
+        # ─────────────────────────────────────────────────────────────
+        # Same pattern as Loki gateway. OTel Collector talks here, so
+        # does Grafana's Tempo datasource (Task 3.5.6).
+        gateway:
+          enabled: true
+          replicas: 1
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Turn off unused optional components
+        # ─────────────────────────────────────────────────────────────
+        # memcached (query results cache) — not needed at MVP scale
+        memcached:
+          enabled: false
+        # memberlist cache — enabled by default; keep it (needed for
+        # distributor → ingester ring discovery)
+        # NO override needed.
+
+        # ─────────────────────────────────────────────────────────────
+        # Global settings
+        # ─────────────────────────────────────────────────────────────
+        global_overrides:
+          per_tenant_override_config: /runtime-config/overrides.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  # ignoreDifferences: pre-emptive FM6 fix based on Loki lessons.
+  # Chart-rendered StatefulSets have K8s-injected defaults ArgoCD
+  # sees as drift. Combined with ServerSideDiff + RespectIgnoreDifferences
+  # syncOptions below, this catches the common cases without enumeration.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/persistentVolumeClaimRetentionPolicy
+        - /spec/volumeClaimTemplates
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
