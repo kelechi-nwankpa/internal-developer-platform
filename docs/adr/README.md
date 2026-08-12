@@ -63,6 +63,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0027](0027-first-xrd-objectbucket.md) | First XRD (ObjectBucket): API surface, Composition pattern, naming | Accepted | 2026-08-07 |
 | [0028](0028-backstage-install-and-image-strategy.md) | Install Backstage via official Helm chart, accept `:latest` image as tech debt for Wave 1 MVP | Accepted | 2026-08-07 |
 | [0029](0029-object-storage-strategy.md) | Object storage strategy: MinIO on kind, AWS S3 on EKS (via Phase 4 ObjectBucket XRD) | Accepted | 2026-08-12 |
+| [0030](0030-observability-wave-2-stack.md) | Observability Wave 2 stack: Loki (distributed) + Grafana Alloy + Tempo (distributed) + OTel Collector | Accepted | 2026-08-12 |
 
 ## References
 

@@ -492,6 +492,114 @@ Hit during Phase 4 troubleshooting on `kube-prometheus-stack` (Grafana admin-pas
 
 ---
 
+## Failure Mode 6: CRD-injected default fields cause chronic OutOfSync
+
+Any CRD with default values declared in its OpenAPI schema (`x-kubernetes-defaults` or the older schema `default:` field) will auto-populate those fields on apply. If your git YAML doesn't declare them, ArgoCD's diff engine sees them as drift on every reconcile — even though the runtime state is correct and the resource is functioning.
+
+### Symptom
+
+- ArgoCD Application stays `OutOfSync/Healthy` indefinitely — the resources work fine but the sync-status won't clear
+- `argocd app diff <name>` shows fields present in cluster but absent in git — always the same set of fields
+- Refreshing the child Application doesn't help; refreshing root doesn't help; force-syncing doesn't help
+- All the drifted fields are ones you never wrote — they were injected by the CRD
+
+### Impact
+
+- **Cosmetic** — the workload runs correctly. Health status stays `Healthy`.
+- **Compounding noise** — every dashboard, every summary, every "how are things?" glance shows this Application as OutOfSync. Real drift signals get lost in the noise.
+- **selfHeal interaction** — if `syncPolicy.automated.selfHeal: true`, ArgoCD keeps trying to "correct" fields the CRD keeps re-injecting. Loop is bounded (idempotent) but wastes reconcile cycles.
+
+### Diagnosis
+
+```bash
+# Get the FULL live spec (not just what ArgoCD's summary diff shows)
+kubectl -n <namespace> get <kind> <name> -o yaml | sed -n '/^spec:/,/^status:/p'
+
+# Compare to what's in git
+cat platform/<component>/*.yaml
+
+# The extra fields in live vs git are CRD-injected defaults
+```
+
+**Note:** ArgoCD's `app diff` shows a summary that omits fields identical between live and target. When live has fields absent from target, they show as "extra." Reading them and comparing to your git YAML confirms the pattern.
+
+### Root cause
+
+Kubernetes CRD schemas can declare default values for fields (introduced in K8s 1.17 via structural schemas). When you apply a CR that omits a defaulted field, the API server injects the default on write. From your side of the API, it looks like the CR *contains* those fields even though your original YAML didn't.
+
+ArgoCD's diff computation reads:
+
+1. **Target state** — what your git YAML says (fields you declared)
+2. **Live state** — what's in the cluster (your fields + CRD-injected defaults)
+
+Diff = "live has X, target doesn't" → OutOfSync.
+
+Common offenders:
+
+- **ExternalSecret** (external-secrets.io/v1) — injects `conversionStrategy: Default`, `decodingStrategy: None`, `metadataPolicy: None`, `deletionPolicy: Retain`
+- **many Crossplane XRs/Compositions** — inject `writeConnectionSecretToRef.namespace` defaults
+- **Istio VirtualService** — injects `spec.hosts` from other computed fields
+- **cert-manager Certificate** — injects `spec.usages` defaults if omitted
+- Effectively anything with a mature CRD.
+
+### Remediation
+
+**Option A (recommended) — declare the defaults explicitly in git:**
+
+```yaml
+# Before (drift)
+spec:
+  data:
+    - secretKey: rootUser
+      remoteRef:
+        key: minio/root
+        property: rootUser
+
+# After (no drift)
+spec:
+  data:
+    - secretKey: rootUser
+      remoteRef:
+        key: minio/root
+        property: rootUser
+        conversionStrategy: Default   # CRD default
+        decodingStrategy: None        # CRD default
+        metadataPolicy: None          # CRD default
+  target:
+    name: minio-root-credentials
+    creationPolicy: Owner
+    deletionPolicy: Retain            # CRD default
+```
+
+**Preserves "git is truth"** — your YAML matches what's in-cluster.
+
+**Option B — use `spec.ignoreDifferences` on the Application:**
+
+```yaml
+spec:
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /spec/data/0/remoteRef/conversionStrategy
+        - /spec/data/0/remoteRef/decodingStrategy
+        # ... one per field × per array element
+```
+
+Faster to write but scales badly — you need one jsonPointer per field per array element. And you lose the intent-clarity that Option A provides.
+
+### Prevention
+
+- **When authoring a new CR** for a CRD you haven't used before: apply once, read the live YAML back, and add any CRD-injected defaults to your git YAML preemptively. Saves a reconcile-and-diagnose cycle.
+- **When bumping a CRD version**: new fields with defaults may be added. Re-diff after the CRD version bump.
+- **Use `kubectl apply --dry-run=server -o yaml`** to see what the server would materialise, including defaults, before committing. (Not always faithful but usually close.)
+
+### Real occurrence
+
+Hit during **Phase 3 Wave 2 Task 3.5.2b** on the MinIO ExternalSecret. First fix (commit `3c7056b`) caught `conversionStrategy` + `decodingStrategy`; second fix (commit `afd4d09`) caught the remaining `metadataPolicy` + `deletionPolicy`. Lesson: check the full live spec in one pass rather than iterating on ArgoCD's summary diff.
+
+---
+
 ## Reference: Expected reconcile times per Application
 
 For monitoring `watch kubectl get applications -n argocd` during a full rebuild (Failure Mode 4):
