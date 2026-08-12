@@ -294,6 +294,17 @@ spec:
       jsonPointers:
         - /spec/persistentVolumeClaimRetentionPolicy
         - /spec/volumeClaimTemplates
+        # Anti-affinity: chart hardcodes `requiredDuringScheduling`
+        # podAntiAffinity in its template helper (values-level
+        # `affinity: {}` doesn't override). On single-node kind, this
+        # collides across charts (Loki's "no other ingester" blocks
+        # Tempo's ingester). We patch it out via kubectl post-install
+        # + ignore drift so ArgoCD doesn't re-inject.
+        - /spec/template/spec/affinity
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/template/spec/affinity
 
   syncPolicy:
     automated:
