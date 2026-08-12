@@ -1,0 +1,157 @@
+---
+# alloy — Grafana Alloy, the modern log/metric/trace shipper. Replaces
+# Promtail (deprecated 2024). Phase 3 Wave 2.
+#
+# In Wave 2, Alloy has ONE job: scrape pod logs from every kind node
+# and forward them to Loki. Wave 3+ could extend Alloy to also handle
+# metric scraping (replacing Prometheus scrape config) and trace
+# forwarding (replacing part of OTel Collector) — but Wave 2 keeps
+# concerns separated: Alloy for logs, OTel Collector for traces,
+# Prometheus for metrics.
+#
+# Deployment: DaemonSet — one Alloy pod per node. Reads local
+# /var/log/pods paths to see every container's stdout on that node.
+#
+# Config language: Alloy uses "River" — declarative language purpose-
+# built for the agent. Chart accepts config via `alloy.configMap.content`
+# value as a River document.
+#
+# sync-wave: 1 — after Loki (wave 0) so the endpoint is reachable. If
+# Loki isn't ready, Alloy retries on its own; sync-wave is cleanliness,
+# not strict requirement.
+#
+# See: docs/adr/0030-observability-wave-2-stack.md
+#      https://grafana.com/docs/alloy/latest/tasks/migrate/from-promtail/
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alloy
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: alloy
+    # Pinned to 0.7.0 — a known-stable release. Bump on chart review.
+    targetRevision: 0.7.0
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Controller: DaemonSet — one Alloy per node (for local log
+        # discovery via kubelet's /var/log/pods)
+        # ─────────────────────────────────────────────────────────────
+        controller:
+          type: daemonset
+          # Tolerate control-plane taints (kind's single node IS the
+          # control-plane)
+          tolerations:
+            - operator: Exists
+
+        # ─────────────────────────────────────────────────────────────
+        # Alloy config (River syntax)
+        # ─────────────────────────────────────────────────────────────
+        # Discovery: read pods via K8s API, relabel with useful fields
+        # Source: read log files from the local node's /var/log/pods
+        # Forward: push to Loki gateway at observability namespace
+        alloy:
+          configMap:
+            content: |-
+              // ─────────────────────────────────────────────────────
+              // Discover pods on this node
+              // ─────────────────────────────────────────────────────
+              discovery.kubernetes "pods" {
+                role = "pod"
+                selectors {
+                  role  = "pod"
+                  field = "spec.nodeName=" + coalesce(sys.env("HOSTNAME"), constants.hostname)
+                }
+              }
+
+              // ─────────────────────────────────────────────────────
+              // Enrich pod labels with useful Loki-side dimensions
+              // ─────────────────────────────────────────────────────
+              discovery.relabel "pods" {
+                targets = discovery.kubernetes.pods.targets
+
+                rule {
+                  source_labels = ["__meta_kubernetes_namespace"]
+                  target_label  = "namespace"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_name"]
+                  target_label  = "pod"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_container_name"]
+                  target_label  = "container"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+                  target_label  = "app"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_node_name"]
+                  target_label  = "node"
+                }
+              }
+
+              // ─────────────────────────────────────────────────────
+              // Read stdout logs from the local kubelet's log path
+              // ─────────────────────────────────────────────────────
+              loki.source.kubernetes "pods" {
+                targets    = discovery.relabel.pods.output
+                forward_to = [loki.write.default.receiver]
+              }
+
+              // ─────────────────────────────────────────────────────
+              // Push to Loki gateway (distributed mode entry point)
+              // ─────────────────────────────────────────────────────
+              loki.write "default" {
+                endpoint {
+                  url = "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/push"
+                }
+              }
+
+          # ───────────────────────────────────────────────────────────
+          # Resources — modest for a log shipper
+          # ───────────────────────────────────────────────────────────
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+          # ───────────────────────────────────────────────────────────
+          # Mount host log paths (needed for reading pod stdouts from
+          # kubelet's log directory).
+          # Chart's default mounts /var/log by default; we're explicit
+          # here for clarity.
+          # ───────────────────────────────────────────────────────────
+          mounts:
+            varlog: true
+            dockercontainers: false  # kind uses containerd, not Docker
+
+        # ─────────────────────────────────────────────────────────────
+        # ServiceAccount + RBAC (chart handles both when create: true)
+        # ─────────────────────────────────────────────────────────────
+        rbac:
+          create: true
+        serviceAccount:
+          create: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

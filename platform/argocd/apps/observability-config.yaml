@@ -1,0 +1,50 @@
+---
+# observability-config — shared credential wiring for the observability
+# stack (Loki, Tempo, Alloy, OTel Collector — all landing in the
+# `observability` namespace).
+#
+# Split from the chart Applications because:
+#   - The chart Applications' lifecycle is chart version bumps (frequent).
+#   - This Application's lifecycle is credential rotation cadence + Vault
+#     path changes (rare).
+# Same split-by-lifecycle pattern as vault-config / vault (Phase 2),
+# cert-manager-issuers / cert-manager (Phase 2), backstage-rbac / backstage
+# (Phase 5), minio-config / minio (Phase 3 Wave 2 Task 3.5.2).
+#
+# sync-wave: -1 so the ExternalSecret (and resulting k8s Secret) exists
+# BEFORE the chart Applications at wave "0"/"1" try to reference it via
+# extraEnv. If ordering fails, pods crash-loop; ArgoCD's retry catches
+# up on next reconcile.
+#
+# See: platform/observability/README.md
+#      docs/adr/0030-observability-wave-2-stack.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/observability
+    # No directory.recurse field — see ADR-0015 postscript.
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

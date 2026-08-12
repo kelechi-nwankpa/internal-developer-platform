@@ -1,0 +1,248 @@
+---
+# loki — Grafana Loki (distributed) for log aggregation. Phase 3 Wave 2.
+#
+# Chart source: Grafana Labs' official Helm repo. Chart supports 3
+# deploymentModes:
+#   - SingleBinary: one pod, testing only
+#   - SimpleScalable: 3 components (read/write/backend)
+#   - Distributed: 6+ pods (distributor/ingester/querier/query-frontend/
+#     compactor/gateway). What real prod deployments run.
+#
+# We chose Distributed per ADR-0030 — matches real prod pattern, teaches
+# the microservices topology, same config shape as we'd run on EKS.
+# Trade-off is ~2 GiB memory + ~10 pods; kind at 12 GiB VM absorbs it.
+#
+# Storage: MinIO via S3 API. Credentials from k8s Secret
+# observability-storage-credentials (ESO-synced from Vault). Loki chart
+# doesn't have a first-class existingSecret for storage — standard
+# pattern is to pass credentials via env vars and enable env-var
+# expansion in Loki's config via `-config.expand-env=true`.
+#
+# See: docs/adr/0030-observability-wave-2-stack.md
+#      docs/adr/0029-object-storage-strategy.md
+#      platform/observability/README.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: loki
+    # Pinned to 6.16.0 — a known-stable release. Bump on chart review.
+    targetRevision: 6.16.0
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Deployment mode
+        # ─────────────────────────────────────────────────────────────
+        deploymentMode: Distributed
+
+        # ─────────────────────────────────────────────────────────────
+        # Loki config
+        # ─────────────────────────────────────────────────────────────
+        loki:
+          # Single-tenant mode for MVP. Wave 3 or Phase 8 could enable
+          # multi-tenancy (X-Scope-OrgID header per team).
+          auth_enabled: false
+
+          # Loki 3.x requires an explicit schema config. TSDB is the
+          # modern index format (replaces boltdb-shipper). Starts from
+          # 2024-01-01 — any epoch before the install date works.
+          schemaConfig:
+            configs:
+              - from: "2024-01-01"
+                store: tsdb
+                object_store: s3
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+
+          # ───────────────────────────────────────────────────────────
+          # Storage — MinIO via S3 API
+          # ───────────────────────────────────────────────────────────
+          # Env var references (${...}) are expanded at Loki startup
+          # via the `-config.expand-env=true` extraArg below. Env vars
+          # sourced from the observability-storage-credentials Secret
+          # via extraEnv.
+          storage:
+            type: s3
+            bucketNames:
+              chunks: loki-chunks
+              # We put ruler + admin in the same bucket for simplicity;
+              # real prod might use separate buckets for finer IAM scoping.
+              ruler: loki-chunks
+              admin: loki-chunks
+            s3:
+              endpoint: minio.minio.svc.cluster.local:9000
+              region: us-east-1  # required but arbitrary on MinIO
+              secretAccessKey: ${MINIO_SECRET_ACCESS_KEY}
+              accessKeyId: ${MINIO_ACCESS_KEY_ID}
+              s3ForcePathStyle: true
+              insecure: true  # http (in-cluster only, TLS via Phase 8)
+
+          # ───────────────────────────────────────────────────────────
+          # Retention — 7 days per ADR-0030
+          # ───────────────────────────────────────────────────────────
+          limits_config:
+            retention_period: 168h  # 7 days
+            # Ingestion rate limits (default is 4 MB/s per tenant; fine
+            # for kind since we only ingest platform logs at low volume)
+            ingestion_rate_mb: 10
+            ingestion_burst_size_mb: 20
+
+          # ───────────────────────────────────────────────────────────
+          # Env-var expansion in config
+          # ───────────────────────────────────────────────────────────
+          # Enables ${MINIO_ACCESS_KEY_ID} / ${MINIO_SECRET_ACCESS_KEY}
+          # substitution in the storage.s3 block above.
+          # Applied to all Loki components (distributor, ingester,
+          # querier, etc.) via the chart's global extraArgs.
+          # NOTE: chart 6.x uses `loki.extraArgs` at the loki: level.
+          extraArgs:
+            - "-config.expand-env=true"
+
+          # ───────────────────────────────────────────────────────────
+          # Env vars sourced from the ESO Secret
+          # ───────────────────────────────────────────────────────────
+          extraEnv:
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: observability-storage-credentials
+                  key: rootUser
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-storage-credentials
+                  key: rootPassword
+
+          # ───────────────────────────────────────────────────────────
+          # Compactor — required in Distributed mode for retention
+          # ───────────────────────────────────────────────────────────
+          compactor:
+            retention_enabled: true
+            delete_request_store: s3
+          commonConfig:
+            replication_factor: 1  # single-tenant, single-replica ingester
+
+        # ─────────────────────────────────────────────────────────────
+        # Distributed topology — per-component replica counts
+        # ─────────────────────────────────────────────────────────────
+        # Kind-friendly single-replica for each. Real prod scales
+        # ingesters + queriers based on cardinality + query rate.
+        distributor:
+          replicas: 1
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        ingester:
+          replicas: 1
+          persistence:
+            enabled: true
+            size: 5Gi
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 1000m, memory: 1Gi}
+
+        querier:
+          replicas: 1
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        queryFrontend:
+          replicas: 1
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        # queryScheduler is optional for horizontal-scale query
+        # distribution. Skip on kind (queryFrontend handles it).
+        queryScheduler:
+          replicas: 0
+
+        compactor:
+          replicas: 1
+          persistence:
+            enabled: true
+            size: 2Gi
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        indexGateway:
+          replicas: 1
+          persistence:
+            enabled: true
+            size: 2Gi
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+
+        # NGINX gateway — routes API requests to the right component
+        # (writes → distributor, reads → query-frontend). Alloy talks
+        # to this endpoint; so does Grafana's Loki datasource.
+        gateway:
+          enabled: true
+          replicas: 1
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Turn off unused components
+        # ─────────────────────────────────────────────────────────────
+        # These generate demo/test data or provide multi-tenant features
+        # we don't need for MVP.
+        chunksCache:
+          enabled: false  # requires memcached; not needed at kind scale
+        resultsCache:
+          enabled: false
+        # Bloom filters (Loki 3.1+): performance optimization for
+        # queries over cold chunks. Not needed at MVP scale.
+        bloomCompactor:
+          replicas: 0
+        bloomGateway:
+          replicas: 0
+
+        # ─────────────────────────────────────────────────────────────
+        # Disable Loki's built-in Grafana Agent (we run Alloy separately)
+        # ─────────────────────────────────────────────────────────────
+        monitoring:
+          selfMonitoring:
+            enabled: false
+            grafanaAgent:
+              installOperator: false
+
+        # No test pods — we validate via Alloy + query
+        test:
+          enabled: false
+
+        # Chart's default is to install lokiCanary (a self-test app that
+        # writes + reads canary logs). Disable for MVP.
+        lokiCanary:
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
