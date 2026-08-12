@@ -150,6 +150,12 @@ spec:
           # zone-b + zone-c stay Pending forever.
           zoneAwareReplication:
             enabled: false
+          # Chart also sets required podAntiAffinity even in non-zone
+          # mode — "don't be on same node as another ingester". For
+          # single-node kind that ALSO blocks (transient during rollouts
+          # when old pod is Terminating on the only node). Override to
+          # empty so single-replica ingester schedules without constraint.
+          affinity: {}
           extraEnvFrom:
             - secretRef:
                 name: observability-storage-credentials
