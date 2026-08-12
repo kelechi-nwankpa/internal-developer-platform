@@ -107,14 +107,22 @@ spec:
               insecure: true  # http (in-cluster only, TLS via Phase 8)
 
           # ───────────────────────────────────────────────────────────
-          # Retention — 7 days per ADR-0030
+          # Retention + ingestion limits
           # ───────────────────────────────────────────────────────────
           limits_config:
-            retention_period: 168h  # 7 days
+            retention_period: 168h  # 7 days per ADR-0030
             # Ingestion rate limits (default is 4 MB/s per tenant; fine
             # for kind since we only ingest platform logs at low volume)
             ingestion_rate_mb: 10
             ingestion_burst_size_mb: 20
+            # Accept log entries up to 7d old — kubelet's log tail on
+            # kind can span many hours (or days) of history. Loki's
+            # default rejects anything older than ~1h, which drops
+            # every pod's startup log when Alloy first starts scraping.
+            # Bug 7 in Task 3.5.3 verification: hundreds of "entry too
+            # far behind" errors before adding this.
+            reject_old_samples: true
+            reject_old_samples_max_age: 168h  # 7 days, matches retention
 
           # ───────────────────────────────────────────────────────────
           # Compactor — required in Distributed mode for retention
