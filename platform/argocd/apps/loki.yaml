@@ -47,6 +47,20 @@ spec:
         # ─────────────────────────────────────────────────────────────
         deploymentMode: Distributed
 
+        # Chart has a validation that rejects mixing modes. When we
+        # request Distributed, we must explicitly zero out the
+        # SimpleScalable components (backend/read/write) AND the
+        # SingleBinary target — otherwise chart complains that we have
+        # >0 replicas for multiple deployment topologies.
+        singleBinary:
+          replicas: 0
+        backend:
+          replicas: 0
+        read:
+          replicas: 0
+        write:
+          replicas: 0
+
         # ─────────────────────────────────────────────────────────────
         # Loki config
         # ─────────────────────────────────────────────────────────────

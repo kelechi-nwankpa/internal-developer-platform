@@ -70,7 +70,11 @@ spec:
                 role = "pod"
                 selectors {
                   role  = "pod"
-                  field = "spec.nodeName=" + coalesce(sys.env("HOSTNAME"), constants.hostname)
+                  // Restrict to pods on the local node. env() is Alloy's
+                  // built-in env-var reader (there is no sys.env
+                  // component). HOSTNAME env var equals the node name
+                  // in kind's DaemonSet spec.
+                  field = "spec.nodeName=" + coalesce(env("HOSTNAME"), constants.hostname)
                 }
               }
 
