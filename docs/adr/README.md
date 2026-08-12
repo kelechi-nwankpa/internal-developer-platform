@@ -62,6 +62,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0026](0026-crossplane-install-and-version.md) | Install Crossplane core (chart 1.20.11, v1 track) as one ArgoCD Application | Accepted | 2026-08-05 |
 | [0027](0027-first-xrd-objectbucket.md) | First XRD (ObjectBucket): API surface, Composition pattern, naming | Accepted | 2026-08-07 |
 | [0028](0028-backstage-install-and-image-strategy.md) | Install Backstage via official Helm chart, accept `:latest` image as tech debt for Wave 1 MVP | Accepted | 2026-08-07 |
+| [0029](0029-object-storage-strategy.md) | Object storage strategy: MinIO on kind, AWS S3 on EKS (via Phase 4 ObjectBucket XRD) | Accepted | 2026-08-12 |
 
 ## References
 
