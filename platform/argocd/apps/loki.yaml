@@ -278,21 +278,22 @@ spec:
     server: https://kubernetes.default.svc
     namespace: observability
 
-  # ignoreDifferences: FM6 pattern applied to chart-rendered StatefulSets.
-  # K8s auto-injects `persistentVolumeClaimRetentionPolicy: {whenDeleted:
-  # Retain, whenScaled: Retain}` on every StatefulSet at apply time, but
-  # the Loki chart's template doesn't declare it. Result: 3 StatefulSets
-  # (compactor, index-gateway, ingester) show OutOfSync forever.
+  # ignoreDifferences: FM6 pattern for chart-rendered StatefulSets.
+  # K8s auto-injects several fields on StatefulSets that the Loki chart's
+  # template doesn't declare (persistentVolumeClaimRetentionPolicy,
+  # volumeClaimTemplates[*].apiVersion + kind, various template defaults).
+  # Enumerating every one is fragile — so we combine two mechanisms:
   #
-  # Unlike our own ExternalSecret where we could declare CRD-injected
-  # defaults in git, we don't own the chart's StatefulSet template. So
-  # we use ignoreDifferences instead — same escape hatch as the Grafana
-  # admin-password chart-regeneration fix (kube-prometheus-stack Application).
+  # 1. ignoreDifferences on the well-known injected field
+  # 2. ServerSideDiff=true sync option — ArgoCD 2.10+ computes diffs
+  #    server-side via kubectl dry-run apply, correctly handling
+  #    managed-fields and injected defaults for the rest.
   ignoreDifferences:
     - group: apps
       kind: StatefulSet
       jsonPointers:
         - /spec/persistentVolumeClaimRetentionPolicy
+        - /spec/volumeClaimTemplates
 
   syncPolicy:
     automated:
@@ -301,3 +302,10 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+      # ArgoCD 2.10+: compute diffs via kubectl dry-run apply on the
+      # apiserver, which respects managed-fields ownership. Handles
+      # K8s-injected StatefulSet defaults that jsonPointers can't easily
+      # enumerate. Requires ServerSideApply=true (above) and works with
+      # RespectIgnoreDifferences.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
