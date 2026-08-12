@@ -1,0 +1,138 @@
+---
+# minio — S3-compatible object storage for Phase 3 Wave 2 (Loki chunks
+# + Tempo blocks). Kind-local install; EKS uses AWS S3 via the Phase 4
+# ObjectBucket XRD per ADR-0029.
+#
+# Chart source: MinIO's official Helm repo. NOT the Bitnami chart —
+# Bitnami's charts moved to Broadcom/VMware ownership in 2023-2024 and
+# their long-term maintenance direction is unclear. Official upstream
+# is more aligned with the vendor.
+#
+# Mode: standalone (single pod, single PVC). Distributed MinIO (4 pods,
+# erasure coding) is overkill for our observability-only scale (5-20 GiB
+# total) and would add ~400+ MiB memory. Distributed is a Phase 9 EKS
+# concern; on EKS we skip MinIO entirely (AWS S3).
+#
+# Credentials: rootUser + rootPassword from k8s Secret
+# `minio-root-credentials`, populated by ESO via minio-config Application
+# from Vault at kv/minio/root. Manual Vault seed required BEFORE first
+# sync — see platform/minio/README.md.
+#
+# Buckets: loki-chunks + tempo-blocks pre-created on first install via
+# the chart's `buckets:` values (Helm hook Job runs mc mb after MinIO
+# starts).
+#
+# sync-wave: 0 (default). minio-config runs at wave -1 so the Secret
+# exists before this chart tries to read it.
+#
+# See: docs/adr/0029-object-storage-strategy.md
+#      platform/minio/README.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://charts.min.io/
+    chart: minio
+    # Pinned to 5.3.0 — a known-stable release. Bump on chart
+    # version review; not on every new release (chart is stable +
+    # changes rarely).
+    targetRevision: 5.3.0
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Mode + replicas
+        # ─────────────────────────────────────────────────────────────
+        # Standalone single-pod: correct for kind's scale + memory.
+        # Distributed (4+ pods, erasure coding) is a prod-grade EKS
+        # decision — but on EKS we skip MinIO entirely and use S3
+        # via the ObjectBucket XRD. So distributed is out of scope
+        # for this project.
+        mode: standalone
+        replicas: 1
+
+        # ─────────────────────────────────────────────────────────────
+        # Storage
+        # ─────────────────────────────────────────────────────────────
+        # 10 GiB caps ~7 days of Loki chunks + ~3 days of Tempo blocks
+        # at platform-only volume. Bump if we start actually running
+        # workloads that generate meaningful log/trace volume
+        # (Phase 6+ Node.js template).
+        persistence:
+          enabled: true
+          size: 10Gi
+          # storageClass unset = use kind's default ("standard")
+
+        # ─────────────────────────────────────────────────────────────
+        # Credentials (via ESO-synced Secret from Vault)
+        # ─────────────────────────────────────────────────────────────
+        # The Secret must exist before this Deployment starts. The
+        # minio-config Application at sync-wave "-1" ensures ordering.
+        # If it doesn't exist, the pod crash-loops until it does —
+        # ArgoCD's retry catches it up on next reconcile.
+        existingSecret: minio-root-credentials
+
+        # ─────────────────────────────────────────────────────────────
+        # Pre-create buckets on first install
+        # ─────────────────────────────────────────────────────────────
+        # Chart spawns a Helm hook Job (`minio-make-user-job`) that
+        # runs `mc mb` for each bucket. Idempotent — safe to re-sync.
+        buckets:
+          - name: loki-chunks
+            policy: none  # private (no anonymous access)
+            purge: false  # don't delete on uninstall
+          - name: tempo-blocks
+            policy: none
+            purge: false
+
+        # ─────────────────────────────────────────────────────────────
+        # Service (ClusterIP — access via port-forward on kind)
+        # ─────────────────────────────────────────────────────────────
+        service:
+          type: ClusterIP
+          # Ports: 9000 = S3 API, 9001 = Console (both exposed)
+        consoleService:
+          type: ClusterIP
+
+        # ─────────────────────────────────────────────────────────────
+        # Ingress off — port-forward for kind. EKS gets Ingress via
+        # cert-manager + Route53 (Phase 9), but we're not exposing
+        # MinIO publicly anyway (Loki + Tempo hit it via ClusterIP).
+        # ─────────────────────────────────────────────────────────────
+        ingress:
+          enabled: false
+        consoleIngress:
+          enabled: false
+
+        # ─────────────────────────────────────────────────────────────
+        # Resources — modest for standalone MinIO with 10 GiB
+        # ─────────────────────────────────────────────────────────────
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: minio
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

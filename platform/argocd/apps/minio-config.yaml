@@ -1,0 +1,52 @@
+---
+# minio-config — the ExternalSecret CR that pulls MinIO root credentials
+# from Vault into a k8s Secret.
+#
+# Split from minio.yaml because:
+#   - minio.yaml is the Helm chart install — lifecycle = chart version bumps.
+#   - minio-config.yaml is the ExternalSecret + Vault-side wiring —
+#     lifecycle = credential rotation cadence (rare) + Vault path changes.
+#
+# Same split-by-lifecycle pattern as vault-config / vault (Phase 2),
+# cert-manager-issuers / cert-manager (Phase 2), and backstage-rbac /
+# backstage (Phase 5).
+#
+# sync-wave: -1 so the ExternalSecret + resulting k8s Secret exist
+# BEFORE the minio chart Application (wave 0) tries to read them via
+# `existingSecret`. Without wave ordering, the chart pod crash-loops
+# on first install until Secret shows up — annoying but self-healing.
+#
+# See: platform/minio/README.md
+#      docs/adr/0029-object-storage-strategy.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio-config
+  namespace: argocd
+  annotations:
+    # Sync ExternalSecret BEFORE the chart Application (which is wave 0)
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/minio
+    # No directory.recurse field — see ADR-0015 postscript on the
+    # omitempty drift trap.
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: minio
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
