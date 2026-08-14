@@ -1,0 +1,227 @@
+---
+# otel-collector — OpenTelemetry Collector, the CNCF-standard trace
+# ingest agent. Phase 3 Wave 2 Task 3.5.5.
+#
+# Role: sits between application code (which uses OTel SDKs) and Tempo.
+# Apps push OTLP traces to this Collector; Collector forwards to Tempo.
+# Decoupling means:
+#   - Apps don't need to know Tempo's endpoint (only the Collector's)
+#   - Sampling / batching / retry policies live in one place
+#   - Wave 3+ can add processors (attribute enrichment, PII scrubbing,
+#     tail-based sampling) without touching apps
+#
+# Deployment mode: single Deployment (1 replica). Per ADR-0030,
+# alternatives (DaemonSet for host-level, sidecar per-pod) are Wave 3+
+# concerns.
+#
+# Receivers: OTLP only (gRPC 4317 + HTTP 4318). Modern, CNCF-standard.
+# Legacy Zipkin/Jaeger receivers deferred (no clients use them).
+#
+# Exporters: forwards to tempo-distributor via OTLP gRPC. No Loki/
+# Prometheus exporters — Alloy handles logs, kube-prometheus-stack
+# handles metrics. Keeps Wave 2 scope clean per ADR-0030.
+#
+# Sampling: 100% (no drop). kind volume is tiny; capture everything for
+# MVP. Head-based tail-drop is Phase 8 hardening.
+#
+# sync-wave: 1 — after Tempo (wave 0) so distributor endpoint is
+# reachable. Alloy also at wave 1 — both independent.
+#
+# See: docs/adr/0030-observability-wave-2-stack.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-collector
+    # Pinned to 0.111.0 — a known-stable release. Bump on chart review.
+    targetRevision: 0.111.0
+    helm:
+      valuesObject:
+
+        # ─────────────────────────────────────────────────────────────
+        # Image — contrib distribution includes ~90 receivers/exporters/
+        # processors. Core would be lighter but missing tail-based
+        # sampling (Wave 3 candidate).
+        # ─────────────────────────────────────────────────────────────
+        image:
+          repository: otel/opentelemetry-collector-contrib
+          # Chart auto-appends the "-contrib" version tag matching the
+          # chart's default. Not pinning image tag — chart defaults are
+          # kept in sync with the chart version.
+
+        # ─────────────────────────────────────────────────────────────
+        # Mode + replicas
+        # ─────────────────────────────────────────────────────────────
+        mode: deployment
+        replicaCount: 1
+
+        # ─────────────────────────────────────────────────────────────
+        # Collector config (OTLP receiver → batch/memory-limiter → Tempo)
+        # ─────────────────────────────────────────────────────────────
+        # Override the chart's default config entirely — chart ships
+        # with a demo config that includes many receivers/exporters we
+        # don't want.
+        config:
+          receivers:
+            otlp:
+              protocols:
+                grpc:
+                  endpoint: 0.0.0.0:4317
+                http:
+                  endpoint: 0.0.0.0:4318
+                  # CORS: allow web frontend apps in Phase 6+ to send
+                  # browser-generated traces (OTel JS SDK in Backstage,
+                  # golden-path Next.js templates).
+                  cors:
+                    allowed_origins:
+                      - "http://*"
+                      - "https://*"
+
+          processors:
+            # memory_limiter: circuit-breaker. If Collector's memory
+            # exceeds limit, it starts dropping incoming batches
+            # (returns 503 to clients) so it doesn't OOM.
+            memory_limiter:
+              check_interval: 1s
+              limit_mib: 400
+              spike_limit_mib: 100
+
+            # batch: aggregate small trace batches before forwarding
+            # to Tempo. Reduces network chatter + Tempo ingester load.
+            batch:
+              timeout: 10s
+              send_batch_size: 1024
+
+            # resource: enrich every span with cluster identity so we
+            # can filter by cluster in Grafana. On EKS this would come
+            # from ec2 metadata; on kind we hardcode.
+            resource:
+              attributes:
+                - key: cluster
+                  value: kind-idp
+                  action: insert
+                - key: k8s.cluster.name
+                  value: kind-idp
+                  action: insert
+
+          exporters:
+            # Forward to Tempo's distributor via OTLP gRPC.
+            otlp/tempo:
+              endpoint: tempo-distributor.observability.svc.cluster.local:4317
+              tls:
+                insecure: true  # in-cluster; TLS via Phase 8
+
+            # debug: log processed spans to Collector's stdout. Useful
+            # during Task 3.5.6 verification when Grafana Tempo
+            # datasource isn't wired yet. Remove or set verbosity=basic
+            # once trace flow is confirmed.
+            debug:
+              verbosity: basic
+
+          service:
+            # extensions: health_check + zpages for troubleshooting.
+            # Enabled by default in most Collector distros; explicit here.
+            extensions: [health_check]
+            pipelines:
+              traces:
+                receivers: [otlp]
+                processors: [memory_limiter, resource, batch]
+                # Both exporters run in parallel — Tempo + stdout
+                exporters: [otlp/tempo, debug]
+
+          extensions:
+            health_check:
+              endpoint: 0.0.0.0:13133
+
+        # ─────────────────────────────────────────────────────────────
+        # Ports — only expose what we use
+        # ─────────────────────────────────────────────────────────────
+        # Chart's default `ports:` map lists many ports; we override
+        # just OTLP (gRPC + HTTP) + health_check. Disable others via
+        # `enabled: false`.
+        ports:
+          otlp:
+            enabled: true
+            containerPort: 4317
+            servicePort: 4317
+            protocol: TCP
+          otlp-http:
+            enabled: true
+            containerPort: 4318
+            servicePort: 4318
+            protocol: TCP
+          jaeger-compact:
+            enabled: false
+          jaeger-thrift:
+            enabled: false
+          jaeger-grpc:
+            enabled: false
+          zipkin:
+            enabled: false
+          metrics:
+            enabled: false  # keep the metrics/prometheus port off for MVP
+
+        # ─────────────────────────────────────────────────────────────
+        # Resources
+        # ─────────────────────────────────────────────────────────────
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}
+
+        # ─────────────────────────────────────────────────────────────
+        # Presets — chart bundles common convenience configs
+        # ─────────────────────────────────────────────────────────────
+        # kubernetesAttributes: automatically enrich spans with k8s
+        # metadata (namespace, pod name, labels). NOT enabled — would
+        # need RBAC additions + adds latency. Wave 3 candidate.
+        # clusterMetrics / hostMetrics / kubeletMetrics: metrics pipeline,
+        # not our scope.
+        presets:
+          kubernetesAttributes:
+            enabled: false
+          clusterMetrics:
+            enabled: false
+          hostMetrics:
+            enabled: false
+          kubeletMetrics:
+            enabled: false
+
+        # ─────────────────────────────────────────────────────────────
+        # ServiceAccount + RBAC — chart creates if none
+        # ─────────────────────────────────────────────────────────────
+        serviceAccount:
+          create: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  # ignoreDifferences: pre-emptive FM6 fix per Loki/Tempo lessons.
+  # OTel Collector is a Deployment (no StatefulSet); anti-affinity path
+  # covered but volumeClaimTemplates not applicable.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/template/spec/affinity
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
