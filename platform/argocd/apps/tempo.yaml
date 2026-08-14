@@ -51,6 +51,45 @@ spec:
       valuesObject:
 
         # ─────────────────────────────────────────────────────────────
+        # Traces receiver config — MUST be explicit; chart default is null
+        # ─────────────────────────────────────────────────────────────
+        # Bug 9 in Task 3.5.5: without this block, tempo-distributor's
+        # config has `receivers: null` and doesn't expose port 4317.
+        # OTel Collector's traces then time out on connection.
+        traces:
+          otlp:
+            grpc:
+              enabled: true
+            http:
+              enabled: true
+              # Jaeger + Zipkin protocols disabled — chart supports them
+              # but our OTel Collector normalises everything to OTLP.
+
+        # ─────────────────────────────────────────────────────────────
+        # Ingester ring config — replication_factor must match replicas
+        # ─────────────────────────────────────────────────────────────
+        # Bug 10 in Task 3.5.5: chart default is replication_factor=3
+        # for HA, but we run 1 ingester on kind. Ingester's lifecycler
+        # blocks writes until N replicas are ready — hangs forever with
+        # 1/3. Match to actual replica count.
+        ingester:
+          replicas: 1
+          zoneAwareReplication:
+            enabled: false
+          affinity: {}
+          extraEnvFrom:
+            - secretRef:
+                name: observability-storage-credentials
+          persistence:
+            enabled: true
+            size: 5Gi
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 1000m, memory: 1Gi}
+          config:
+            replication_factor: 1
+
+        # ─────────────────────────────────────────────────────────────
         # Storage — MinIO via S3 API
         # ─────────────────────────────────────────────────────────────
         # AWS SDK auto-detects AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
@@ -102,27 +141,8 @@ spec:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}
 
-        # ─────────────────────────────────────────────────────────────
-        # Ingester — persists spans to disk, then flushes blocks to S3
-        # ─────────────────────────────────────────────────────────────
-        # zoneAwareReplication + affinity overrides same as Loki
-        # ingester (Bugs 4 + 6 of Task 3.5.3).
-        ingester:
-          replicas: 1
-          zoneAwareReplication:
-            enabled: false
-          # Chart hardcodes requiredDuringScheduling podAntiAffinity;
-          # blocks scheduling on single-node kind. Override to empty.
-          affinity: {}
-          extraEnvFrom:
-            - secretRef:
-                name: observability-storage-credentials
-          persistence:
-            enabled: true
-            size: 5Gi
-          resources:
-            requests: {cpu: 100m, memory: 256Mi}
-            limits: {cpu: 1000m, memory: 1Gi}
+        # (ingester block moved earlier — combined with replication_factor
+        # fix. See "Ingester ring config" above.)
 
         # ─────────────────────────────────────────────────────────────
         # Querier — reads blocks from S3, serves queries
