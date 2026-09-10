@@ -8,10 +8,10 @@ Each phase of this project ships a discrete slice of the platform, with a writte
 |---|---|---|---|
 | 0 | Foundations & docs | ✅ shipped | [phase-0-foundations.md](phase-0-foundations.md) |
 | 1 | AWS baseline via CDK | ✅ shipped | [phase-1-baseline.md](phase-1-baseline.md) |
-| 2 | Cluster add-ons (GitOps'd) | ⏳ pending | — |
-| 3 | Observability stack | ⏳ pending | — |
-| 4 | Crossplane + AWS provider + compositions | ⏳ pending | — |
-| 5 | Backstage MVP | ⏳ pending | — |
+| 2 | Cluster add-ons (GitOps'd) — ArgoCD + cert-manager + ESO + Vault + external-dns | ✅ shipped | [phase-2-platform.md](phase-2-platform.md) |
+| 3 | Observability stack — Wave 1 (metrics) + Wave 2 (logs + traces) | ✅ shipped | [phase-3-observability.md](phase-3-observability.md) |
+| 4 | Crossplane + AWS provider + first XRD (ObjectBucket) | ✅ shipped | [phase-4-crossplane.md](phase-4-crossplane.md) |
+| 5 | Backstage MVP — Wave 1 shipped, Wave 2 deferred | ✅ Wave 1 shipped | [phase-5-backstage.md](phase-5-backstage.md) |
 | 6 | Golden path template (Node.js) | ⏳ pending | — |
 | 7 | CI/CD golden pipeline | ⏳ pending | — |
 | 8 | Security hardening | ⏳ pending | — |
