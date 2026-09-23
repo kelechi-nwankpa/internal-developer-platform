@@ -28,7 +28,7 @@ The Backstage `appConfig.catalog.locations` block in [`platform/argocd/apps/back
 
 ## Not managed here
 
-- **Software Templates** (Phase 6) — those live in [`templates/`](../templates/) and get registered as their own Location.
+- **Software Templates** — Phase 6 shipped the first template (`nodejs-fastify-svc`) in [`templates/`](../templates/). It's registered directly from `templates/nodejs-fastify-svc/template.yaml` via its own URL Location in `appConfig.catalog.locations` (see `platform/argocd/apps/backstage.yaml`). Not aggregated into this `catalog/` directory — each template stays with its skeleton for locality.
 - **Real microservice catalog entries** (Phase 6+) — those go colocated with the service repo (`services/<svc>/catalog-info.yaml`), not here. This directory is only for the *platform* — the things the platform runs on itself.
 - **Sub-tenants / real users / real teams** — MVP has one Group and one User. Real orgs sync from an identity provider (GitHub org, Okta, LDAP) via a Backstage plugin. Out of scope for Wave 1.
 

@@ -166,6 +166,19 @@ spec:
                   target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/catalog/apis.yaml
                   rules:
                     - allow: [API]
+                # ─────────────────────────────────────────────────────
+                # Software Templates (Phase 6) — golden path scaffolds
+                # ─────────────────────────────────────────────────────
+                # Registered as kind: Template. Users see these in
+                # Backstage's Create page. Today (Wave 1 Backstage without
+                # Scaffolder) the Create button links to the template's
+                # README with `bin/render.sh` instructions. When Wave 2
+                # Scaffolder lands, the same Template entity becomes
+                # click-to-create — no re-registration.
+                - type: url
+                  target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/templates/nodejs-fastify-svc/template.yaml
+                  rules:
+                    - allow: [Template]
             # Placeholder integrations block — real GitHub token wired
             # up in Wave 2 or Phase 8 when we add Software Templates.
             integrations: {}
