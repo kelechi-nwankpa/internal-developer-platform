@@ -1,0 +1,33 @@
+---
+# certificate.yaml — {{SERVICE_NAME}}
+#
+# cert-manager Certificate for TLS on the Ingress. On kind, the ClusterIssuer
+# `selfsigned-cluster-issuer` (from platform/cert-manager-issuers) signs any
+# cert we request — good enough for local dev. On EKS, this same Certificate
+# would use `letsencrypt-prod` (real cert; DNS-01 challenge via ExternalDNS
+# + Route53 per ADR-0021).
+#
+# See ADR-0017 for the kind-vs-EKS issuer strategy. Swap `issuerRef.name`
+# when promoting to EKS.
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{SERVICE_NAME}}-tls
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+spec:
+  # Secret cert-manager writes the cert into. Ingress references it by name.
+  secretName: {{SERVICE_NAME}}-tls
+  duration: 2160h    # 90 days (Let's Encrypt max; SelfSigned honours too)
+  renewBefore: 720h  # renew when 30 days remain
+  # Common name + SANs — the FQDN(s) the cert is valid for. Ingress host
+  # must match one of these SANs.
+  commonName: {{SERVICE_NAME}}.idp.seniormankelz.dev
+  dnsNames:
+    - {{SERVICE_NAME}}.idp.seniormankelz.dev
+  issuerRef:
+    name: selfsigned-cluster-issuer   # swap to `letsencrypt-prod` on EKS
+    kind: ClusterIssuer
+    group: cert-manager.io

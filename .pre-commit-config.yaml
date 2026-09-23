@@ -43,6 +43,9 @@ repos:
       - id: check-json
       - id: check-yaml
         args: ["--allow-multiple-documents"]
+        # Skip template skeleton files — they contain {{PLACEHOLDER}}
+        # syntax that isn't valid YAML until rendered by bin/render.sh.
+        exclude: ^templates/.*/skeleton/
       - id: check-symlinks
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
@@ -79,6 +82,9 @@ repos:
     hooks:
       - id: yamllint
         args: ["-c", ".yamllint.yml"]
+        # Skip template skeleton files — they contain {{PLACEHOLDER}}
+        # syntax that isn't valid YAML until rendered by bin/render.sh.
+        exclude: ^templates/.*/skeleton/
 
   # ─────────────────────────────────────────────────────────────
   # Markdown linting — .markdownlint.json holds the ruleset.

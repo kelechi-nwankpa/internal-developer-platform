@@ -1,0 +1,33 @@
+---
+# objectbucket.yaml — {{SERVICE_NAME}}
+#
+# Crossplane XRC (Composite Resource Claim) that materialises an S3 bucket
+# via our Phase 4 XRD (see ADR-0027). The Composition then creates:
+#   - Bucket (s3.aws.upbound.io) — the actual S3 bucket
+#   - BucketVersioning
+#   - BucketPublicAccessBlock (Block all — deny-by-default per CLAUDE.md §4)
+#   - IAM Policy (read/write on bucket + objects, scoped to this bucket only)
+#
+# On kind: materialises against MinIO (via `AWS_ENDPOINT_URL` in Crossplane's
+# provider-aws-s3 ProviderConfig — set once at cluster init).
+# On EKS:  materialises against real AWS S3.
+# Same YAML, different backend — the ADR-0029 abstraction pays off.
+#
+# `writeConnectionSecretToRef` tells Crossplane to write BUCKET_NAME +
+# AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_ENDPOINT_URL + AWS_REGION
+# to a Secret. Deployment mounts via envFrom in deployment.yaml.
+
+apiVersion: platform.idp.io/v1alpha1
+kind: ObjectBucket
+metadata:
+  name: {{SERVICE_NAME}}
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+spec:
+  region: eu-west-1
+  publicRead: false      # deny-by-default per CLAUDE.md §4
+  versioning: true       # object versioning enabled — safe default
+  # Where to write the connection details Deployment consumes via envFrom.
+  writeConnectionSecretToRef:
+    name: {{SERVICE_NAME}}-bucket-conn

@@ -1,0 +1,84 @@
+---
+# application.yaml — {{SERVICE_NAME}}
+#
+# ArgoCD Application that deploys this service. Sync loop:
+#   1. ArgoCD watches this service's own git repo (branch/tag pinned below).
+#   2. Runs `kustomize build kubernetes/` on the tracked revision.
+#   3. Applies the output to the {{SERVICE_NAME}} namespace.
+#   4. Reports Synced/OutOfSync + Healthy/Degraded in the ArgoCD UI.
+#
+# INSTALL FLOW:
+#   1. Push this Application manifest to the platform repo at:
+#        platform/argocd/apps/{{SERVICE_NAME}}.yaml
+#   2. Root app-of-apps auto-detects it on next reconcile (~3 min) and
+#      creates this Application in the argocd namespace.
+#   3. This Application then deploys the service's kubernetes/ manifests.
+#
+# Two ArgoCD Applications working in tandem:
+#   - Platform-repo → deploys THIS Application manifest (Applications-of-
+#     Applications pattern, ADR-0015).
+#   - THIS Application → deploys the service's actual manifests.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{SERVICE_NAME}}
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app.kubernetes.io/part-of: {{OWNER}}
+spec:
+  project: default
+
+  source:
+    # The service's OWN repo — created + pushed by the user after
+    # scaffolding. Format: https://github.com/{{OWNER}}/{{SERVICE_NAME}}.git
+    repoURL: {{REPO_URL}}
+    # Pin to `main` for MVP; production would pin to a semver tag or
+    # commit SHA to make rollbacks explicit.
+    targetRevision: main
+    path: kubernetes
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Each service gets its own namespace. CreateNamespace=true (see below)
+    # creates it if missing. Labels on Namespace inherited from kustomize
+    # commonLabels.
+    namespace: {{SERVICE_NAME}}
+
+  # ignoreDifferences: FM6-pattern for chart-rendered StatefulSets (see
+  # runbook FM6). Not strictly needed here (no StatefulSets in this
+  # template), but declared preemptively so future additions don't reintro
+  # the drift class.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/template/spec/affinity
+
+  syncPolicy:
+    automated:
+      # Prune resources removed from git (safer than manual cleanup).
+      prune: true
+      # Auto-revert manual `kubectl edit` — enforces GitOps.
+      selfHeal: true
+    syncOptions:
+      # Auto-create the namespace if missing (first install convenience).
+      - CreateNamespace=true
+      # SSA per ADR-0014 pattern — better field-ownership tracking.
+      - ServerSideApply=true
+      # ServerSideDiff + RespectIgnoreDifferences — handle K8s-injected
+      # defaults on chart-rendered resources without enumerating every
+      # field. Pattern established during Phase 3 Wave 2 Task 3.5.3.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+    # Retry with exponential backoff on sync failures (e.g. transient API
+    # errors during namespace creation).
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

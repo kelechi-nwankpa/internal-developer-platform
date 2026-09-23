@@ -1,0 +1,51 @@
+---
+# ingress.yaml — {{SERVICE_NAME}}
+#
+# nginx-ingress annotations. NOT enabled until Phase 8 installs
+# nginx-ingress (or Istio Gateway) — on kind today, this Ingress is created
+# but no controller processes it, so it's inert.
+#
+# For local dev pre-Phase-8: use kubectl port-forward svc/{{SERVICE_NAME}} 3000:3000
+# For EKS in Phase 9: nginx-ingress + AWS ALB provisioner + ExternalDNS
+#   creates Route53 records automatically at {{SERVICE_NAME}}.idp.seniormankelz.dev
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{SERVICE_NAME}}
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+  annotations:
+    # cert-manager watches Ingress annotations for the referenced ClusterIssuer
+    # and auto-provisions the Certificate. We ALSO have certificate.yaml as
+    # a separate resource for clarity; either mechanism works.
+    cert-manager.io/cluster-issuer: selfsigned-cluster-issuer
+
+    # nginx-ingress rate limiting — 100 req/s per client IP. Adjust when
+    # real traffic patterns are known.
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+
+    # Enforce HTTPS — nginx-ingress redirects HTTP to HTTPS.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # ExternalDNS annotation (see ADR-0021) — instructs external-dns to
+    # create the DNS record. `inmemory` on kind (no-op); Route53 on EKS.
+    external-dns.alpha.kubernetes.io/hostname: {{SERVICE_NAME}}.idp.seniormankelz.dev
+spec:
+  ingressClassName: nginx   # matches nginx-ingress install in Phase 8
+  tls:
+    - hosts:
+        - {{SERVICE_NAME}}.idp.seniormankelz.dev
+      secretName: {{SERVICE_NAME}}-tls   # from certificate.yaml
+  rules:
+    - host: {{SERVICE_NAME}}.idp.seniormankelz.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{SERVICE_NAME}}
+                port:
+                  name: http

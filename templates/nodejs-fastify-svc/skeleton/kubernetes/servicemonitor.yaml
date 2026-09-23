@@ -1,0 +1,33 @@
+---
+# servicemonitor.yaml — {{SERVICE_NAME}}
+#
+# Tells kube-prometheus-stack's Prometheus to scrape /metrics on the
+# Service. Includes `release: kube-prometheus-stack` label because the
+# chart's default Prometheus CR uses a `serviceMonitorSelector` filter —
+# without this label, the SM is silently ignored (see ADR-0024 postscript
+# on the selector-filter trap; Phase 3 Task 3.5 fixed the chart-wide
+# selector but per-SM labels remain best practice).
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{SERVICE_NAME}}
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+    # Required for kube-prometheus-stack to discover this SM
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: {{SERVICE_NAME}}
+  endpoints:
+    - port: http
+      path: /metrics
+      # Scrape every 30s — matches the default in kube-prometheus-stack.
+      # Bump interval on high-cardinality metrics; drop for RED-metric
+      # accuracy on hot paths.
+      interval: 30s
+      scrapeTimeout: 10s
+      # Honor the labels the app already sets on its metrics.
+      honorLabels: true

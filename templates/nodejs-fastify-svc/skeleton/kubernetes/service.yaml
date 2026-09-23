@@ -1,0 +1,35 @@
+---
+# service.yaml — {{SERVICE_NAME}}
+#
+# ClusterIP on port 3000. In-cluster only (Ingress in ingress.yaml exposes
+# via nginx-ingress once Phase 8 wires it). ServiceMonitor scrapes /metrics
+# via this Service's `http` port name.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{SERVICE_NAME}}
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app: {{SERVICE_NAME}}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
+---
+# ServiceAccount — pinned so Phase 8 RBAC hardening can grant scoped perms
+# per-service (e.g. read on the service's own Secret + ConfigMap only).
+# For MVP: default RBAC (no extra grants needed — app doesn't hit k8s API).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{SERVICE_NAME}}
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}

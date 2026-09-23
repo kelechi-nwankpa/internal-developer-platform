@@ -1,0 +1,144 @@
+---
+# deployment.yaml — {{SERVICE_NAME}}
+#
+# 2 replicas (HA even at MVP). Distroless nonroot image built from the
+# skeleton's Dockerfile. Environment sourced from TWO Secrets via envFrom:
+#   - {{SERVICE_NAME}}-config      — app config from Vault via ESO
+#   - {{SERVICE_NAME}}-bucket-conn — S3 credentials from ObjectBucket XRC's
+#                                    writeConnectionSecretToRef
+#
+# Probes:
+#   /healthz — liveness. Kubelet restarts pod if fails.
+#   /readyz  — readiness. Kubelet removes pod from Service endpoints if fails.
+# Probes deliberately don't touch external dependencies — a bad DB shouldn't
+# cause a crash loop, it should just fail readiness.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{SERVICE_NAME}}
+  labels:
+    app: {{SERVICE_NAME}}
+    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: {{SERVICE_NAME}}
+    app.kubernetes.io/managed-by: argocd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: {{SERVICE_NAME}}
+  # 25% surge / 25% max unavailable → 2-replica deployment drops to 2 during
+  # rolling update (adds 1, drains 1) — no downtime.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: {{SERVICE_NAME}}
+        app.kubernetes.io/name: {{SERVICE_NAME}}
+        app.kubernetes.io/component: api
+      annotations:
+        # Rolling restart on Secret change — kubectl rollout restart deploy
+        # {{SERVICE_NAME}} works, but this annotation makes ArgoCD track it.
+        checksum/config: "REPLACE_ON_ROTATE"
+    spec:
+      # distroless image runs as UID 65532 (nonroot). Enforce at pod level.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{SERVICE_NAME}}
+          # Image built + pushed by the service's own CI (Phase 7 wires
+          # GitHub Actions → GHCR). {{IMAGE_TAG}} is pinned per-release; NOT
+          # a floating tag like `latest` (CLAUDE.md §9).
+          image: ghcr.io/{{OWNER}}/{{SERVICE_NAME}}:{{IMAGE_TAG}}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          # ─────────────────────────────────────────────────────────
+          # Environment — sourced from Secrets + a few inline OTel vars
+          # ─────────────────────────────────────────────────────────
+          envFrom:
+            # App config synced from Vault via ExternalSecret (see
+            # externalsecret.yaml). Contents defined by whoever owns
+            # the Vault path secret/{{OWNER}}/{{SERVICE_NAME}}.
+            - secretRef:
+                name: {{SERVICE_NAME}}-config
+            # S3 credentials + BUCKET_NAME from the ObjectBucket XRC
+            # (see objectbucket.yaml). Keys populated by Crossplane:
+            #   BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+            #   AWS_ENDPOINT_URL, AWS_REGION
+            - secretRef:
+                name: {{SERVICE_NAME}}-bucket-conn
+          env:
+            # OTel exporter → Wave 2 OTel Collector in observability ns.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector-opentelemetry-collector.observability.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: {{SERVICE_NAME}}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace={{OWNER}},deployment.environment=kind"
+            - name: NODE_ENV
+              value: production
+            - name: LOG_LEVEL
+              value: info
+          # ─────────────────────────────────────────────────────────
+          # Probes
+          # ─────────────────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          # Startup probe = generous window for cold start (TS compile output
+          # + OTel SDK init + first Fastify listener bind ≈ 2-3s).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 15
+          # ─────────────────────────────────────────────────────────
+          # Resources — modest for a Fastify hello service on kind
+          # ─────────────────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Distroless has no shell — no sh -c debugging. Debug via
+          # `kubectl debug -it <pod> --image=alpine --target={{SERVICE_NAME}}`
+          # (ephemeral debug container, Phase 8 documents pattern).
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      terminationGracePeriodSeconds: 30
+      # ServiceAccount pinned so RBAC (Phase 8 hardening) can grant
+      # namespace-scoped permissions.
+      serviceAccountName: {{SERVICE_NAME}}
