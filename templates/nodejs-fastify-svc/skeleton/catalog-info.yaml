@@ -1,0 +1,86 @@
+---
+# catalog-info.yaml — Backstage Component entity for {{SERVICE_NAME}}
+#
+# Rendered into the scaffolded service's git repo. Registered in Backstage
+# by adding a URL Location pointing at this file (users commit their
+# service repo, add its raw URL to platform/argocd/apps/backstage.yaml →
+# appConfig.catalog.locations).
+#
+# Annotations wire this Component to the platform's operational surfaces:
+#   backstage.io/kubernetes-label-selector — K8s plugin scrapes pods/deploys
+#   backstage.io/techdocs-ref               — TechDocs mkdocs pointer
+#   argocd/app-name                          — ArgoCD plugin shows sync state
+#   github.com/project-slug                 — GitHub plugin (Wave 2 install)
+#
+# See ADR-0028 for the Backstage catalog design + FM6 for CRD-defaults.
+
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: {{SERVICE_NAME}}
+  title: "{{SERVICE_NAME}}"
+  description: "{{DESCRIPTION}}"
+  tags:
+    - nodejs
+    - fastify
+    - typescript
+    - golden-path
+  links:
+    - title: ArgoCD Application
+      url: https://argocd.idp.seniormankelz.dev/applications/{{SERVICE_NAME}}
+      icon: dashboard
+    - title: Grafana dashboards
+      url: https://grafana.idp.seniormankelz.dev/d/nodejs-service?var-service={{SERVICE_NAME}}
+      icon: dashboard
+    - title: Runbooks
+      url: https://github.com/{{OWNER}}/{{SERVICE_NAME}}/tree/main/docs/runbooks
+      icon: docs
+  annotations:
+    # ─────────────────────────────────────────────────────────
+    # Kubernetes plugin — pods/deployments show on Component page
+    # ─────────────────────────────────────────────────────────
+    backstage.io/kubernetes-id: {{SERVICE_NAME}}
+    backstage.io/kubernetes-namespace: {{SERVICE_NAME}}
+    backstage.io/kubernetes-label-selector: "app={{SERVICE_NAME}}"
+
+    # ─────────────────────────────────────────────────────────
+    # ArgoCD plugin (Wave 2 of Phase 5 install)
+    # ─────────────────────────────────────────────────────────
+    argocd/app-name: {{SERVICE_NAME}}
+
+    # ─────────────────────────────────────────────────────────
+    # GitHub integration (Wave 2 of Phase 5 install)
+    # ─────────────────────────────────────────────────────────
+    github.com/project-slug: {{OWNER}}/{{SERVICE_NAME}}
+
+    # ─────────────────────────────────────────────────────────
+    # TechDocs — auto-built from docs/ in the service repo
+    # ─────────────────────────────────────────────────────────
+    backstage.io/techdocs-ref: dir:.
+
+    # ─────────────────────────────────────────────────────────
+    # PagerDuty / Sentry / other links (Wave 2/3 as plugins land)
+    # ─────────────────────────────────────────────────────────
+    # pagerduty.com/integration-key: <populated on wire-up>
+    # sentry.io/project-slug: <populated on wire-up>
+
+spec:
+  type: service
+  lifecycle: experimental       # bump to `production` once real traffic
+  owner: group:default/{{OWNER}}
+
+  # System — logical grouping. Change to whatever domain this service
+  # belongs to (payments, catalog, checkout, etc.).
+  system: platform
+
+  # APIs this service provides — populate as OpenAPI/GraphQL/gRPC APIs
+  # get added. Register each one as its own kind: API entity.
+  providesApis: []
+  consumesApis: []
+
+  # DependsOn — infrastructure + services this component needs to work.
+  # These are cluster-scoped resources materialised by the platform.
+  dependsOn:
+    - resource:default/{{SERVICE_NAME}}-bucket   # ObjectBucket XRC
+    - component:default/vault                    # secret backend
+    - component:default/otel-collector           # trace collector

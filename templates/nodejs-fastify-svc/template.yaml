@@ -1,0 +1,127 @@
+---
+# template.yaml — Backstage Template entity for the nodejs-fastify-svc template.
+#
+# Registered in Backstage's catalog via a URL Location (added in Task 6.3
+# to platform/argocd/apps/backstage.yaml → appConfig.catalog.locations).
+#
+# TWO possible flows once this is in the catalog:
+#
+# 1. TODAY (Wave 1 Backstage, no Scaffolder):
+#    Users see this Template in Backstage's Create page but the "Create"
+#    button links to the template's git URL (per spec.output.links). They
+#    clone the platform repo, run `bin/render.sh --name X --owner Y`, push
+#    the rendered output to a new git repo. Then add the service's ArgoCD
+#    Application to the platform repo.
+#
+# 2. WAVE 2 SCAFFOLDER (Phase 5 Wave 2):
+#    spec.steps below gets populated with real Scaffolder actions
+#    (fetch:template, publish:github, register). Click Create → new repo
+#    scaffolded + registered in catalog automatically. No template rewrite.
+
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: nodejs-fastify-svc
+  title: "Node.js + Fastify service (golden path)"
+  description: |
+    Scaffolds a production-shape Node.js REST service:
+    Fastify 5, TypeScript strict, OpenTelemetry auto-instrumentation,
+    pino JSON logs with trace_id injection, prom-client /metrics,
+    Crossplane ObjectBucket XRC (S3 bucket per service), ArgoCD
+    Application, Backstage Component registration. Deploys via GitOps.
+    Full observability triangle lit up from day 1.
+  tags:
+    - nodejs
+    - fastify
+    - typescript
+    - opentelemetry
+    - golden-path
+    - platform
+  links:
+    - title: Source template
+      url: https://github.com/kelechi-nwankpa/internal-developer-platform/tree/main/templates/nodejs-fastify-svc
+      icon: github
+    - title: ADR-0031 (why this template)
+      url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0031-golden-path-template-nodejs-fastify.md
+      icon: docs
+    - title: Render command
+      url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/templates/nodejs-fastify-svc/bin/render.sh
+      icon: code
+spec:
+  # spec.owner + spec.type — Template entity metadata.
+  # `type: service` — this Template produces a service (vs library / website).
+  owner: user:default/kaycee
+  type: service
+
+  # ─────────────────────────────────────────────────────────────
+  # spec.parameters — user input schema (Scaffolder renders as a form)
+  # ─────────────────────────────────────────────────────────────
+  # For Wave 1 (pre-Scaffolder), these are documentation for the
+  # bin/render.sh flags. Wave 2 Scaffolder renders them as a UI form.
+  parameters:
+    - title: Service identity
+      required:
+        - name
+        - owner
+        - description
+      properties:
+        name:
+          title: Service name
+          type: string
+          description: |
+            Kebab-case, DNS-1035 compliant (start with a letter, letters/
+            numbers/hyphens only, no uppercase). Used as the k8s namespace,
+            Deployment name, and repo name.
+          pattern: '^[a-z][a-z0-9-]{1,38}[a-z0-9]$'
+          ui:autofocus: true
+        owner:
+          title: Owner team
+          type: string
+          description: |
+            Backstage Group entity that owns this service. Kebab-case.
+          pattern: '^[a-z][a-z0-9-]*$'
+          default: platform-team
+        description:
+          title: Short description
+          type: string
+          description: |
+            One-line summary shown in the Backstage catalog card.
+          maxLength: 120
+    - title: Deployment configuration
+      properties:
+        image_tag:
+          title: Initial container image tag
+          type: string
+          description: |
+            Version tag for the first push to GHCR. Pin to semver; no
+            `latest` (CLAUDE.md §9). Phase 7 CI overrides on each release.
+          default: v0.1.0
+          pattern: '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.-]+)?$'
+        repo_url:
+          title: Git repo URL
+          type: string
+          description: |
+            Where the scaffolded service will live. Format:
+            https://github.com/<owner>/<name>.git — used by the ArgoCD
+            Application to know where to sync from.
+          pattern: '^https://github\.com/.+/.+\.git$'
+
+  # ─────────────────────────────────────────────────────────────
+  # spec.steps — Scaffolder actions (POPULATED IN WAVE 2)
+  # ─────────────────────────────────────────────────────────────
+  # Empty placeholder for MVP. When Backstage Wave 2 ships with Scaffolder,
+  # populate with fetch:template + publish:github + catalog:register steps.
+  # Until then, users invoke bin/render.sh directly (see README).
+  steps: []
+
+  # ─────────────────────────────────────────────────────────────
+  # spec.output.links — shown after "Create" completes
+  # ─────────────────────────────────────────────────────────────
+  # Wave 1: only the template source link (no repo created yet).
+  # Wave 2 Scaffolder overrides with the newly-created repo URL +
+  # Backstage entity link.
+  output:
+    links:
+      - title: Clone template + render
+        url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/templates/nodejs-fastify-svc/README.md
+        icon: docs
