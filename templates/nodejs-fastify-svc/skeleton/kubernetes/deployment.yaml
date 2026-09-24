@@ -58,7 +58,7 @@ spec:
           # Image built + pushed by the service's own CI (Phase 7 wires
           # GitHub Actions → GHCR). {{IMAGE_TAG}} is pinned per-release; NOT
           # a floating tag like `latest` (CLAUDE.md §9).
-          image: ghcr.io/{{OWNER}}/{{SERVICE_NAME}}:{{IMAGE_TAG}}
+          image: ghcr.io/{{GITHUB_ORG}}/{{SERVICE_NAME}}:{{IMAGE_TAG}}
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

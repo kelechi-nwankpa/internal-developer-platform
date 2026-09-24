@@ -41,4 +41,4 @@ EXPOSE 3000
 # Kubernetes labels (OCI standard)
 LABEL org.opencontainers.image.title="{{SERVICE_NAME}}" \
       org.opencontainers.image.description="{{DESCRIPTION}}" \
-      org.opencontainers.image.source="https://github.com/{{OWNER}}/{{SERVICE_NAME}}"
+      org.opencontainers.image.source="https://github.com/{{GITHUB_ORG}}/{{SERVICE_NAME}}"

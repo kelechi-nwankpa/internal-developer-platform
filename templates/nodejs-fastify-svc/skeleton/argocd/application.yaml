@@ -34,7 +34,7 @@ spec:
 
   source:
     # The service's OWN repo — created + pushed by the user after
-    # scaffolding. Format: https://github.com/{{OWNER}}/{{SERVICE_NAME}}.git
+    # scaffolding. Format: https://github.com/{{GITHUB_ORG}}/{{SERVICE_NAME}}.git
     repoURL: {{REPO_URL}}
     # Pin to `main` for MVP; production would pin to a semver tag or
     # commit SHA to make rollbacks explicit.

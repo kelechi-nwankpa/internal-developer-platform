@@ -103,6 +103,15 @@ if ! [[ "$REPO_URL" =~ ^https://github\.com/.+/.+\.git$ ]]; then
   die "--repo-url must be https://github.com/OWNER/NAME.git format"
 fi
 
+# GitHub org — derived from --repo-url. Distinct from --owner (Backstage
+# team). URL fields (catalog-info links, Dockerfile OCI labels, GitHub
+# plugin project-slug) use this; team-owned fields (spec.owner, Vault
+# path convention) use --owner.
+GITHUB_ORG=$(echo "$REPO_URL" | sed -E 's|https://github\.com/([^/]+)/.*|\1|')
+if [[ -z "$GITHUB_ORG" ]]; then
+  die "failed to derive GITHUB_ORG from --repo-url '$REPO_URL'"
+fi
+
 # Output dir: must not exist (refuse to overwrite).
 if [[ -e "$OUTPUT_DIR" ]]; then
   die "--output '$OUTPUT_DIR' already exists; refusing to overwrite"
@@ -134,6 +143,7 @@ find "$OUTPUT_DIR" -type f -print0 | while IFS= read -r -d '' f; do
   sed "${SED_INPLACE[@]}" \
     -e "s|{{SERVICE_NAME}}|$NAME|g" \
     -e "s|{{OWNER}}|$OWNER|g" \
+    -e "s|{{GITHUB_ORG}}|$GITHUB_ORG|g" \
     -e "s|{{DESCRIPTION}}|$DESCRIPTION|g" \
     -e "s|{{IMAGE_TAG}}|$IMAGE_TAG|g" \
     -e "s|{{REPO_URL}}|$REPO_URL|g" \
@@ -174,7 +184,7 @@ Next steps:
      Edit platform/argocd/apps/backstage.yaml → appConfig.catalog.locations
      Add:
        - type: url
-         target: https://raw.githubusercontent.com/$OWNER/$NAME/main/catalog-info.yaml
+         target: https://raw.githubusercontent.com/$GITHUB_ORG/$NAME/main/catalog-info.yaml
          rules: [ { allow: [Component] } ]
      Commit + push.
 

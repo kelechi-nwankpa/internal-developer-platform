@@ -33,7 +33,7 @@ metadata:
       url: https://grafana.idp.seniormankelz.dev/d/nodejs-service?var-service={{SERVICE_NAME}}
       icon: dashboard
     - title: Runbooks
-      url: https://github.com/{{OWNER}}/{{SERVICE_NAME}}/tree/main/docs/runbooks
+      url: https://github.com/{{GITHUB_ORG}}/{{SERVICE_NAME}}/tree/main/docs/runbooks
       icon: docs
   annotations:
     # ─────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ metadata:
     # ─────────────────────────────────────────────────────────
     # GitHub integration (Wave 2 of Phase 5 install)
     # ─────────────────────────────────────────────────────────
-    github.com/project-slug: {{OWNER}}/{{SERVICE_NAME}}
+    github.com/project-slug: {{GITHUB_ORG}}/{{SERVICE_NAME}}
 
     # ─────────────────────────────────────────────────────────
     # TechDocs — auto-built from docs/ in the service repo
