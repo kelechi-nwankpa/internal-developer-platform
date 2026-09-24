@@ -139,12 +139,11 @@ spec:
                 # When Loki returns a log line matching the regex, Grafana
                 # renders a button that navigates to the Tempo datasource
                 # with the extracted trace_id as the query.
-                # Regex matches OpenTelemetry standard `trace_id=<hex>`
-                # pattern that most OTel SDK loggers emit.
+                # Match the JSON `"trace_id": "<hex>"` emitted by pino.
                 derivedFields:
                   - name: TraceID
                     datasourceUid: tempo
-                    matcherRegex: 'trace_id=(\w+)'
+                    matcherRegex: '"trace_id"\s*:\s*"([a-fA-F0-9]{16,64})"'
                     url: '$${__value.raw}'
                     urlDisplayLabel: 'View Trace'
 
