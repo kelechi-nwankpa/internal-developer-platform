@@ -15,14 +15,18 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { resourceFromAttributes } from '@opentelemetry/resources';
-import { SEMRESATTRS_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import { Resource } from '@opentelemetry/resources';
 
 const serviceName = process.env['OTEL_SERVICE_NAME'] ?? '{{SERVICE_NAME}}';
 
 const sdk = new NodeSDK({
-  resource: resourceFromAttributes({
-    [SEMRESATTRS_SERVICE_NAME]: serviceName,
+  // @opentelemetry/resources 1.28.0 does not export `resourceFromAttributes`
+  // (added in later 2.x). Use `new Resource({...})` with the literal
+  // `service.name` key from the OTel spec — avoids semantic-conventions
+  // import churn between minor versions. Found during Phase 6 Task 6.4c
+  // building platform-hello (bug 2 of Phase 6).
+  resource: new Resource({
+    'service.name': serviceName,
   }),
   traceExporter: new OTLPTraceExporter({
     // No `url` — SDK reads OTEL_EXPORTER_OTLP_ENDPOINT from env
