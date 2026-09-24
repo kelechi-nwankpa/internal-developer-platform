@@ -25,9 +25,14 @@ metadata:
     app: {{SERVICE_NAME}}
     app.kubernetes.io/name: {{SERVICE_NAME}}
 spec:
-  region: eu-west-1
-  publicRead: false      # deny-by-default per CLAUDE.md §4
-  versioning: true       # object versioning enabled — safe default
+  # NOTE: XRD schema (ADR-0027) wraps user-facing fields under
+  # spec.parameters — not directly under spec. First template render
+  # (Phase 6 Task 6.4e) missed this; ArgoCD rejected the manifest with
+  # ".spec.publicRead: field not declared in schema".
+  parameters:
+    region: eu-west-1
+    publicRead: false      # deny-by-default per CLAUDE.md §4
+    versioning: true       # object versioning enabled — safe default
   # Where to write the connection details Deployment consumes via envFrom.
   writeConnectionSecretToRef:
     name: {{SERVICE_NAME}}-bucket-conn
