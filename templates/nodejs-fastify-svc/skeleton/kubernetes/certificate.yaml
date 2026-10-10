@@ -2,10 +2,9 @@
 # certificate.yaml — {{SERVICE_NAME}}
 #
 # cert-manager Certificate for TLS on the Ingress. On kind, the ClusterIssuer
-# `selfsigned-cluster-issuer` (from platform/cert-manager-issuers) signs any
-# cert we request — good enough for local dev. On EKS, this same Certificate
-# would use `letsencrypt-prod` (real cert; DNS-01 challenge via ExternalDNS
-# + Route53 per ADR-0021).
+# `selfsigned` (set up in Phase 2) signs any cert we request — good enough
+# for local dev. On EKS, this same Certificate would use `letsencrypt-prod`
+# (real cert; DNS-01 challenge via ExternalDNS + Route53 per ADR-0021).
 #
 # See ADR-0017 for the kind-vs-EKS issuer strategy. Swap `issuerRef.name`
 # when promoting to EKS.
@@ -28,6 +27,6 @@ spec:
   dnsNames:
     - {{SERVICE_NAME}}.idp.seniormankelz.dev
   issuerRef:
-    name: selfsigned-cluster-issuer   # swap to `letsencrypt-prod` on EKS
+    name: selfsigned                  # swap to `letsencrypt-prod` on EKS
     kind: ClusterIssuer
     group: cert-manager.io

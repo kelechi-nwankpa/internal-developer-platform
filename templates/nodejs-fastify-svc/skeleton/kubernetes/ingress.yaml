@@ -20,7 +20,7 @@ metadata:
     # cert-manager watches Ingress annotations for the referenced ClusterIssuer
     # and auto-provisions the Certificate. We ALSO have certificate.yaml as
     # a separate resource for clarity; either mechanism works.
-    cert-manager.io/cluster-issuer: selfsigned-cluster-issuer
+    cert-manager.io/cluster-issuer: selfsigned
 
     # nginx-ingress rate limiting — 100 req/s per client IP. Adjust when
     # real traffic patterns are known.
