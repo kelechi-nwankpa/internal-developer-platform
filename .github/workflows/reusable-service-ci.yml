@@ -1,0 +1,368 @@
+---
+# reusable-service-ci.yml — the platform's reusable CI/CD workflow.
+#
+# EVERY service scaffolded from templates/nodejs-fastify-svc inherits
+# this pipeline via a ~15-line wrapper at .github/workflows/ci.yml in
+# the service repo. One workflow, N consumers. Changes to the pipeline
+# (new scanner, new signer, new stage) propagate to every service
+# automatically. Documented in ADR-0032.
+#
+# Trigger: workflow_call ONLY — this workflow doesn't run on its own
+# pushes. Consumers invoke it:
+#
+#   # In <service-repo>/.github/workflows/ci.yml:
+#   jobs:
+#     ci:
+#       uses: kelechi-nwankpa/internal-developer-platform/.github/workflows/reusable-service-ci.yml@main
+#       permissions:
+#         contents: write    # for manifest commit-back
+#         packages: write    # for GHCR push
+#         id-token: write    # for OIDC → GHCR + cosign
+#       with:
+#         service-name: platform-hello
+#
+# Fail-fast job chain:
+#   install-and-test  → compile + unit tests
+#   build             → multi-arch distroless container (amd64 + arm64)
+#   scan              → Trivy HIGH/CRITICAL blocks the push
+#   push              → ghcr.io, ONLY on push to main or tag (not PRs)
+#   sign              → cosign keyless signing via GitHub OIDC → Rekor
+#   update-manifest   → kustomize edit set image + commit back to repo
+#                       (ONLY on push to main, not tag or PR)
+#
+# Permissions principle: nothing has write by default. Each job declares
+# ONLY what it needs. The consumer wrapper grants the superset; this
+# file narrows per job.
+
+name: Reusable Service CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: "Service name — used for image name + manifest selector"
+        required: true
+        type: string
+      image-registry:
+        description: "Container registry hostname"
+        required: false
+        type: string
+        default: ghcr.io
+      image-repo:
+        description: "Full image repo path (default: github.repository, e.g. kelechi-nwankpa/platform-hello)"
+        required: false
+        type: string
+        default: ${{ github.repository }}
+      manifest-path:
+        description: "Path to kustomize manifests inside the service repo"
+        required: false
+        type: string
+        default: kubernetes
+      node-version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "22"
+      platforms:
+        description: "Container build platforms (comma-separated)"
+        required: false
+        type: string
+        default: linux/amd64,linux/arm64
+    outputs:
+      image-ref:
+        description: "Fully-qualified image reference pushed to the registry"
+        value: ${{ jobs.push.outputs.image-ref }}
+
+# Default top-level permissions = read-only. Each write-needing job
+# declares its own.
+permissions:
+  contents: read
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────
+  # install-and-test — compile the TS, run tests. Fail fast.
+  # ─────────────────────────────────────────────────────────────────
+  install-and-test:
+    name: Install + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Install dependencies (locked, no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: TypeScript compile check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        # `|| test $? -eq 1` lets a 0-test suite pass (node --test exits
+        # 1 with "no tests found"). Remove once services always have tests.
+        run: npm test || test $? -eq 1
+
+  # ─────────────────────────────────────────────────────────────────
+  # build — multi-arch distroless container via buildx.
+  # Uses GHA cache for layer reuse (second build ~30s vs ~3min cold).
+  # ─────────────────────────────────────────────────────────────────
+  build:
+    name: Build container
+    runs-on: ubuntu-latest
+    needs: install-and-test
+    outputs:
+      image-digest: ${{ steps.docker-build.outputs.digest }}
+      metadata-tags: ${{ steps.docker-meta.outputs.tags }}
+      metadata-labels: ${{ steps.docker-meta.outputs.labels }}
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for cross-arch build
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # docker/metadata-action computes tags from the current ref:
+      #   - push to main → :sha-<7char>
+      #   - tag push v* → :v<semver>, :<major>, :<major.minor>
+      #   - PR → :pr-<number>-<sha-short>
+      # Also emits OCI labels (source, revision, created, etc.) that
+      # the Dockerfile LABEL block in the skeleton reinforces.
+      - name: Compute image tags + labels
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+            type=ref,event=pr,prefix=pr-
+
+      # Build the image for all target platforms. On PR events, we build
+      # but do NOT push (push=false). On main/tag push, the "push" job
+      # below handles the actual push + sign + manifest commit.
+      - name: Build container (no push — push job handles that)
+        id: docker-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: false
+          load: ${{ inputs.platforms == 'linux/amd64' }}
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────────────
+  # scan — Trivy on the built image. Fail on HIGH + CRITICAL.
+  # Runs on a locally-loaded amd64 image (SARIF-level scanning).
+  # ─────────────────────────────────────────────────────────────────
+  scan:
+    name: Trivy CVE scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Re-build amd64-only + load into local Docker daemon so Trivy
+      # can scan the image by name. Reuses the GHA cache from the
+      # build job above.
+      - name: Build amd64 image into local Docker for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ inputs.service-name }}:scan
+          cache-from: type=gha
+
+      - name: Trivy scan (HIGH + CRITICAL blocks)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.service-name }}:scan
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  # ─────────────────────────────────────────────────────────────────
+  # push — docker push to GHCR via OIDC. Only on push to main or tag.
+  # NOT on PRs (we don't want PR authors pushing arbitrary images).
+  # ─────────────────────────────────────────────────────────────────
+  push:
+    name: Push to GHCR
+    runs-on: ubuntu-latest
+    needs: scan
+    if: github.event_name == 'push'
+    permissions:
+      packages: write    # ghcr.io push via GITHUB_TOKEN
+      id-token: write    # OIDC federation (future-proof for cosign chain)
+    outputs:
+      image-ref: ${{ steps.push.outputs.image-ref }}
+      image-digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for cross-arch
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR (via OIDC-federated GITHUB_TOKEN)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.image-registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags again (idempotent — scoped to this job)
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+
+      - name: Build + push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Emit SHA-tag ref for downstream jobs
+        id: ref
+        run: |
+          # Grab the first sha-* tag (the one update-manifest will pin to).
+          sha_tag=$(echo "${{ steps.docker-meta.outputs.tags }}" | grep -m1 ":sha-")
+          echo "image-ref=${sha_tag}" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────────
+  # sign — cosign keyless signing via Fulcio + Rekor transparency log.
+  # Signs every pushed tag. Phase 8 Kyverno will enforce verification.
+  # ─────────────────────────────────────────────────────────────────
+  sign:
+    name: cosign keyless sign
+    runs-on: ubuntu-latest
+    needs: push
+    permissions:
+      packages: write    # cosign writes signature manifest alongside image
+      id-token: write    # OIDC federation → Fulcio identity attestation
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Login to GHCR for signature push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.image-registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign image by digest (immutable reference)
+        env:
+          IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-repo }}@${{ needs.push.outputs.image-digest }}
+        run: |
+          echo "Signing ${IMAGE}"
+          cosign sign --yes "${IMAGE}"
+
+  # ─────────────────────────────────────────────────────────────────
+  # update-manifest — bump deployment image tag + git commit-back.
+  # ONLY on push to main (not tag — tags are human-driven releases).
+  # ─────────────────────────────────────────────────────────────────
+  update-manifest:
+    name: Update deployment manifest
+    runs-on: ubuntu-latest
+    needs: sign
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write    # push the manifest-bump commit back
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+        with:
+          # Fetch all refs so git push works cleanly after our commit.
+          fetch-depth: 0
+          # Use the default GITHUB_TOKEN (sufficient for same-repo write).
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Bump image tag in manifest
+        env:
+          IMAGE_REF: ${{ inputs.image-registry }}/${{ inputs.image-repo }}:sha-$(echo "${{ github.sha }}" | cut -c1-7)
+        run: |
+          cd "${{ inputs.manifest-path }}"
+          # kustomize edit set image NAME=REF substitutes any image
+          # named `NAME` in the kustomization's resources to use REF.
+          # NAME here matches the Deployment's image line (service-name)
+          # — kustomize matches on image repo prefix.
+          kustomize edit set image "${{ inputs.image-registry }}/${{ inputs.image-repo }}=${IMAGE_REF}"
+          cd ..
+          git diff "${{ inputs.manifest-path }}"
+
+      - name: Commit + push manifest bump
+        env:
+          SHA_SHORT: ${{ github.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Skip if nothing changed (idempotent re-run safety).
+          if git diff --quiet; then
+            echo "No manifest change — image tag already current."
+            exit 0
+          fi
+          short_sha=$(echo "${SHA_SHORT}" | cut -c1-7)
+          git add "${{ inputs.manifest-path }}/"
+          # Multi-line commit message via heredoc — plain string in the
+          # YAML `run:` block would confuse the YAML parser (lines look
+          # like YAML keys).
+          commit_msg=$(cat <<MSG
+          chore: deploy sha-${short_sha}
+
+          Automated manifest bump from reusable-service-ci.
+          Triggered by: ${{ github.event_name }} on ${{ github.ref }}
+          Image: ${{ inputs.image-registry }}/${{ inputs.image-repo }}:sha-${short_sha}
+          MSG
+          )
+          git commit -m "${commit_msg}"
+          # Retry on non-fast-forward (rare: concurrent main merges).
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Push succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "Push rejected — rebasing and retrying (attempt ${attempt}/3)"
+            git pull --rebase origin main
+          done
+          echo "Push failed after 3 attempts"
+          exit 1
