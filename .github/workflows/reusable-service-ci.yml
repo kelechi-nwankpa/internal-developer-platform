@@ -323,15 +323,27 @@ jobs:
           sudo mv kustomize /usr/local/bin/
 
       - name: Bump image tag in manifest
+        # SHA truncation MUST happen inside `run:`, not inside `env:`.
+        # YAML `env:` values are stored as literal strings — shell
+        # expansion ($(...), backticks) is never applied. The previous
+        # version of this step set IMAGE_REF to the literal string
+        # `...:sha-$(echo "<full sha>" | cut -c1-7)`, which kustomize
+        # happily wrote into kustomization.yaml verbatim, breaking
+        # ArgoCD pulls. Compute inside the shell where $(...) works.
         env:
-          IMAGE_REF: ${{ inputs.image-registry }}/${{ inputs.image-repo }}:sha-$(echo "${{ github.sha }}" | cut -c1-7)
+          IMAGE_REGISTRY: ${{ inputs.image-registry }}
+          IMAGE_REPO: ${{ inputs.image-repo }}
+          FULL_SHA: ${{ github.sha }}
         run: |
+          short_sha=$(echo "${FULL_SHA}" | cut -c1-7)
+          image_ref="${IMAGE_REGISTRY}/${IMAGE_REPO}:sha-${short_sha}"
+          echo "Setting image to: ${image_ref}"
           cd "${{ inputs.manifest-path }}"
           # kustomize edit set image NAME=REF substitutes any image
           # named `NAME` in the kustomization's resources to use REF.
           # NAME here matches the Deployment's image line (service-name)
           # — kustomize matches on image repo prefix.
-          kustomize edit set image "${{ inputs.image-registry }}/${{ inputs.image-repo }}=${IMAGE_REF}"
+          kustomize edit set image "${IMAGE_REGISTRY}/${IMAGE_REPO}=${image_ref}"
           cd ..
           git diff "${{ inputs.manifest-path }}"
 
