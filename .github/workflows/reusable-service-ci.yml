@@ -190,8 +190,13 @@ jobs:
           tags: ${{ inputs.service-name }}:scan
           cache-from: type=gha
 
+      # Pinned to tag for Phase 7. Phase 8 security hardening will
+      # repin all third-party actions to commit SHAs to defeat tag-moving
+      # supply-chain attacks (an attacker with write access to the action
+      # repo can repoint v0.36.0 to a malicious commit; a SHA pin can't
+      # be forged).
       - name: Trivy scan (HIGH + CRITICAL blocks)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ inputs.service-name }}:scan
           format: table
