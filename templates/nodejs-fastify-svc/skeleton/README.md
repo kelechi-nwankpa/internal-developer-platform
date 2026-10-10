@@ -73,6 +73,56 @@ git -C <platform-repo> push
 # ArgoCD's root app-of-apps picks it up on next reconcile
 ```
 
+## CI/CD
+
+Every push to this repo triggers the reusable CI/CD workflow in the platform repo ([`kelechi-nwankpa/internal-developer-platform/.github/workflows/reusable-service-ci.yml`](https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/.github/workflows/reusable-service-ci.yml)). See [ADR-0032](https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0032-cicd-pipeline-reusable-workflow-oidc-cosign.md) for the pipeline design.
+
+Local wrapper is at [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — ~15 lines. Do NOT edit it to add scanners or stages; instead, PR the reusable workflow in the platform repo so every service benefits.
+
+### Repo-settings prerequisites (one-time setup)
+
+Before CI/CD works end-to-end, enable these in **Settings → Actions → General**:
+
+1. **Workflow permissions** → "Read and write permissions"
+2. **Allow GitHub Actions to create and approve pull requests** → on
+
+Without #1, the pipeline's `update-manifest` step gets a 403 on the git push-back.
+
+### What runs on each event
+
+| Event | Jobs run |
+|---|---|
+| Pull request to `main` | install-and-test, build, scan |
+| Push to `main` (merge) | all 6: adds push + sign + update-manifest |
+| Tag push `v*` | all except update-manifest (releases are declarative; manual manifest bump) |
+
+### Pipeline chain
+
+```text
+install-and-test  →  build (multi-arch distroless)  →  trivy scan (HIGH/CRITICAL blocks)
+                                                               ↓
+   update-manifest  ←  cosign keyless sign  ←  push :sha-<7char> to GHCR
+   (kustomize edit set image + git commit-back + ArgoCD picks up)
+```
+
+### Observing a pipeline run
+
+- GitHub Actions tab in this repo shows the job graph + logs
+- Image tags in GHCR: `ghcr.io/{{GITHUB_ORG}}/{{SERVICE_NAME}}:sha-<7char>` (every push to main) + `:v<semver>` (on tag release)
+- cosign signatures: verify with `cosign verify --certificate-identity-regexp '.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/{{GITHUB_ORG}}/{{SERVICE_NAME}}:sha-<tag>`
+- Manifest commits: `git log --oneline kubernetes/ | grep "chore: deploy"`
+
+### Rollback
+
+```bash
+# Find a known-good manifest commit
+git log --oneline kubernetes/
+
+# Revert the deploy commit (ArgoCD syncs on next poll)
+git revert <bad-deploy-commit-sha>
+git push
+```
+
 ## Observability drill-down
 
 Once deployed + serving traffic:

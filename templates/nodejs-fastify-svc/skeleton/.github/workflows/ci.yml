@@ -1,0 +1,42 @@
+---
+# ci.yml — thin wrapper around the platform's reusable CI/CD workflow.
+#
+# All pipeline logic (test, build, scan, sign, push, update-manifest)
+# lives in the platform repo at:
+#   kelechi-nwankpa/internal-developer-platform
+#   .github/workflows/reusable-service-ci.yml
+#
+# Changes to the pipeline propagate here automatically — don't edit
+# this file to add scanners or new stages. Instead, PR the reusable
+# workflow in the platform repo.
+#
+# See docs/adr/0032-cicd-pipeline-reusable-workflow-oidc-cosign.md for
+# the full pipeline design + the "one-time repo settings" prerequisites.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+
+# Top-level permissions grant the SUPERSET of what the reusable
+# workflow's jobs need. The reusable workflow narrows per-job for
+# defense-in-depth.
+permissions:
+  contents: write    # for manifest commit-back on push to main
+  packages: write    # for ghcr.io push
+  id-token: write    # for OIDC federation (GHCR + cosign)
+
+jobs:
+  ci:
+    uses: kelechi-nwankpa/internal-developer-platform/.github/workflows/reusable-service-ci.yml@main
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    with:
+      service-name: {{SERVICE_NAME}}
+    secrets: inherit
