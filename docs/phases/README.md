@@ -13,7 +13,7 @@ Each phase of this project ships a discrete slice of the platform, with a writte
 | 4 | Crossplane + AWS provider + first XRD (ObjectBucket) | ✅ shipped | [phase-4-crossplane.md](phase-4-crossplane.md) |
 | 5 | Backstage MVP — Wave 1 shipped, Wave 2 deferred | ✅ Wave 1 shipped | [phase-5-backstage.md](phase-5-backstage.md) |
 | 6 | Golden path template (Node.js + Fastify) — template + first real service (`platform-hello`) end-to-end | ✅ shipped | [phase-6-golden-path.md](phase-6-golden-path.md) |
-| 7 | CI/CD golden pipeline | ⏳ pending | — |
+| 7 | CI/CD golden pipeline — reusable workflow + OIDC + Trivy + cosign + CI-commits-manifest, first real service through it | ✅ shipped | [phase-7-cicd-golden-pipeline.md](phase-7-cicd-golden-pipeline.md) |
 | 8 | Security hardening | ⏳ pending | — |
 | 9 | Cost, DR, ops | ⏳ pending | — |
 | 10 | Polish for showcase | ⏳ pending | — |
