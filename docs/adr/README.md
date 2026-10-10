@@ -65,6 +65,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0029](0029-object-storage-strategy.md) | Object storage strategy: MinIO on kind, AWS S3 on EKS (via Phase 4 ObjectBucket XRD) | Accepted | 2026-08-12 |
 | [0030](0030-observability-wave-2-stack.md) | Observability Wave 2 stack: Loki (distributed) + Grafana Alloy + Tempo (distributed) + OTel Collector | Accepted | 2026-08-12 |
 | [0031](0031-golden-path-template-nodejs-fastify.md) | Golden path template: Node.js + Fastify + standalone repo + Backstage entity | Accepted | 2026-09-15 |
+| [0032](0032-cicd-pipeline-reusable-workflow-oidc-cosign.md) | CI/CD pipeline: reusable workflow + OIDC + semver/SHA tags + CI-commits-manifest + Trivy/cosign | Accepted | 2026-10-10 |
 
 ## References
 
