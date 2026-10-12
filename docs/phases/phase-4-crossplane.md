@@ -310,15 +310,48 @@ Crossplane's init container regenerates these on next restart. Three Crossplane 
 - **Never substitute `$(kubectl get ...)` into a `kubectl delete ...` command without defensive quoting** — an empty substitution + a label selector falls back catastrophically. In retrospect: use `xargs -r` or an explicit `if [ -n "$list" ]` guard.
 - **Reverts are a legitimate engineering outcome**. Three bugs chased + fixed + verified for the Composition layer; the data plane couldn't absorb the churn; the operator mistake pushed Crossplane core past recovery. Reverting the code to a known-good state (Wave 2 shipped) is better than shipping half-broken infra. Document the lessons; move on.
 
-### Wave 3 TODO (for a future session, after Crossplane core recovery)
+### Wave 3 TODO (for a future session)
 
-1. **Recover Crossplane core first** — needs its own session. Likely path:
-    - `kubectl delete deployment -n crossplane-system crossplane`
-    - Let the `crossplane` ArgoCD Application re-create it
-    - OR: `helm upgrade --install` the Crossplane chart directly in a scratch spike before reinstalling via GitOps
+1. ~~**Recover Crossplane core**~~ — **DONE 2026-10-12.** Root cause was TLS CA mismatch after the accidental secret delete (not a stuck process). See "Crossplane TLS recovery" below.
 2. **Bump MinIO Deployment memory limits** — ADR amendment for ADR-0029. Current limit (default) OOMKills under reconcile churn.
 3. **File upstream issue** with vshn/provider-minio about the `User.Observe` nil deref.
 4. **Re-attempt Wave 3** with the lessons applied. The Composition logic in commits 64fc4b7 → dffca8c → d555b50 was architecturally sound; it should just work once MinIO is stable and the panic workaround is in place (which the final commit shipped).
+
+### Crossplane TLS recovery (2026-10-12)
+
+The post-Wave-3 Crossplane core was alive, held the leader lease, but had NO controller startup activity after "Beta feature enabled" logs. Appeared frozen.
+
+Root cause was NOT a stuck process. It was a TLS CA mismatch: my accidental delete of `crossplane-root-ca`, `crossplane-tls-client`, `crossplane-tls-server` triggered Crossplane's init container to regenerate those secrets with a NEW CA. But Function + Provider pods still had TLS server certs in-memory signed by the OLD CA. Crossplane core's gRPC calls to Functions during Composition rendering failed x509 verification. XRs stayed stuck forever.
+
+The symptom was in the XR's own events, not in Crossplane core logs:
+
+```text
+cannot run Function "function-go-templating": rpc error: code = DeadlineExceeded ...
+transport: authentication handshake failed: tls: failed to verify certificate:
+x509: certificate signed by unknown authority
+(possibly because of "crypto/rsa: verification error"
+while trying to verify candidate authority certificate "Crossplane")
+```
+
+Fix sequence:
+
+1. Delete the stale Function + Provider TLS server + client secrets:
+    `kubectl delete secret -n crossplane-system <fn-or-provider>-tls-server <...>-tls-client`
+2. Restart Crossplane core (regenerates CA + its own TLS secrets fresh via init container):
+    `kubectl rollout restart deployment -n crossplane-system crossplane`
+3. Restart all Function + Provider deployments so they re-mount new TLS server certs:
+
+    ```bash
+    for dep in $(kubectl get deploy -n crossplane-system -o name | grep -E "function|provider"); do
+      kubectl rollout restart -n crossplane-system $dep
+    done
+    ```
+
+4. Wait ~30s. XR reconciles end-to-end; Bucket MR appears in MinIO.
+
+**Lesson:** when Crossplane's CA rotates (operator error, chart upgrade, cert expiry), EVERY downstream TLS consumer (every Function pod, every Provider pod) must be restarted. Otherwise their now-untrusted certs cause silent gRPC failures surfaced only in composed-resource events, NOT in Crossplane core logs. Generalises to any multi-pod cert-dependent architecture.
+
+**Diagnostic lesson:** when Crossplane is "frozen" on reconciliation, FIRST check `kubectl describe <xr>` events before restarting the Crossplane core pod. The Crossplane core logs don't surface downstream TLS errors.
 
 ## Deferred sub-tasks (pick up when appropriate)
 
