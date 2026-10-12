@@ -176,3 +176,26 @@ metadata:
 ## Interview framing
 
 The one-liner: *"Our first Crossplane XRD is `ObjectBucket` — an S3 bucket abstraction with 3 fields (region, publicRead, versioning). Composition renders 4 MRs conditionally: Bucket (always), PublicAccessBlock (unless opted out), Versioning (if enabled), SSE (always AES256). Bucket names auto-generated from claim UID for collision-safety. Modern Pipeline mode with fn-go-templating + fn-auto-ready — no legacy patch-and-transform. Deliberately narrow API for v1alpha1: 3 fields you can't misuse beats 15 you can. On kind we validate via `crossplane render` (no AWS needed); Phase 9 EKS activates real bucket creation via IRSA-authed ProviderConfig."*
+
+---
+
+## Postscript — Phase 4 Wave 2 (2026-10-12)
+
+**What changed:** This ADR originally envisioned ONE Composition, selected per-cluster via different `ProviderConfig` wiring (upbound provider-aws-s3 for both kind-via-MinIO AND EKS-via-S3). Phase 4 Wave 2 proved that assumption **false** and had to fork the Composition into two variants. The user-facing XRD/XRC API didn't change; the internal implementation did.
+
+**Why the single-Composition approach failed on kind.** The upbound provider-aws family (v2.6.0 — the current generation) is generated from the Terraform AWS provider, which (since v5+) uses the AWS **S3 Control API** (`s3control.amazonaws.com`) for bucket tag operations. MinIO implements the S3 API but NOT S3 Control. On kind, Bucket MRs reached the Observe step, failed to call `s3control:ListTagsForResource`, treated it as a fatal error, and never became Ready. This is an architectural incompatibility, not a config issue — adding `s3control` to the ProviderConfig endpoint override routed the call to MinIO, but MinIO returned connection failures (not graceful 404s), so the problem persisted.
+
+**The split.** Phase 4 Wave 2 added `vshn/provider-minio` (purpose-built, MinIO-native) alongside the existing `upbound/provider-aws-s3`. Two Compositions coexist in the cluster:
+
+- `xobjectbuckets-minio.platform.idp.io` → renders one `minio.crossplane.io/v1/Bucket` MR via vshn provider. Default on kind (XRD's `defaultCompositionRef`).
+- `xobjectbuckets-s3.platform.idp.io` → the original 2-4 MR rendering via upbound provider-aws-s3. Will become default on EKS by flipping one XRD line.
+
+Developer-facing: zero change. `kubectl apply -f objectbucket.yaml` works identically on both. The portability promise *at the XRD layer* holds; the "one provider everywhere" promise *at the Composition layer* was abandoned.
+
+**Known feature-parity gap (Gap-A).** The XRD exposes `publicRead` and `versioning`. vshn provider's Bucket resource doesn't expose either (MinIO handles public access via separate Policy MRs; versioning isn't exposed through vshn's provider at all). On kind, these two fields are **silently ignored**; on EKS they take full effect. Acceptable at XRD v1alpha1 — dev-env feature-parity gap is called out in `composition-objectbucket-minio.yaml` + `phase-4-crossplane.md` close-out log.
+
+**Known limitation (deferred to Wave 3).** The vshn Bucket MR emits NO connection details (no AWS_ACCESS_KEY_ID etc.) — MinIO's model separates buckets from credentials (credentials live on `User` + `Policy` MRs). As a result, this XRD's Composition only provisions the bucket itself; the connection Secret the app Deployment reads via envFrom is STILL manually created (Phase 6 bug 5's workaround for the Secret half remains). Wave 3 will address this with a `User` + `Policy` MR added to the MinIO-variant Composition for per-service IAM, with scoped-to-bucket credentials emitted as connection details.
+
+**Why not downgrade to provider-aws-s3 v1.x** (hypothetical alternative). v1 used `s3:GetBucketTagging` which MinIO supports. Rejected because: (1) losing modern provider features (beta management policies, newer MR types), (2) still requires non-trivial validation of ALL our Composition's referenced MR types against v1 schemas, (3) sunset risk on an older major, (4) same portability goal achieved differently with the split-provider approach.
+
+**Related memory:** Phase 4 Wave 2 adds `vshn/provider-minio v0.4.5` to platform/crossplane/providers.yaml. The ESO ExternalSecret for the vshn provider's auth is at platform/crossplane/externalsecret-minio-creds.yaml; the ProviderConfig at platform/crossplane/providerconfig-minio-vshn.yaml. The original `providerconfig-minio.yaml` (upbound AWS variant that was the first Wave 2 attempt) was deleted when the architectural incompatibility was discovered. Full narrative: `docs/phases/phase-4-crossplane.md` Wave 2 section.

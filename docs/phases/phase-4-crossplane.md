@@ -200,12 +200,77 @@ This phase had a substantial troubleshooting cascade after landing 50+ new CRDs 
 | [ADR-0026](../adr/0026-crossplane-install-and-version.md) | Install Crossplane core (chart 1.20.11, v1 track) as ArgoCD Application | v1-over-v2 decision with ecosystem-maturity reasoning; migration to v2 is Phase 8+ concern. |
 | [ADR-0027](../adr/0027-first-xrd-objectbucket.md) | First XRD (ObjectBucket): API surface, Composition pattern, naming | 4 sub-decisions weighed. "Composition patterns to remember" section captures 4 non-obvious idioms (stable-suffix naming, conditional rendering, composition-resource-name annotation, external-name annotation). |
 
+## Phase 4 Wave 2 — ProviderConfig for actual reconciliation (2026-10-12)
+
+**Shipped. Closes 70% of Phase 6 bug 5 (bucket is now GitOps-managed; connection-Secret wiring deferred to Wave 3).**
+
+### What Wave 2 was supposed to be
+
+Phase 6's "bug 5" discovery: the Phase 4 Wave 1 ObjectBucket XRD + Composition applied cleanly, but XRCs never reconciled because no ProviderConfig was wired. platform-hello worked around it with a manual MinIO bucket + manual connection Secret (both outside Git). Wave 2's one-liner goal: install a ProviderConfig so the XRC actually produces a bucket, delete the manual workaround.
+
+Scope expected: 1-2 sessions. Scope actual: 1 session + significant architectural discovery that reshaped the solution.
+
+### What Wave 2 actually was
+
+The strategic intro locked in 4 design decisions (Path B/C/A/B — see earlier message history / git log for details), all of which assumed we could use the ALREADY-INSTALLED upbound `provider-aws-s3 v2.6.0` with a MinIO-targeted ProviderConfig. **That assumption turned out to be false** — the provider's generated Terraform code calls S3 Control API operations MinIO doesn't implement.
+
+The pivot: install `vshn/provider-minio` (purpose-built for MinIO) alongside the upbound AWS provider, and fork the Composition into two variants selected per-cluster via XRD `defaultCompositionRef`. The XRD and the user-facing ObjectBucket XRC stay identical — portability holds at the API layer, not the provider layer. Full ADR-0027 postscript documents the architectural fallout.
+
+### Bug log (6 bugs banked, all documented)
+
+| # | Bug | Root cause | Fix |
+|---|---|---|---|
+| 1 | ESO ExternalSecret apply rejected: `v1beta1` not served | ESO was promoted to v1 (GA) at some point after Phase 2; v1beta1 removed. I used stale apiVersion. | `dc980bd` — bump to `external-secrets.io/v1` |
+| 2 | Upbound provider-aws-s3 Bucket MR Observe failed on `sts:GetCallerIdentity` | Provider calls STS at startup for creds-validation + account ID discovery. MinIO has no STS. | `7304aee` — add `skip_credentials_validation` + 3 other skip flags to ProviderConfig |
+| 3 | Bucket MR Observe still fails on `s3control:ListTagsForResource` → 403 from real AWS | Our endpoint override covered `s3`, not `s3control`. Call hit real AWS and got auth-rejected. | `54683fb` — add `s3control` to endpoint services list (routed to MinIO)… |
+| 3b | …but MinIO returns connection errors (StatusCode 0) for s3control calls | Provider treats this as fatal, not graceful-no-tags. **Architectural incompatibility, not fixable at config layer.** | PIVOT TO PATH X (bb138d8) — install `vshn/provider-minio`, fork Composition |
+| 4 | vshn Composition variant XRC Ready=True but kubectl query returned nothing | Query used wrong name — Bucket MR named after XR (`smoke-test-56hzh`), not Claim (`smoke-test`) | fix the query (operator error, not code bug) |
+| 5 | vshn/provider-minio's Bucket MR writes NO connection details | Design choice in vshn provider — bucket + credentials are decoupled, User + Policy MRs needed for per-service IAM | DEFER to Wave 3 (Path M scope decision) |
+
+### What Wave 2 shipped
+
+**Platform repo** (`internal-developer-platform`):
+
+| Commit | What |
+|---|---|
+| `1b7ed6a` | Initial attempt: ExternalSecret + ProviderConfig for upbound provider-aws-s3 |
+| `dc980bd` | Bug 1 fix: ESO v1beta1 → v1 apiVersion |
+| `7304aee` | Bug 2 fix: skip_credentials_validation + 3 other MinIO-compat flags |
+| `54683fb` | Bug 3 fix (partial): add s3control to endpoint services |
+| `c98b0e3` | Pivot: install vshn/provider-minio v0.4.5 as new Package |
+| `bb138d8` | Fork Composition into -minio.yaml (kind) + -s3.yaml (EKS); XRD defaults to -minio |
+
+**Service repo** (`platform-hello`):
+
+| Commit | What |
+|---|---|
+| `9f54972` | Restore kubernetes/objectbucket.yaml (removed in Phase 6 bug 5); kustomization.yaml adds it back. Path M: Deployment still uses the manual bucket; new Crossplane bucket coexists as proof of GitOps path. |
+
+### Verified end-to-end
+
+1. Standalone smoke test: `smoke-test` XRC → `smoke-test-56hzh` XR → `smoke-test-56hzh` vshn Bucket MR READY=True → `smoke-test-56hzh/` directory in MinIO. Delete cascade: XRC delete → bucket removed from MinIO. ✓
+2. platform-hello pipeline: push → CI run `38238854161` ✓ → ArgoCD sync `e912d7d` ✓ → `platform-hello-s4t8s` MR READY=True → `platform-hello-s4t8s/` in MinIO. Deployment pods unaffected (still reading from original `platform-hello/` manual bucket). ✓
+
+### Known gaps (deferred to Wave 3 or beyond)
+
+- **Deployment convergence** — platform-hello's Deployment reads/writes against the manual bucket + manual Secret. The new Crossplane-managed bucket sits unused. Wave 3 will add `User` + `Policy` MRs to the minio-variant Composition so the XRC emits scoped per-service creds via connection details.
+- **Gap-A feature parity** — `publicRead` and `versioning` XRD params are silently ignored on kind (vshn provider limitation). On EKS they work. Dev-vs-prod gap at v1alpha1, acceptable.
+- **The provider-aws-s3 ProviderConfig and the Composition for EKS exist** but have no live ProviderConfig for AWS creds. First EKS activation (Phase 9) wires IRSA.
+
+### Interview talking points added by Wave 2
+
+- *"How did Phase 4 Wave 2 close the GitOps gap for storage?"* — Added `vshn/provider-minio` to pair with the existing upbound `provider-aws-s3`. Composition forked into 2 variants (one per provider), XRD defaults to the kind variant. User-facing XRC YAML is identical across environments — portability at the API layer, implementation layer differs.
+- *"Why 2 providers and 2 Compositions, not 1?"* — Attempted path first. Upbound provider-aws-s3 v2.6.0 calls `s3control:ListTagsForResource` during Observe, which MinIO doesn't implement. Not fixable at config layer. Documented in ADR-0027 postscript as architectural incompatibility.
+- *"What's left on bug 5?"* — Bucket is now declaratively managed. The connection Secret (per-service MinIO credentials for the Deployment) is still manual. Wave 3 adds vshn `User` + `Policy` MRs to the Composition for proper per-service IAM scoped to each bucket.
+- *"Walk me through an ESO apiVersion gotcha."* — Wrote `external-secrets.io/v1beta1`. Install had been upgraded to v1 (GA). CRD no longer served v1beta1 at all. API server rejected at admission. One-line fix after reading the CRD's `served/storage` versions list.
+
 ## Deferred sub-tasks (pick up when appropriate)
 
+- **Wave 3** — Composition emits connection Secret via vshn `User` + `Policy` MRs for per-service IAM. Converges platform-hello deployment onto the Crossplane-managed bucket. Deletes the manual Secret + manual bucket.
 - **Task 4.6** — Second XRD (Namespace) via `provider-kubernetes`. Contrast with ObjectBucket (no cloud API involvement, just k8s objects). Own sub-task or Phase 5 prep.
 - **PostgresDatabase XRD** — requires `provider-aws-rds`. Phase 6 or Phase 4.5.
 - **ManagedSecret XRD** — Crossplane wrapper around ESO's ExternalSecret. Cross-operator glue; Phase 6 or later.
-- **ProviderConfig with IRSA** — Phase 9 EKS activation. Manifests templated in ADR-0022 style (commented until Phase 9).
+- **ProviderConfig with IRSA for the EKS s3-variant** — Phase 9 EKS activation. Manifests templated in ADR-0022 style (commented until Phase 9).
 - **`crossplane render` in CI** — dry-run Composition validation before merge. Phase 6+ development-workflow polish.
 
 ## What's next — Phase 5
