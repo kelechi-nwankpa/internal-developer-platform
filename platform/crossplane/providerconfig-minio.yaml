@@ -42,3 +42,19 @@ spec:
     services:
       - s3                           # applies only to S3 API calls
   s3_use_path_style: true            # MinIO requires path-style URLs
+
+  # ─── MinIO compatibility flags ────────────────────────────────────
+  # The underlying Terraform AWS provider calls sts:GetCallerIdentity
+  # at startup to:
+  #   (1) validate the credentials work
+  #   (2) fetch the AWS account ID for resource ARNs
+  # MinIO does not implement STS — it only implements S3 API. Without
+  # these skip flags, the provider errors out before ever trying to
+  # create a bucket:
+  #   "cannot get account id: cannot get the caller identity:
+  #    GetCallerIdentity query failed"
+  # Discovered during Phase 4 Wave 2 smoke test (bug #2).
+  skip_credentials_validation: true  # no STS to validate against
+  skip_requesting_account_id: true   # no account ID — MinIO is single-tenant
+  skip_metadata_api_check: true      # no IMDS — we're not in EC2
+  skip_region_validation: true       # region is a signing-only artifact
