@@ -77,9 +77,18 @@ spec:
             {{- $name := $xr.metadata.name -}}
             {{- /*
                 Stable 6-char suffix from the XR's UID (matches S3 variant).
-                Used as the shared base name for all three MRs' external
-                names, with "-user" and "-policy" suffixes to keep them
-                distinguishable in MinIO's user and policy namespaces.
+                All three MRs' metadata.names are derived from $bucketName
+                so they're (a) unique across claims (XR name + UID suffix)
+                and (b) consistent with each other (User's policies[0] can
+                reference Policy's name without mismatch).
+
+                IMPORTANT: vshn provider-minio IGNORES crossplane.io/external-
+                name on Policy and User MRs — those controllers use the k8s
+                metadata.name as the MinIO identifier (via GetName() /
+                GetUserName()). Bucket controller DOES honor external-name,
+                so Bucket's metadata.name stays short (just $name) and
+                external-name adds the suffix. Policy and User take the
+                full $bucketName as metadata.name.
             */ -}}
             {{- $uid := $xr.metadata.uid | default "" -}}
             {{- $suffix := (substr 0 6 ($uid | replace "-" "")) | default (randAlphaNum 6 | lower) -}}
@@ -109,14 +118,17 @@ spec:
             # on this bucket (and nothing on other buckets or admin APIs).
             # Equivalent to a rawPolicy with:
             #   s3:* on arn:aws:s3:::{bucket}, arn:aws:s3:::{bucket}/*
+            #
+            # metadata.name = $policyName (= $bucketName-policy). This
+            # value is what MinIO sees as the canned policy name AND
+            # what User.spec.forProvider.policies must reference.
             # ─────────────────────────────────────────────
             apiVersion: minio.crossplane.io/v1
             kind: Policy
             metadata:
-              name: {{ $name }}-policy
+              name: {{ $policyName }}
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: policy
-                crossplane.io/external-name: {{ $policyName }}
             spec:
               forProvider:
                 allowBucket: {{ $bucketName }}
@@ -126,17 +138,18 @@ spec:
             ---
             # ─────────────────────────────────────────────
             # MinIO User — holds the per-service access key pair.
-            # Attached to the Policy above by name. User's connection
-            # details auto-publish AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
-            # (constants defined in operator/user/observe.go upstream).
+            # metadata.name = $userName = MinIO user identifier.
+            # policies list references $policyName which == Policy's
+            # metadata.name. Webhook calls ListCannedPolicies and
+            # requires each name to exist — natural retry loop makes
+            # this converge once Policy's external resource is created.
             # ─────────────────────────────────────────────
             apiVersion: minio.crossplane.io/v1
             kind: User
             metadata:
-              name: {{ $name }}-user
+              name: {{ $userName }}
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: user
-                crossplane.io/external-name: {{ $userName }}
             spec:
               forProvider:
                 userName: {{ $userName }}
@@ -146,16 +159,17 @@ spec:
                 name: provider-config
 
             {{- /*
-                CompositeConnectionDetails emission — ONLY once the User
-                MR has materialised its connectionDetails. On first render
-                .observed.resources.user is nil → skip. On subsequent
-                reconciles after User is Ready, pull the two credential
-                keys (already base64-encoded by Crossplane since they
-                come from a Secret) and template the three static/XR-
-                derived keys (require | b64enc).
+                CompositeConnectionDetails emission. Guard pattern per
+                fn-go-templating README: .observed.resources is nil on
+                very first render (before any MRs exist), and `index nil
+                "key"` errors the template. Default to empty dict first,
+                then look up "user", then check it has connectionDetails
+                populated. All three must pass before emitting.
             */ -}}
-            {{- $user := index .observed.resources "user" -}}
+            {{- $resources := default dict .observed.resources -}}
+            {{- $user := index $resources "user" -}}
             {{- if and $user $user.connectionDetails -}}
+            {{- if and (hasKey $user.connectionDetails "AWS_ACCESS_KEY_ID") (hasKey $user.connectionDetails "AWS_SECRET_ACCESS_KEY") }}
             ---
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
             kind: CompositeConnectionDetails
@@ -165,6 +179,7 @@ spec:
               BUCKET_NAME: {{ $bucketName | b64enc }}
               AWS_ENDPOINT_URL: {{ "http://minio.minio.svc.cluster.local:9000" | b64enc }}
               AWS_REGION: {{ $spec.region | b64enc }}
+            {{- end }}
             {{- end }}
 
     # ─────────────────────────────────────────────────────────────
