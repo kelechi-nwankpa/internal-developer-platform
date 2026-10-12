@@ -1,26 +1,27 @@
 ---
-# Crossplane providers — the AWS-side controllers that turn MRs into
-# real AWS resources.
+# Crossplane providers — controllers that turn MRs into real backend
+# resources.
 #
-# Three providers for our initial cut per ADR-0026:
+# AWS family (per ADR-0026): targets AWS on EKS. On kind the controllers
+# run but their MRs don't reconcile — upbound provider-aws-s3 v2+ calls
+# s3control:ListTagsForResource during Observe, which MinIO doesn't
+# implement (discovered Phase 4 Wave 2, see ADR-0027 postscript).
 #   - provider-family-aws — base package, shared AWS config
 #   - provider-aws-s3     — Bucket, BucketPolicy, ObjectOwnership, etc.
 #   - provider-aws-iam    — Role, Policy, PolicyAttachment, etc.
+# All pinned to v2.6.0 (from crossplane-contrib/provider-upjet-aws mono-
+# repo, published under xpkg.upbound.io/upbound/).
 #
-# All pinned to v2.6.0 (latest as of 2026-08-05, from crossplane-contrib/
-# provider-upjet-aws mono-repo, published as separate OCI packages under
-# xpkg.upbound.io/upbound/).
+# MinIO (added Phase 4 Wave 2): targets MinIO on kind. Purpose-built
+# provider from VSHN — does NOT reuse AWS code paths. Composition
+# selects this provider's Bucket MR via a kind-variant Composition
+# (composition-objectbucket-minio.yaml) that the XRD defaults to on
+# kind. On EKS, we'd set a different defaultCompositionRef pointing
+# at the AWS-variant Composition.
+#   - provider-minio — Bucket, Policy, User (MinIO-native MRs)
 #
-# On kind these install and their controller pods run, BUT NO MR EVER
-# RECONCILES SUCCESSFULLY because we deliberately skip ProviderConfig
-# with real AWS credentials (per ADR-0026 decision). We get CRDs, we
-# can write XRDs referencing them (Task 4.4), and we can use
-# `crossplane render` for dry-run Composition validation. Real
-# reconciliation waits for Phase 9 EKS with IRSA.
-#
-# Each Provider installs a LOT of CRDs (30-50 for s3, 20-30 for iam) —
-# expect kubectl get crd | wc -l to jump significantly after these
-# land.
+# Each Provider installs a LOT of CRDs — expect kubectl get crd | wc -l
+# to jump after these land.
 
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -50,3 +51,21 @@ metadata:
   name: provider-aws-iam
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-iam:v2.6.0
+
+---
+# Added Phase 4 Wave 2 to close Phase 6 bug 5. The upbound provider-aws-s3
+# above is architecturally incompatible with MinIO (s3control:ListTagsFor-
+# Resource during Observe). VSHN's provider-minio is MinIO-native and
+# reconciles cleanly. Composition-level routing (minio variant vs s3
+# variant) means the user-facing ObjectBucket XRC is identical across
+# kind and EKS — portability preserved at the XRD layer, not the
+# provider layer.
+#
+# Version pinned to v0.4.5 (latest release 2025-07-29). Package is public
+# on GHCR, no auth needed to pull.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-minio
+spec:
+  package: ghcr.io/vshn/provider-minio:v0.4.5
