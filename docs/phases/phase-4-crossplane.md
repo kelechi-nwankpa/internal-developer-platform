@@ -264,9 +264,65 @@ The pivot: install `vshn/provider-minio` (purpose-built for MinIO) alongside the
 - *"What's left on bug 5?"* — Bucket is now declaratively managed. The connection Secret (per-service MinIO credentials for the Deployment) is still manual. Wave 3 adds vshn `User` + `Policy` MRs to the Composition for proper per-service IAM scoped to each bucket.
 - *"Walk me through an ESO apiVersion gotcha."* — Wrote `external-secrets.io/v1beta1`. Install had been upgraded to v1 (GA). CRD no longer served v1beta1 at all. API server rejected at admission. One-line fix after reading the CRD's `served/storage` versions list.
 
+## Phase 4 Wave 3 — ATTEMPTED, REVERTED (2026-10-12)
+
+**Status: NOT shipped. Reverted via commits 68096c4 / 7777ba3 / 0f99989. Cluster recovery still needed before next Crossplane work.**
+
+### What Wave 3 was supposed to deliver
+
+Final 30% of Phase 6 bug 5. Composition evolves from Bucket-only to Bucket + Policy + User MRs; User MR's connection details flow through `CompositeConnectionDetails` to populate the Claim's Secret with all 5 keys the Deployment's envFrom needs (`BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION`). Per-service IAM — each service gets credentials scoped to its own bucket, no shared root creds.
+
+### Why it was reverted
+
+Three bugs surfaced in sequence; each had a mechanical fix. The compounding operational cost broke the cluster.
+
+| # | Bug | Diagnosis | Fix | Status |
+|---|---|---|---|---|
+| A | User admission webhook rejected creation: `policies: Invalid value, policy not found` | My Composition used `$name-policy` for Policy's metadata.name but `$bucketName-policy` for User's reference. The vshn Policy controller derives MinIO's canned-policy name from k8s metadata.name (via `GetName()`), NOT from `crossplane.io/external-name`. Mismatch. | Align both at `$bucketName-policy`; Policy's external-name annotation removed (unused by vshn controller) | FIXED (dffca8c) |
+| B | Go template crashed on first render: `index .observed.resources "user"` nil deref | `.observed.resources` is nil before any composed MRs exist. `index nil "key"` errors. | Guard with `{{- $resources := default dict .observed.resources -}}` | FIXED (same commit) |
+| C | vshn provider User controller **panicked** with `nil pointer dereference` at `operator/user/observe.go:73` | Confirmed via source: User.Observe dereferences `GetWriteConnectionSecretToReference().Namespace` without a nil check. Omitting that field panics. | Add `writeConnectionSecretToRef` to the composed User MR, pointing at a Secret in `crossplane-system` | FIXED (d555b50); upstream bug worth filing |
+
+Each fix shipped. BUT the iterations compounded with MinIO instability: the vshn provider's observe-panic loop + Crossplane's reconcile retry triggered aggressive load on MinIO (which was already memory-constrained on this cluster), causing repeated OOMKills (9+ restarts observed). That in turn broke the provider's Observe path mid-cycle, leaving `external-create-pending` annotations stuck across User MRs, which required manual annotation removal + resource deletion to recover.
+
+### The operator-error that forced the revert
+
+During cleanup iteration #4, I ran:
+
+```bash
+kubectl delete secret -n crossplane-system -l app.kubernetes.io/managed-by!=Helm \
+  --ignore-not-found $(kubectl get secret -n crossplane-system -o name | grep user-creds)
+```
+
+With no `user-creds`-named Secrets left (I'd just deleted them), the `$()` substitution returned empty. The outer command fell back to deleting by label selector alone — which matched Crossplane's internal `crossplane-root-ca`, `crossplane-tls-client`, `crossplane-tls-server` Secrets. All three deleted.
+
+Crossplane's init container regenerates these on next restart. Three Crossplane core restarts followed. The TLS secrets came back with populated data. Crossplane init container reported "Initialization has been completed." But the main container's XR reconciler never started — logs show only "Beta feature enabled" messages, then silence. No controller startup, no informer registration, no reconcile activity. The core process is alive but frozen.
+
+### Wave 3 status after revert
+
+- **Platform repo**: all 3 Wave 3 commits reverted; Composition back to Wave 2 shape (single Bucket MR). XRD back to no `connectionSecretKeys` block.
+- **Service repo (platform-hello)**: XRC still in Git from Wave 2 restore. Argo syncs it fine.
+- **Cluster**: Composition definition + XRD + XRCs all materialized. **BUT Crossplane core is frozen** — no XRs or MRs reconcile. Needs full Crossplane core recovery (likely: delete Crossplane Deployment via `argocd app sync --prune --force` on the crossplane Application, OR manual Helm reinstall) before any Crossplane work resumes.
+
+### What this teaches
+
+- **Vshn provider v0.4.5 has an upstream panic bug** (`User.Observe` nil-check missing). Workaround: always set `writeConnectionSecretToRef` on composed User MRs. File upstream issue if continuing with this provider.
+- **Compounding fixes under cluster instability compound risk**. Each cycle (fix → smoke test → observe failure → cleanup) ran a loop that put more pressure on an already-stressed data plane (MinIO). The right call earlier would have been to pause, bump MinIO resource limits, THEN iterate — not race the stability clock.
+- **Never substitute `$(kubectl get ...)` into a `kubectl delete ...` command without defensive quoting** — an empty substitution + a label selector falls back catastrophically. In retrospect: use `xargs -r` or an explicit `if [ -n "$list" ]` guard.
+- **Reverts are a legitimate engineering outcome**. Three bugs chased + fixed + verified for the Composition layer; the data plane couldn't absorb the churn; the operator mistake pushed Crossplane core past recovery. Reverting the code to a known-good state (Wave 2 shipped) is better than shipping half-broken infra. Document the lessons; move on.
+
+### Wave 3 TODO (for a future session, after Crossplane core recovery)
+
+1. **Recover Crossplane core first** — needs its own session. Likely path:
+    - `kubectl delete deployment -n crossplane-system crossplane`
+    - Let the `crossplane` ArgoCD Application re-create it
+    - OR: `helm upgrade --install` the Crossplane chart directly in a scratch spike before reinstalling via GitOps
+2. **Bump MinIO Deployment memory limits** — ADR amendment for ADR-0029. Current limit (default) OOMKills under reconcile churn.
+3. **File upstream issue** with vshn/provider-minio about the `User.Observe` nil deref.
+4. **Re-attempt Wave 3** with the lessons applied. The Composition logic in commits 64fc4b7 → dffca8c → d555b50 was architecturally sound; it should just work once MinIO is stable and the panic workaround is in place (which the final commit shipped).
+
 ## Deferred sub-tasks (pick up when appropriate)
 
-- **Wave 3** — Composition emits connection Secret via vshn `User` + `Policy` MRs for per-service IAM. Converges platform-hello deployment onto the Crossplane-managed bucket. Deletes the manual Secret + manual bucket.
+- **Wave 3** — see "Phase 4 Wave 3 — ATTEMPTED, REVERTED" section above. Needs cluster recovery first.
 - **Task 4.6** — Second XRD (Namespace) via `provider-kubernetes`. Contrast with ObjectBucket (no cloud API involvement, just k8s objects). Own sub-task or Phase 5 prep.
 - **PostgresDatabase XRD** — requires `provider-aws-rds`. Phase 6 or Phase 4.5.
 - **ManagedSecret XRD** — Crossplane wrapper around ESO's ExternalSecret. Cross-operator glue; Phase 6 or later.
