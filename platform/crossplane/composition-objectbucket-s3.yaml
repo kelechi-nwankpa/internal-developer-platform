@@ -1,10 +1,21 @@
 ---
-# Composition — the recipe that renders MRs from an XObjectBucket XR.
+# composition-objectbucket-s3.yaml
 #
-# Uses fn-go-templating for rendering (installed as function-go-templating)
-# + fn-auto-ready for status rollup (installed as function-auto-ready).
-# Pipeline mode is the modern Crossplane approach — replaces the legacy
-# patch-and-transform mode.
+# AWS/EKS VARIANT of the ObjectBucket Composition. Renders upbound
+# provider-aws-s3 Managed Resources (Bucket + BucketPublicAccessBlock +
+# BucketVersioning + BucketServerSideEncryptionConfiguration). On kind
+# this Composition won't reconcile — upbound provider-aws-s3 v2.6.0
+# calls s3control:ListTagsForResource during Observe which MinIO
+# doesn't implement (see composition-objectbucket-minio.yaml for the
+# kind variant + ADR-0027 postscript for the full backstory).
+#
+# This variant is selected when the XRD's defaultCompositionRef points
+# here (expected on EKS, Phase 9). On kind the default is the -minio
+# variant so this file installs but isn't picked up by XRCs by default.
+# A user can still explicitly request it on a per-XRC basis via
+# spec.compositionRef.
+#
+# Uses fn-go-templating for rendering + fn-auto-ready for status rollup.
 #
 # Renders 2-4 MRs depending on XR field values:
 #   - Bucket                                          (always)
@@ -17,9 +28,10 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: xobjectbuckets.platform.idp.io
+  name: xobjectbuckets-s3.platform.idp.io
   labels:
     provider: aws
+    backend: aws-s3
     component: object-bucket
 spec:
   # Bind this Composition to the XObjectBucket XR type. Multiple Compositions

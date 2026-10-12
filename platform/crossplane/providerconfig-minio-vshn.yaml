@@ -1,0 +1,39 @@
+---
+# providerconfig-minio-vshn.yaml
+#
+# Tells vshn/provider-minio how to reach MinIO. Named `provider-config`
+# to match the vshn provider's sample convention. The kind-variant
+# Composition (composition-objectbucket-minio.yaml) references this
+# name in its spec.providerConfigRef.
+#
+# API group `minio.crossplane.io/v1` is completely separate from the
+# upbound AWS provider's `aws.upbound.io/v1beta1` ProviderConfig —
+# they coexist in the cluster and don't conflict.
+#
+# WHY source: InjectedIdentity (counter-intuitive but correct):
+#   The vshn provider's CRD schema labels its secret-based auth path
+#   "InjectedIdentity" (odd naming for what's effectively a Secret
+#   reference). Per samples/minio.crossplane.io_providerconfig.yaml
+#   in the vshn/provider-minio repo. The real "pass-through" identity
+#   (e.g. IAM Role) is not a MinIO concept — Secret is the only option.
+#
+# WHY credentials.apiSecretRef (not credentials.secretRef):
+#   The vshn provider uses `apiSecretRef` as its field name, distinct
+#   from the Crossplane-common `secretRef`. This is a per-provider
+#   schema choice. Pointing it at the ESO-materialised Secret.
+#
+# WHY minioURL http (not https):
+#   MinIO on kind is deployed without TLS (ADR-0029). On EKS this
+#   doesn't apply — we'd use the AWS-side provider there instead.
+
+apiVersion: minio.crossplane.io/v1
+kind: ProviderConfig
+metadata:
+  name: provider-config
+spec:
+  credentials:
+    source: InjectedIdentity
+    apiSecretRef:
+      namespace: crossplane-system
+      name: minio-crossplane-creds   # materialised by the ExternalSecret
+  minioURL: http://minio.minio.svc.cluster.local:9000

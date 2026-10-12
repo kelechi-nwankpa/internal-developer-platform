@@ -1,0 +1,97 @@
+---
+# composition-objectbucket-minio.yaml
+#
+# MINIO/KIND VARIANT of the ObjectBucket Composition. Renders ONE MR —
+# vshn/provider-minio's Bucket resource. Selected as the XRD's default
+# Composition on kind so that ObjectBucket XRCs land here by default.
+#
+# WHY only one MR (vs 2-4 for the S3 variant):
+#   vshn/provider-minio's Bucket resource is deliberately simple — it
+#   doesn't expose PublicAccessBlock, Versioning or ServerSideEncryption
+#   as separate MRs the way the upbound AWS provider does. Our XRD
+#   accepts publicRead + versioning params but on kind they're SILENTLY
+#   IGNORED (Gap-A decision in Phase 4 Wave 2 strategic intro — see
+#   phase-4 close-out log). On EKS the s3 variant respects them fully.
+#   This is a dev-vs-prod feature gap, acceptable at XRD v1alpha1.
+#
+# WHY the kind-variant is default (and not the s3 variant):
+#   This platform is kind-first per ADR-0005. The s3 variant becomes
+#   default (via a one-line XRD change) when activating EKS in Phase 9.
+#
+# See: docs/adr/0027-first-xrd-objectbucket.md
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xobjectbuckets-minio.platform.idp.io
+  labels:
+    provider: minio
+    backend: minio-vshn
+    component: object-bucket
+spec:
+  # Bind to the same XR type as the s3 variant — multiple Compositions
+  # per XR type is the standard Crossplane pattern for env variance.
+  compositeTypeRef:
+    apiVersion: platform.idp.io/v1alpha1
+    kind: XObjectBucket
+
+  mode: Pipeline
+
+  pipeline:
+    # ─────────────────────────────────────────────────────────────
+    # Step 1 — render ONE MR (vshn Bucket) via Go template
+    # ─────────────────────────────────────────────────────────────
+    - step: render-mrs
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource -}}
+            {{- $spec := $xr.spec.parameters -}}
+            {{- $name := $xr.metadata.name -}}
+            {{- /*
+                Stable 6-char suffix from the XR's UID for bucket name
+                uniqueness, matching the s3-variant pattern. On MinIO
+                bucket names are per-cluster, not globally unique like
+                real S3, but keeping the pattern identical makes bucket
+                NAMING parity between environments (useful for log
+                grepping, metrics labels, etc.).
+            */ -}}
+            {{- $uid := $xr.metadata.uid | default "" -}}
+            {{- $suffix := (substr 0 6 ($uid | replace "-" "")) | default (randAlphaNum 6 | lower) -}}
+            {{- $bucketName := printf "%s-%s" $name $suffix -}}
+
+            # ─────────────────────────────────────────────
+            # MinIO Bucket — the only MR we render on kind
+            # ─────────────────────────────────────────────
+            apiVersion: minio.crossplane.io/v1
+            kind: Bucket
+            metadata:
+              name: {{ $name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: bucket
+                crossplane.io/external-name: {{ $bucketName }}
+            spec:
+              forProvider:
+                region: {{ $spec.region }}
+              providerConfigRef:
+                name: provider-config   # matches providerconfig-minio-vshn.yaml
+
+            {{- /*
+                XRD params publicRead and versioning are SILENTLY IGNORED
+                on this variant. See Gap-A decision in phase-4 close-out.
+                If those fields matter for dev-env fidelity in the future,
+                add vshn provider's Policy MR for publicRead; versioning
+                has no vshn equivalent and would need a different provider.
+            */ -}}
+
+    # ─────────────────────────────────────────────────────────────
+    # Step 2 — roll up Bucket Ready status to the XR
+    # ─────────────────────────────────────────────────────────────
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready

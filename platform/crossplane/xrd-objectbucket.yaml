@@ -36,11 +36,17 @@ spec:
     kind: ObjectBucket
     plural: objectbuckets
 
-  # Standard v1 XRD default mode. Crossplane's control plane will accept
-  # both XObjectBucket and ObjectBucket resources and reconcile them
-  # through the paired Composition (matched by compositeTypeRef).
+  # Default Composition. We ship two Composition variants (Phase 4 Wave 2):
+  #   - xobjectbuckets-minio.platform.idp.io — renders vshn/provider-minio
+  #     Bucket MRs, works on kind.
+  #   - xobjectbuckets-s3.platform.idp.io — renders upbound provider-aws-s3
+  #     MRs (Bucket + PublicAccessBlock + Versioning + SSE), works on EKS.
+  # Kind is the development default per ADR-0005, so we default here to
+  # the -minio variant. Flip this one line to -s3 when activating EKS in
+  # Phase 9 (or override per-XRC via spec.compositionRef for a mixed
+  # deployment).
   defaultCompositionRef:
-    name: xobjectbuckets.platform.idp.io
+    name: xobjectbuckets-minio.platform.idp.io
 
   versions:
     - name: v1alpha1
