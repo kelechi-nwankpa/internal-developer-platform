@@ -157,22 +157,6 @@ spec:
                   - {{ $policyName }}
               providerConfigRef:
                 name: provider-config
-              # REQUIRED. The vshn provider's User.Observe (operator/user/
-              # observe.go line ~71) dereferences GetWriteConnectionSecret-
-              # ToReference().Namespace WITHOUT a nil check. Omitting this
-              # field panics the provider controller with "invalid memory
-              # address or nil pointer dereference". The provider itself
-              # already uses this Secret internally to verify the user's
-              # credentials work (calls ListBuckets with them during Observe),
-              # independent of Crossplane's connection-propagation feature.
-              # We write it to crossplane-system so it's isolated from app
-              # namespaces; the CompositeConnectionDetails block below
-              # re-reads the same values to populate the Claim's Secret in
-              # the APP namespace with the richer 5-key schema the Deploy-
-              # ment needs.
-              writeConnectionSecretToRef:
-                namespace: crossplane-system
-                name: {{ $userName }}-creds
 
             {{- /*
                 CompositeConnectionDetails emission. Guard pattern per
