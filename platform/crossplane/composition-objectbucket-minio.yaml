@@ -1,46 +1,22 @@
 ---
 # composition-objectbucket-minio.yaml
 #
-# MINIO/KIND VARIANT of the ObjectBucket Composition. Phase 4 Wave 2
-# shipped this with a single Bucket MR. Phase 4 Wave 3 adds Policy + User
-# MRs for per-service IAM, and emits a CompositeConnectionDetails object
-# so the Claim's connection Secret is populated with everything the app
-# Deployment needs via envFrom.
+# MINIO/KIND VARIANT of the ObjectBucket Composition. Renders ONE MR —
+# vshn/provider-minio's Bucket resource. Selected as the XRD's default
+# Composition on kind so that ObjectBucket XRCs land here by default.
 #
-# Three MRs rendered per XRC (previously 1):
-#   - Bucket   (vshn)  — the actual bucket in MinIO
-#   - Policy   (vshn)  — grants all S3 ops on EXACTLY this bucket, nothing
-#                        else. allowBucket shorthand (equivalent to a
-#                        rawPolicy with s3:* on this bucket's ARN).
-#   - User     (vshn)  — MinIO user with the Policy attached. Emits
-#                        AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in
-#                        its connection details (names match AWS SDK
-#                        env-var convention — no translation needed).
+# WHY only one MR (vs 2-4 for the S3 variant):
+#   vshn/provider-minio's Bucket resource is deliberately simple — it
+#   doesn't expose PublicAccessBlock, Versioning or ServerSideEncryption
+#   as separate MRs the way the upbound AWS provider does. Our XRD
+#   accepts publicRead + versioning params but on kind they're SILENTLY
+#   IGNORED (Gap-A decision in Phase 4 Wave 2 strategic intro — see
+#   phase-4 close-out log). On EKS the s3 variant respects them fully.
+#   This is a dev-vs-prod feature gap, acceptable at XRD v1alpha1.
 #
-# Connection details propagation (Pipeline mode pattern — see
-# function-go-templating README for provenance):
-#
-#   User MR writes its own connection Secret (via Crossplane default
-#   behaviour on managed resources that implement ConnectionDetails) →
-#   fn-go-templating reads from .observed.resources.<name>.connectionDetails
-#   → function emits a CompositeConnectionDetails (meta.gotemplating.fn.
-#   crossplane.io/v1alpha1) with templated values → Crossplane reads that
-#   and populates the XR's connection Secret → because this XRC's Claim
-#   has writeConnectionSecretToRef, Crossplane copies it to the Claim's
-#   namespace with the specified name.
-#
-# OBSERVED-RESOURCES GUARD. On the FIRST render after XRC create, no
-# composed MRs exist yet, so .observed.resources is nil. Trying to pull
-# connection details then errors the template. We guard with
-# {{ if .observed.resources.user }} ... {{ end }} so first render skips
-# the CompositeConnectionDetails emission; subsequent reconciles populate
-# it. The XR + Claim stay NotReady until the User's connection details
-# materialise — which is correct: the Deployment should NOT roll until
-# the Secret is populated.
-#
-# GAP-A unchanged from Wave 2: XRD params publicRead and versioning are
-# still silently ignored on this variant (vshn provider doesn't expose
-# them on Bucket). Documented in phase-4 close-out.
+# WHY the kind-variant is default (and not the s3 variant):
+#   This platform is kind-first per ADR-0005. The s3 variant becomes
+#   default (via a one-line XRD change) when activating EKS in Phase 9.
 #
 # See: docs/adr/0027-first-xrd-objectbucket.md
 
@@ -53,6 +29,8 @@ metadata:
     backend: minio-vshn
     component: object-bucket
 spec:
+  # Bind to the same XR type as the s3 variant — multiple Compositions
+  # per XR type is the standard Crossplane pattern for env variance.
   compositeTypeRef:
     apiVersion: platform.idp.io/v1alpha1
     kind: XObjectBucket
@@ -61,7 +39,7 @@ spec:
 
   pipeline:
     # ─────────────────────────────────────────────────────────────
-    # Step 1 — render Bucket + Policy + User + emit CompositeConnectionDetails
+    # Step 1 — render ONE MR (vshn Bucket) via Go template
     # ─────────────────────────────────────────────────────────────
     - step: render-mrs
       functionRef:
@@ -76,19 +54,19 @@ spec:
             {{- $spec := $xr.spec.parameters -}}
             {{- $name := $xr.metadata.name -}}
             {{- /*
-                Stable 6-char suffix from the XR's UID (matches S3 variant).
-                Used as the shared base name for all three MRs' external
-                names, with "-user" and "-policy" suffixes to keep them
-                distinguishable in MinIO's user and policy namespaces.
+                Stable 6-char suffix from the XR's UID for bucket name
+                uniqueness, matching the s3-variant pattern. On MinIO
+                bucket names are per-cluster, not globally unique like
+                real S3, but keeping the pattern identical makes bucket
+                NAMING parity between environments (useful for log
+                grepping, metrics labels, etc.).
             */ -}}
             {{- $uid := $xr.metadata.uid | default "" -}}
             {{- $suffix := (substr 0 6 ($uid | replace "-" "")) | default (randAlphaNum 6 | lower) -}}
             {{- $bucketName := printf "%s-%s" $name $suffix -}}
-            {{- $policyName := printf "%s-policy" $bucketName -}}
-            {{- $userName := printf "%s-user" $bucketName -}}
 
             # ─────────────────────────────────────────────
-            # MinIO Bucket
+            # MinIO Bucket — the only MR we render on kind
             # ─────────────────────────────────────────────
             apiVersion: minio.crossplane.io/v1
             kind: Bucket
@@ -101,80 +79,19 @@ spec:
               forProvider:
                 region: {{ $spec.region }}
               providerConfigRef:
-                name: provider-config
-
-            ---
-            # ─────────────────────────────────────────────
-            # MinIO Policy — allowBucket shorthand grants all S3 ops
-            # on this bucket (and nothing on other buckets or admin APIs).
-            # Equivalent to a rawPolicy with:
-            #   s3:* on arn:aws:s3:::{bucket}, arn:aws:s3:::{bucket}/*
-            # ─────────────────────────────────────────────
-            apiVersion: minio.crossplane.io/v1
-            kind: Policy
-            metadata:
-              name: {{ $name }}-policy
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: policy
-                crossplane.io/external-name: {{ $policyName }}
-            spec:
-              forProvider:
-                allowBucket: {{ $bucketName }}
-              providerConfigRef:
-                name: provider-config
-
-            ---
-            # ─────────────────────────────────────────────
-            # MinIO User — holds the per-service access key pair.
-            # Attached to the Policy above by name. User's connection
-            # details auto-publish AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
-            # (constants defined in operator/user/observe.go upstream).
-            # ─────────────────────────────────────────────
-            apiVersion: minio.crossplane.io/v1
-            kind: User
-            metadata:
-              name: {{ $name }}-user
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: user
-                crossplane.io/external-name: {{ $userName }}
-            spec:
-              forProvider:
-                userName: {{ $userName }}
-                policies:
-                  - {{ $policyName }}
-              providerConfigRef:
-                name: provider-config
+                name: provider-config   # matches providerconfig-minio-vshn.yaml
 
             {{- /*
-                CompositeConnectionDetails emission — ONLY once the User
-                MR has materialised its connectionDetails. On first render
-                .observed.resources.user is nil → skip. On subsequent
-                reconciles after User is Ready, pull the two credential
-                keys (already base64-encoded by Crossplane since they
-                come from a Secret) and template the three static/XR-
-                derived keys (require | b64enc).
+                XRD params publicRead and versioning are SILENTLY IGNORED
+                on this variant. See Gap-A decision in phase-4 close-out.
+                If those fields matter for dev-env fidelity in the future,
+                add vshn provider's Policy MR for publicRead; versioning
+                has no vshn equivalent and would need a different provider.
             */ -}}
-            {{- $user := index .observed.resources "user" -}}
-            {{- if and $user $user.connectionDetails -}}
-            ---
-            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
-            kind: CompositeConnectionDetails
-            data:
-              AWS_ACCESS_KEY_ID: {{ index $user.connectionDetails "AWS_ACCESS_KEY_ID" }}
-              AWS_SECRET_ACCESS_KEY: {{ index $user.connectionDetails "AWS_SECRET_ACCESS_KEY" }}
-              BUCKET_NAME: {{ $bucketName | b64enc }}
-              AWS_ENDPOINT_URL: {{ "http://minio.minio.svc.cluster.local:9000" | b64enc }}
-              AWS_REGION: {{ $spec.region | b64enc }}
-            {{- end }}
 
     # ─────────────────────────────────────────────────────────────
-    # Step 2 — roll up all MRs' Ready status to the XR
+    # Step 2 — roll up Bucket Ready status to the XR
     # ─────────────────────────────────────────────────────────────
-    # XR becomes Ready when Bucket, Policy, AND User are all Ready.
-    # Previously only Bucket needed to be Ready; now all three gate the
-    # XR, which also gates the Claim, which is correct: don't tell the
-    # app the bucket is "ready" until the credentials are actually
-    # in the Secret.
     - step: auto-ready
       functionRef:
         name: function-auto-ready

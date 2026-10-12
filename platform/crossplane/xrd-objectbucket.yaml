@@ -48,19 +48,6 @@ spec:
   defaultCompositionRef:
     name: xobjectbuckets-minio.platform.idp.io
 
-  # Phase 4 Wave 3: declare the keys the connection Secret publishes.
-  # Services consuming this XRD via a Claim get a Secret with exactly
-  # these 5 keys (populated by the Composition's CompositeConnectionDetails).
-  # Deployment YAML can envFrom this Secret safely — the schema is a
-  # public commitment, Deployment templates may reference these as
-  # required env vars. Changing/removing a key is a breaking change.
-  connectionSecretKeys:
-    - BUCKET_NAME            # the actual MinIO/S3 bucket name
-    - AWS_ACCESS_KEY_ID      # per-service access key (via vshn User MR)
-    - AWS_SECRET_ACCESS_KEY  # per-service secret key (via vshn User MR)
-    - AWS_ENDPOINT_URL       # MinIO Service URL on kind; "" on EKS (SDK default)
-    - AWS_REGION             # from XRC spec.parameters.region
-
   versions:
     - name: v1alpha1
       served: true
