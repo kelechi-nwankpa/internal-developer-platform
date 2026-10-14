@@ -1,8 +1,24 @@
+# .dockerignore for the self-contained multi-stage Dockerfile (not the
+# scaffolded host-build packages/backend/Dockerfile). The multi-stage
+# build needs full source trees (packages/*/src, plugins/) so it can
+# compile + bundle inside docker — exclusions must preserve those.
+#
+# Excludes:
+#   .git             — git metadata; never needed at build time
+#   node_modules     — regenerated inside docker via `yarn install`
+#   .yarn/cache      — yarn's local cache; rebuilt via BuildKit mount cache
+#   .yarn/install-state.gz — ephemeral yarn install state
+#   *.local.yaml     — developer-local app-config overrides
+#
+# Deliberately NOT excluded (so builder stage can see them):
+#   packages/*/src   — frontend + backend TypeScript source
+#   plugins/         — workspace plugin dirs (even if empty, yarn
+#                      workspaces discovery expects the path)
+#   examples/        — sample catalog data (shipped as part of the
+#                      runtime image for the sample Backstage experience)
+
 .git
 .yarn/cache
 .yarn/install-state.gz
 node_modules
-packages/*/src
-packages/*/node_modules
-plugins
 *.local.yaml
