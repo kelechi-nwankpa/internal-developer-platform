@@ -1,0 +1,13 @@
+# .gitleaksignore — fingerprints of findings gitleaks should permanently ignore.
+#
+# Format: one fingerprint per line (file:ruleid:line or file:ruleid:secretsha).
+# Fingerprint comes from the "Fingerprint:" line in gitleaks' finding output.
+#
+# Only add entries here for VERIFIED false positives — real secrets must be
+# removed from history and rotated, never ignored.
+
+# Phase 5 Wave 2: Backstage's scaffolded vendored yarn CLI bundles the
+# Algolia search widget config (public search apiKey for backstage.io docs
+# search box). The apiKey is a Algolia "search-only" key — public by design,
+# baked into every yarn 4 distribution. Not a real secret.
+portal/.yarn/releases/yarn-4.13.0.cjs:generic-api-key:583

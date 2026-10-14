@@ -19,11 +19,22 @@ default_language_version:
   python: python3
 
 # Skip auto-generated or vendored paths across every hook.
+#
+# portal/* exclusions added Phase 5 Wave 2: Backstage's scaffolded app
+# ships a vendored yarn CLI (.yarn/releases/*.cjs), a large lockfile
+# (yarn.lock ~1.2MB — larger than our 500KB linter threshold, but
+# intentionally tracked for CI reproducibility same as any lockfile),
+# and binary asset files (public/*.svg, *.png, *.ico — favicons, logos).
+# All framework-managed; linting them produces false positives (gitleaks
+# flagging Algolia search public keys, EOF-fixer corrupting binary SVGs).
 exclude: |
   (?x)^(
     node_modules/.*|
     cdk\.out/.*|
     \.yarn/.*|
+    portal/\.yarn/.*|
+    portal/yarn\.lock|
+    portal/packages/[^/]+/public/.*|
     dist/.*|
     build/.*
   )$
@@ -63,6 +74,12 @@ repos:
     rev: v8.21.2
     hooks:
       - id: gitleaks
+        # Global exclude doesn't apply to gitleaks' own matcher — need
+        # per-hook exclude. Scaffolded Backstage vendored yarn CLI
+        # (portal/.yarn/releases/*.cjs) contains Algolia search API
+        # keys (public, used by backstage.io docs search); gitleaks
+        # flags them as generic-api-key. False positive.
+        exclude: ^portal/\.yarn/.*
 
   # ─────────────────────────────────────────────────────────────
   # editorconfig compliance — cross-verifies that .editorconfig
