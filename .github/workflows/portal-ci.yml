@@ -1,0 +1,61 @@
+---
+# portal-ci.yml — invokes the reusable CI/CD workflow for the Backstage
+# portal (idp-portal) living in portal/ of this repo.
+#
+# Trigger: changes anywhere under portal/ or in the reusable workflow
+# itself. Prevents churn from unrelated commits (ADR text changes,
+# platform YAML tweaks, etc.) rebuilding the ~5-10 min Backstage image.
+#
+# Differences vs the platform-hello wrapper:
+#   - package-manager: yarn (Backstage uses yarn 4 workspaces)
+#   - docker-context: ./portal  (not repo root)
+#   - dockerfile-path: ./portal/Dockerfile
+#   - manifest-path: "" (empty — portal is deployed via Helm chart in
+#     platform/argocd/apps/backstage.yaml, not kustomize. The reusable
+#     workflow SKIPS the update-manifest job when manifest-path is
+#     empty. Chart's image tag is updated manually or by a separate
+#     Helm-aware workflow in a future wave.)
+#
+# See: .github/workflows/reusable-service-ci.yml
+#      docs/adr/0032-cicd-pipeline-reusable-workflow-oidc-cosign.md
+
+name: Portal CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'portal/**'
+      - '.github/workflows/portal-ci.yml'
+      - '.github/workflows/reusable-service-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'portal/**'
+      - '.github/workflows/portal-ci.yml'
+      - '.github/workflows/reusable-service-ci.yml'
+    tags: ['portal-v*']
+
+# Consistent with platform-hello wrapper. contents:write needed if a
+# future wave adds Helm-chart commit-back; harmless to grant up front.
+permissions:
+  contents: write
+  packages: write    # ghcr.io push
+  id-token: write    # OIDC federation (GHCR + cosign)
+
+jobs:
+  ci:
+    uses: ./.github/workflows/reusable-service-ci.yml
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    with:
+      service-name: idp-portal
+      package-manager: yarn
+      docker-context: ./portal
+      dockerfile-path: ./portal/Dockerfile
+      # Explicitly empty — portal uses Helm, not kustomize. Skips the
+      # update-manifest job (reusable workflow's `if` guard checks this).
+      manifest-path: ""
+    secrets: inherit

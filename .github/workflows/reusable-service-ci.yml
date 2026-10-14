@@ -54,7 +54,11 @@ on:
         type: string
         default: ${{ github.repository }}
       manifest-path:
-        description: "Path to kustomize manifests inside the service repo"
+        description: >-
+          Path to kustomize manifests inside the service repo. Set to
+          empty string to SKIP the update-manifest job entirely (useful
+          for services deployed via Helm chart values rather than
+          kustomize — e.g. the Backstage portal).
         required: false
         type: string
         default: kubernetes
@@ -68,6 +72,32 @@ on:
         required: false
         type: string
         default: linux/amd64,linux/arm64
+      package-manager:
+        description: >-
+          Node package manager. `npm` (default) uses npm ci + npx tsc +
+          npm test; `yarn` uses yarn install --immutable + yarn tsc +
+          yarn test. Branches apply to the install-and-test job only;
+          Docker image build is package-manager agnostic (Dockerfile
+          decides).
+        required: false
+        type: string
+        default: npm
+      docker-context:
+        description: >-
+          Docker build context — path relative to repo root. Default `.`
+          works when Dockerfile is at repo root (platform-hello pattern).
+          For sub-directory apps (e.g. portal/), set to the subdir.
+        required: false
+        type: string
+        default: "."
+      dockerfile-path:
+        description: >-
+          Dockerfile path relative to repo root. Default `./Dockerfile`
+          matches the context root. For sub-directory apps, set to e.g.
+          `./portal/Dockerfile`.
+        required: false
+        type: string
+        default: ./Dockerfile
     outputs:
       image-ref:
         description: "Fully-qualified image reference pushed to the registry"
@@ -86,6 +116,11 @@ jobs:
   install-and-test:
     name: Install + test
     runs-on: ubuntu-latest
+    # Working directory = docker-context, so yarn install reads the
+    # right package.json for sub-directory apps (portal/) too.
+    defaults:
+      run:
+        working-directory: ${{ inputs.docker-context }}
     steps:
       - name: Checkout service repo
         uses: actions/checkout@v4
@@ -94,18 +129,40 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: npm
+          cache: ${{ inputs.package-manager }}
+          cache-dependency-path: >-
+            ${{ inputs.docker-context }}/${{ inputs.package-manager == 'yarn' && 'yarn.lock' || 'package-lock.json' }}
 
-      - name: Install dependencies (locked, no scripts)
+      - name: Install dependencies (npm)
+        if: inputs.package-manager == 'npm'
         run: npm ci --ignore-scripts
 
-      - name: TypeScript compile check
+      - name: Install dependencies (yarn)
+        if: inputs.package-manager == 'yarn'
+        # Yarn 4 default: no scripts run on install. --immutable fails
+        # if yarn.lock is out of date (CI-safe equivalent of npm ci).
+        run: yarn install --immutable
+
+      - name: TypeScript compile check (npm)
+        if: inputs.package-manager == 'npm'
         run: npx tsc --noEmit
 
-      - name: Run tests
+      - name: TypeScript compile check (yarn)
+        if: inputs.package-manager == 'yarn'
+        # Backstage's `yarn tsc` wraps tsc via backstage-cli; it understands
+        # the workspace layout and compiles all packages at once.
+        run: yarn tsc
+
+      - name: Run tests (npm)
+        if: inputs.package-manager == 'npm'
         # `|| test $? -eq 1` lets a 0-test suite pass (node --test exits
         # 1 with "no tests found"). Remove once services always have tests.
         run: npm test || test $? -eq 1
+
+      - name: Run tests (yarn)
+        if: inputs.package-manager == 'yarn'
+        # Backstage apps always have tests (scaffold ships them). No fallback.
+        run: yarn test
 
   # ─────────────────────────────────────────────────────────────────
   # build — multi-arch distroless container via buildx.
@@ -154,7 +211,8 @@ jobs:
         id: docker-build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ inputs.docker-context }}
+          file: ${{ inputs.dockerfile-path }}
           platforms: ${{ inputs.platforms }}
           push: false
           load: ${{ inputs.platforms == 'linux/amd64' }}
@@ -184,7 +242,8 @@ jobs:
       - name: Build amd64 image into local Docker for scanning
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ inputs.docker-context }}
+          file: ${{ inputs.dockerfile-path }}
           platforms: linux/amd64
           load: true
           tags: ${{ inputs.service-name }}:scan
@@ -251,7 +310,8 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ inputs.docker-context }}
+          file: ${{ inputs.dockerfile-path }}
           platforms: ${{ inputs.platforms }}
           push: true
           tags: ${{ steps.docker-meta.outputs.tags }}
@@ -305,7 +365,15 @@ jobs:
     name: Update deployment manifest
     runs-on: ubuntu-latest
     needs: sign
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Skip entirely when manifest-path is empty — used for services
+    # deployed via Helm chart values rather than kustomize (e.g. the
+    # Backstage portal, whose image tag lives in the chart's
+    # valuesObject). Those services update their chart manifests
+    # manually or via a separate workflow.
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && inputs.manifest-path != ''
     permissions:
       contents: write    # push the manifest-bump commit back
     steps:
