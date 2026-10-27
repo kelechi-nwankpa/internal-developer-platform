@@ -196,3 +196,143 @@ A: Yes, all documented. (1) Guest auth is anonymous — anyone on localhost can 
 - [platform/backstage/README.md](../../platform/backstage/README.md) — RBAC layout + deliberate omissions
 - [catalog/README.md](../../catalog/README.md) — catalog file layout + editing rules
 - [Backstage Kubernetes plugin auth docs](https://backstage.io/docs/features/kubernetes/authentication/) — canonical reference for what we wired
+
+---
+
+## Phase 5 Wave 2 — Custom Backstage image + GitHub App auth
+
+- **Status:** ✅ Shipped 2026-10-27. Custom Backstage image built via Phase 7 CI pipeline, GitHub App integration live for Scaffolder, platform-hello registered as a Component. Scaffolder template steps + per-plugin wiring deferred to Wave 3 (scoped).
+- **Started:** 2026-10-13 (ADR-0028 postscript + strategic intro)
+- **Finished:** 2026-10-27 (Backstage pod running on sha-8ed9598 with App auth)
+- **Duration:** ~14 calendar days across multiple sessions; interrupted mid-wave by a catastrophic kind-cluster loss during a Docker Desktop upgrade (full cluster rebuild from Git via Option A recovery before resuming)
+- **Total AWS spend:** **$0** (still all on kind + GitHub Actions free tier)
+
+## Wave 2 scope — what shipped vs what deferred
+
+**SHIPPED:**
+
+- **Custom Backstage image.** `portal/` scaffold via `@backstage/create-app@latest` with plugins baked in:
+  - `@backstage/plugin-scaffolder-backend-module-github` (GitHub Scaffolder actions)
+  - `@backstage-community/plugin-argocd` (ArgoCD plugin UI)
+  - `@terasky/backstage-plugin-crossplane-{common,resources-frontend,permissions-backend}` (Crossplane plugin)
+- **Multi-stage Dockerfile** (`portal/Dockerfile`) that compiles + bundles inside Docker. Replaces the scaffolded "host-build" pattern that required yarn commands on the host before docker build.
+- **Phase 7 reusable workflow extended** to support yarn (not just npm), sub-directory apps (not just repo-root), and empty manifest-path (skip the kustomize bump step for Helm-managed services). Backward compatible — platform-hello wrapper unchanged.
+- **Portal CI wrapper** (`.github/workflows/portal-ci.yml`) — ~30 lines, invokes the reusable workflow with portal-specific inputs (package-manager: yarn, docker-context: ./portal, manifest-path: "").
+- **GitHub App creation + Vault seed.** `kelechi-idp-scaffolder` App (App ID 5311202, Installation 171247580) created in GitHub UI; appId + installationId + clientId + privateKey stored in Vault at `secret/backstage/github-app`.
+- **ESO ExternalSecret** materializes the Vault secret into K8s Secret `backstage-github-app` in the backstage namespace. Mounted into Backstage via `extraEnvVarsSecrets`.
+- **Helm chart override** flipped from upstream `backstage/backstage:1.32.0` demo image to our custom `ghcr.io/kelechi-nwankpa/internal-developer-platform:sha-8ed9598` image. `appConfig.integrations.github` now configures the real GitHub App.
+- **platform-hello Component registered** in Backstage catalog (closes Phase 6 bug 5 follow-up).
+
+**DEFERRED to Phase 5 Wave 3:**
+
+- **5W2.6: Scaffolder template steps.** The `templates/nodejs-fastify-svc/skeleton/` directory uses `{{PLACEHOLDER}}` syntax built for `bin/render.sh` (sed-style substitution). Backstage Scaffolder uses Nunjucks (`${{ values.serviceName }}`). The two template engines are incompatible — converting the whole skeleton is a dedicated wave of work, not a 5W2 tail.
+- **5W2.7: Per-plugin wiring.** ArgoCD plugin needs `argocd.baseUrl` + proxy config; Crossplane plugins need `kubernetes.customResources` entries + per-Component annotations. Non-trivial, UI-verification-heavy work. Plugins are INSTALLED in the image but need app-config to activate their UI tiles.
+
+## Business value delivered (Wave 2)
+
+- **Mission statement one step closer.** Custom image = we control the plugin set + versions; no longer dependent on upstream demo image's quirks or random "notifications-plugin api missing" bugs.
+- **Supply chain story.** Backstage image goes through the SAME pipeline as platform-hello: multi-arch build → Trivy scan → cosign keyless sign → GHCR push. Any service we ship now has consistent provenance.
+- **GitHub App primitive wired.** Scaffolder has credentials; publish:github and catalog:register actions are LOADED and READY (Backstage startup logs confirm). Wave 3 fills the template steps; the plumbing is done.
+- **ADR-0028 tech debt closed.** The ":latest / upstream demo image" workaround from Wave 1 is retired. The NODE_ENV=development hack is also gone — custom image handles guest auth properly.
+- **platform-hello visible in Backstage.** Component page with tags, links, kubernetes tab, ArgoCD link.
+
+## The debugging arc — 8 bugs banked
+
+### Bug 1 — Docker Desktop out of date (97% disk full)
+
+Before any Portal CI could succeed, local Docker Desktop (v4.13.1 from 2022) needed updating to v4.95 for its "Reclaim disk space" button to free 29 GB back to macOS (from 15 GB free to 44 GB free).
+
+### Bug 2 — Backstage scaffold ships a yarn patch file reference without the patch
+
+`@backstage/create-app@latest` outputs a project that references `got@patch:...` with a `~/.yarn/patches/got-npm-11.8.2-c1eb105458.patch` file that the scaffolder never writes. `yarn install` fails immediately. Fix: `resolutions` override forcing `got: "npm:11.8.5"` — the upstream patch addressed CVE-2022-33987, which 11.8.5 ships natively.
+
+### Bug 3 — Pre-commit hooks tripping on 1700 scaffolded files
+
+Multiple hooks (large-files, gitleaks, EOF-fixer, shebangs) complained about the vendored yarn CLI + lockfile + binary SVGs + Algolia public search keys. Fix: extended `.pre-commit-config.yaml` global exclude for `portal/.yarn/*`, `portal/yarn.lock`, `portal/packages/*/public/*`. Separately needed `.gitleaksignore` with the Algolia key fingerprint because gitleaks ignores the pre-commit global exclude.
+
+### Bug 4 — Scaffolded Dockerfile = host-build pattern (incompatible with Phase 7 CI)
+
+The `packages/backend/Dockerfile` from `create-app` assumes `yarn install && yarn tsc && yarn build:backend` already ran on the HOST before `docker build`. The Phase 7 reusable workflow does none of those; it just runs `docker build`. Fix: wrote a new self-contained multi-stage `portal/Dockerfile` (deps → builder → runtime) that does everything inside docker.
+
+### Bug 5 — Scaffolded .dockerignore excluded source code
+
+The scaffolded `.dockerignore` has `packages/*/src` and `plugins/` on it (tailored for the host-build pattern that only needs dist/). My multi-stage build needs source + plugin workspace dirs. Fix: rewrote `.dockerignore` to only exclude truly build-irrelevant paths (`.git`, `node_modules`, `.yarn/cache`).
+
+### Bug 6 — Trivy's .trivyignore in a subdirectory not found
+
+The reusable workflow's Trivy step didn't set `trivyignores:` input, so Trivy only looked for `.trivyignore` at the repo root (works for platform-hello; fails for portal where the file lives under `portal/`). Fix: added `trivyignores: ${{ inputs.docker-context }}/.trivyignore` to the reusable workflow — parameterised by `docker-context` input so both patterns work.
+
+### Bug 7 — Backstage schema requires clientSecret/webhookSecret as non-empty strings
+
+Set `clientSecret: ""` → "Invalid type ... got empty-string". Removed the fields entirely → "Missing required config value". Backstage 1.44+ `getString()` validator demands these fields be present AND non-empty, even when the auth flow (App JWT) doesn't actually consume them. Fix: literal placeholder strings (`clientSecret: not-used-for-app-jwt-auth`, `webhookSecret: not-used-no-webhooks`). Values are never transmitted to GitHub — they only satisfy the schema.
+
+### Bug 8 — Catastrophic cluster loss mid-wave (Docker Desktop major version upgrade)
+
+The v4.13 → v4.95 Docker Desktop upgrade wiped the entire VM, taking the kind cluster + all 23 ArgoCD apps + Vault data + Backstage Postgres + MinIO buckets with it. Recovered via Option A: `make kind-up` → `make argocd-install` → `make argocd-bootstrap-root` → Vault init + unseal + re-seed secrets. Took ~1 session before being able to resume Wave 2 work. Lesson: **always save Vault keys to an external secret store BEFORE running major Docker Desktop upgrades** (the keys were saved externally, which helps for crash recovery but doesn't help when the storage VOLUME disappears).
+
+### Also encountered (handled quickly, didn't need debugging)
+
+- MinIO vendor policy change — all MinIO images now behind quay.io auth. Deferred (R1 chosen; Phase 4 Wave 2's Crossplane-ObjectBucket workflow stays blocked until Chainguard-style replacement in a separate session).
+- Vault k8s auth role name mismatch — created `external-secrets` role, ClusterSecretStore expected `eso-reader`. Fixed with second `vault write auth/kubernetes/role/eso-reader`.
+
+## Non-obvious institutional knowledge banked (Wave 2)
+
+- **Docker Desktop major-version upgrades can wipe the VM.** Not just a reclaim — a full rebuild. Any state in Docker volumes is lost. Treat them like OS upgrades: backup first.
+- **The reusable Phase 7 workflow is npm+kustomize-biased by default.** Yarn + sub-directory + Helm-managed services need 3 new inputs (`package-manager`, `docker-context`, `dockerfile-path`) + a `manifest-path != ""` guard on the update-manifest job. All backward-compatible via sensible defaults.
+- **Backstage builds are LONG in CI.** 20-25 min on GitHub Actions free runners for the multi-stage build. Portal CI's path filter (`paths: ['portal/**', '.github/workflows/portal-ci.yml', '.github/workflows/reusable-service-ci.yml']`) matters — unrelated commits don't trigger it.
+- **Backstage config system merges top-level maps but REPLACES lists.** Helm chart `appConfig.integrations.github[]` fully replaces the baked-in `portal/app-config.yaml` list. For auth configs this is the pattern to use.
+- **Backstage 1.44+ `getString()` requires non-empty strings on `clientSecret` + `webhookSecret`** even for App-JWT-only flows that don't use OAuth or webhooks. Literal placeholders satisfy the schema; they're never transmitted.
+- **GitHub App auth setup is 10 minutes of GitHub UI clicks + 1 Vault seed.** No OAuth flow needed. App's installation ID + private key is enough for `publish:github` + `catalog:register`.
+- **Scaffolder template skeletons must use Nunjucks syntax (`${{ values.X }}`)** not sed-style placeholders. Converting a `bin/render.sh`-oriented skeleton is a separate wave of work.
+
+## ADRs written / updated this wave (Wave 2)
+
+- No new ADRs. Updates to existing:
+  - ADR-0028 — "`:latest` image + no custom plugins" tech debt officially closed. Wave 2's custom image + plugin set is now the production path.
+  - ADR-0032 (Phase 7 CI pipeline) — reusable workflow extended with 3 new inputs. Documented in-file.
+
+## Interview talking points (Wave 2)
+
+- *"How did you ship a custom Backstage image?"* — Multi-stage Dockerfile (deps → builder → runtime) that does yarn install + yarn tsc + yarn build:backend INSIDE docker, so Phase 7 CI can treat it like any other service. Pushed to GHCR, cosign-signed, and the Helm chart ArgoCD app points at the specific SHA tag.
+- *"Why GitHub App over a PAT?"* — Bounded scopes (repo + contents + metadata; no admin), bounded installation (one account), no user-tied token (survives developer offboarding), rotation is a GitHub UI click + Vault re-seed. Scaffolder's publish:github and catalog:register only need the App's short-lived installation token.
+- *"Walk me through a non-obvious Backstage startup error."* — Bug 7 (clientSecret/webhookSecret). First attempt: set to `""` → "got empty-string". Second: omit them → "missing required". Third: literal placeholders → works. Backstage's schema requires non-empty strings on fields its auth flow doesn't actually consume. Would never have found this without reading the actual error chain.
+- *"What's left on Phase 5?"* — Scaffolder template steps (Wave 3) + per-plugin wiring (Wave 3). The custom image is built, auth is working, plugins are installed — Wave 3 wires them to data. Scoped intentionally to keep each wave shippable.
+
+## Phase 5 Wave 3 roadmap (what Wave 2 explicitly leaves for Wave 3)
+
+**Primary goal of Wave 3:** click-to-create actually works end-to-end — developer clicks Create in Backstage → form submits → GitHub repo scaffolded with real code → ArgoCD syncs → service running.
+
+**Required work:**
+
+1. **Convert `templates/nodejs-fastify-svc/skeleton/` from `{{PLACEHOLDER}}` to `${{ values.X }}` Nunjucks syntax.** Mechanical sed conversion but touches every file. Also updates `bin/render.sh` to understand both OR deprecates it.
+2. **Fill `templates/nodejs-fastify-svc/template.yaml` `spec.steps:`** with `fetch:template`, `publish:github`, `catalog:register` actions.
+3. **Wire ArgoCD plugin** (`argocd.baseUrl` + proxy config + per-Component `argocd/app-name` annotation).
+4. **Wire TeraSky Crossplane plugins** (customResources additions + per-Component annotations for XRCs).
+5. **End-to-end smoke test** — click Create in Backstage, fill form, verify new repo + service appear.
+
+**Estimated: 1-2 focused sessions** (template conversion is the biggest chunk; the rest is config edits).
+
+**Not in Wave 3 but worth noting for later:**
+
+- GitHub OAuth sign-in (currently guest auth only) — Phase 8 security hardening
+- TechDocs rendering — needs MinIO + storage story
+- NetworkPolicies around Backstage pod — Phase 8
+
+## Next in project (post-Wave 2)
+
+**Immediate options:**
+
+1. **Phase 5 Wave 3** — Scaffolder end-to-end + plugin wiring. Natural continuation. 1-2 sessions.
+2. **Phase 8** — Security hardening (Kyverno + NetworkPolicy + PSS + ArgoCD drift fix + Chainguard base + action SHA pins + Backstage CVE remediation sweep). ~4-6 sessions.
+3. **Phase 9** — EKS promotion (real AWS; the MinIO vendor-policy problem goes away because EKS uses S3 natively).
+4. **MinIO rescue** — pick R2 (register for MinIO Subnet account) or R3 (switch to Garage/SeaweedFS/MinIO fork). Unblocks observability + Crossplane bucket provisioning.
+
+**Session opener for Wave 3:** *"start Phase 5 Wave 3, Scaffolder end-to-end."*
+
+## See also (Wave 2)
+
+- Phase 5 Wave 1 content above (unchanged)
+- [ADR-0028](../adr/0028-backstage-install-and-image-strategy.md) — install + image strategy (:latest tech debt closed by Wave 2)
+- [ADR-0032](../adr/0032-cicd-pipeline-reusable-workflow-oidc-cosign.md) — CI pipeline (extended by Wave 2 for yarn + subdir)
+- [portal/README.wave1-notes.md](../../portal/README.wave1-notes.md) — the Phase 0 pre-scaffold README preserved
+- [portal/](../../portal/) — the scaffolded Backstage app
