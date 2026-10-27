@@ -206,9 +206,11 @@ spec:
                   apps:
                     - appId: ${appId}
                       clientId: ${clientId}
-                      clientSecret: ""
-                      webhookSecret: ""
                       privateKey: ${privateKey}
+                      # clientSecret + webhookSecret deliberately omitted
+                      # — Backstage 1.44+ validates them as non-empty
+                      # strings when present. We use App JWT auth only
+                      # (not OAuth or webhooks), so these aren't needed.
             # Backstage 1.32.0's schema REQUIRES a techdocs block even
             # if we're not using TechDocs. Minimal local-only config
             # satisfies the schema without depending on S3/GCS/Azure.
