@@ -149,9 +149,16 @@ integrations:
       apps:
         - appId: ${GITHUB_APP_APP_ID}
           clientId: ${GITHUB_APP_CLIENT_ID}
-          clientSecret: ""
-          webhookSecret: ""
           privateKey: ${GITHUB_APP_PRIVATE_KEY}
+          # clientSecret + webhookSecret: Backstage 1.44+ config schema
+          # REQUIRES these as non-empty strings via getString() validator.
+          # App JWT auth doesn't actually consume them, but the fields
+          # must be present. Literal placeholders satisfy validation
+          # without needing real OAuth/webhook secrets.
+          # Swap in real values from Vault if OAuth sign-in (Phase 8+ SSO
+          # wave) or webhook ingestion is enabled.
+          clientSecret: not-used-for-app-jwt-auth
+          webhookSecret: not-used-no-webhooks
 
 proxy:
   ### Example for how to add a proxy endpoint for the frontend.
