@@ -190,6 +190,25 @@ spec:
                   target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/templates/nodejs-fastify-svc/template.yaml
                   rules:
                     - allow: [Template]
+                # ─────────────────────────────────────────────────────
+                # Phase 5 Wave 2 (closing Phase 6 bug 5 follow-up):
+                # Register platform-hello as a Component in the catalog.
+                # Its catalog-info.yaml was scaffolded by Phase 6's
+                # template but never registered. Now that the GitHub App
+                # integration is live, raw.githubusercontent.com is
+                # still allowed (set in Phase 5 Wave 1 for the first 4
+                # Locations above); App auth comes into play when
+                # Scaffolder (Wave 3) publishes new repos.
+                #
+                # Future services scaffolded via Scaffolder will NOT
+                # need manual Location entries here — Wave 3 enables
+                # catalog:register as a Scaffolder step that commits
+                # catalog-info.yaml + auto-discovery via GitHub App.
+                # ─────────────────────────────────────────────────────
+                - type: url
+                  target: https://raw.githubusercontent.com/kelechi-nwankpa/platform-hello/main/catalog-info.yaml
+                  rules:
+                    - allow: [Component]
             # Phase 5 Wave 2: real GitHub App integration (not a PAT).
             # Credentials injected as env vars from backstage-github-app
             # Secret via extraEnvVarsSecrets above. The App is
