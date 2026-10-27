@@ -262,6 +262,12 @@ jobs:
           exit-code: "1"
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # trivyignores path. Default `./.trivyignore` works when
+          # docker-context is `.` (platform-hello pattern — .trivyignore
+          # at service repo root). For sub-directory apps (portal/),
+          # the .trivyignore lives alongside the Dockerfile in that
+          # subdir, so we glue docker-context onto the filename.
+          trivyignores: ${{ inputs.docker-context }}/.trivyignore
 
   # ─────────────────────────────────────────────────────────────────
   # push — docker push to GHCR via OIDC. Only on push to main or tag.

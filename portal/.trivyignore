@@ -126,3 +126,42 @@ CVE-2026-2229
 # Credential leakage via cross-origin redirects. Fix: 4.9.1 (we're on
 # 3.27.3). Mitigation: Backstage doesn't follow user-controlled redirects.
 CVE-2026-55553
+
+# ─── NEW (added after Trivy DB refresh 2026-10-27) ──────────────────
+# ─── CVEs: @azure/msal-node ─────────────────────────────────────────
+# MSAL Node authorization code flow may disclose parameters to third
+# parties. Fix: 7.1.0 (we're on 6.0.1). Mitigation: msal-node is
+# transitively pulled by @backstage/plugin-auth-backend-module-azure
+# which we don't configure/use — Azure OAuth is not enabled in our
+# auth providers list.
+CVE-2026-109461
+
+# ─── CVEs: body-parser ──────────────────────────────────────────────
+# DoS via unhandled exception on malformed JSON. Fix: 1.20.9 (we're
+# on 1.20.8 — one patch bump away). Mitigation: express/body-parser
+# is behind the auth proxy; malformed JSON would 400 quickly.
+CVE-2026-111181
+
+# ─── CVEs: markdown-it ──────────────────────────────────────────────
+# DoS via unclosed autolink patterns. Fix: 14.3.3 (we're on 14.3.2).
+# Mitigation: markdown-it is used by TechDocs rendering; techdocs is
+# disabled in our MVP (no catalog pages trigger it).
+CVE-2026-111758
+
+# ─── CVEs: multer ───────────────────────────────────────────────────
+# DoS via aborted request during multipart upload. Fix: 2.5.0 (we're
+# on 2.4.0). Mitigation: no scaffolder uploads enabled in Wave 2
+# (Wave 3 may; revisit then).
+CVE-2026-113872
+
+# ─── CVEs: undici (second finding) ──────────────────────────────────
+# DoS via unhandled stream error. Fix: 7.30.1 (one found at 7.30.0,
+# other transitive on 6.x). Shares the mitigation of the earlier
+# undici entries — internal in-cluster HTTP client only.
+CVE-2026-109869
+
+# ─── CVEs: zod ──────────────────────────────────────────────────────
+# DoS via unbounded array validation. Fix: 4.6.6 (we're on 3.25.76 —
+# 1 major jump risk). Mitigation: zod validates INTERNAL types in
+# Backstage; no user-controlled schema input reaches it.
+CVE-2023-54404
