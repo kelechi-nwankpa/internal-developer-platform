@@ -1,0 +1,128 @@
+# .trivyignore for the idp-portal (Backstage) container image.
+#
+# ─── POLICY ─────────────────────────────────────────────────────────
+# Same convention as platform-hello/.trivyignore (Phase 7 bug #3):
+#   - Only CVEs we deliberately tolerate get listed here
+#   - Every entry needs a REASON + a REVIEW DATE
+#   - Trivy still prints these on every CI run (gitleaks-style visibility)
+# ────────────────────────────────────────────────────────────────────
+#
+# ─── CONTEXT (why so many at once) ──────────────────────────────────
+# Backstage's own package.json pulls in ~1700 transitive deps. 26 of
+# them have published CVEs as of 2026-10-27 — all HIGH or CRITICAL,
+# almost all Denial-of-Service in widely-used libraries (brace-expansion,
+# tar, undici, picomatch, basic-ftp, @graphql-tools/utils, ...).
+#
+# For OUR deployment context:
+#   1. Backstage runs behind an Ingress with TLS + authenticated session
+#      (guest mode on kind; GitHub OAuth or SSO on EKS per Phase 9)
+#   2. Request rate-limiting is applied at the Ingress / LB layer
+#   3. The DoS CVEs are exploitable by sending crafted inputs; our
+#      threat model has those inputs already filtered by the auth
+#      proxy before they reach Backstage's Node runtime
+#   4. The one Backstage-SPECIFIC CVE (CVE-2026-106492, service
+#      credential delegation bypass in @backstage/backend-defaults
+#      <0.17.8) requires a direct Backstage dep bump — out of scope
+#      for a kind-local MVP; Phase 8 security hardening addresses it
+#      together with the whole CVE sweep
+#
+# Full remediation (bump @backstage/* + yarn resolutions for transitives
+# that have risky major-version jumps like tar 6→7, undici 5→6,
+# @graphql-tools/utils 8→12) is a dedicated Phase 8 sub-wave.
+#
+# Review cycle: WEEKLY (7-day). The upstream Backstage team ships a
+# release every 2 weeks and the latest release almost always resolves
+# a chunk of these transitives. Re-fetch scan output; remove entries
+# whose latest-tag Backstage has fixed; keep + document the rest.
+# Next review: 2026-11-03
+#
+# ─── CVEs: @backstage/backend-defaults ──────────────────────────────
+# Access control bypass via improper service credential delegation.
+# Fix: @backstage/backend-defaults >= 0.17.8 (we're on 0.12.3).
+# Mitigation: Backstage runs with auth=guest on kind; no credential
+# delegation surface exploitable without first bypassing the ingress.
+CVE-2026-106492
+
+# ─── CVEs: @fastify/busboy ──────────────────────────────────────────
+# DoS from crafted form-data headers. Fix: 3.2.1 (we're on 2.1.1).
+# Mitigation: Backstage's form endpoints are all authenticated.
+CVE-2026-19481
+
+# ─── CVEs: @graphql-tools/utils ─────────────────────────────────────
+# DoS via prototype pollution in mergeDeep. Fix: 12.0.1 (we're on 8.x).
+# Mitigation: Backstage doesn't expose GraphQL mutations to anonymous
+# traffic; prototype pollution requires attacker-controlled input to
+# mergeDeep which is only reached via internal API calls.
+CVE-2026-104852
+
+# ─── CVEs: basic-ftp ────────────────────────────────────────────────
+# DoS via crafted Unix directory listings. Fix: 6.2.1 (we're on 5.3.1).
+# Mitigation: Backstage doesn't initiate FTP from user input.
+CVE-2026-102990
+
+# ─── CVEs: brace-expansion ──────────────────────────────────────────
+# 5 DoS variants (stack exhaustion, uncontrolled recursion, exponential
+# complexity, memory exhaustion, unbounded intermediate arrays).
+# Fix: 2.1.5+ (we're on 2.0.2). Mitigation: brace-expansion is used
+# internally by glob matching; no user-controlled brace patterns reach it.
+CVE-2026-102276
+CVE-2026-102278
+CVE-2026-13149
+CVE-2026-14257
+CVE-2026-69152
+
+# ─── CVEs: ip-address ───────────────────────────────────────────────
+# SSRF via inconsistent IP address parsing. Fix: 10.3.1 (we're on 10.1.0).
+# Mitigation: Backstage's UrlReader has deny-by-default SSRF protection
+# (ADR applied in Phase 5 Wave 1 for raw.githubusercontent.com allow).
+CVE-2026-69192
+
+# ─── CVEs: pacote ───────────────────────────────────────────────────
+# DoS via crafted spec.rawSpec in addGitSha. Fix: 21.5.1 (we're on 19/20).
+# Mitigation: pacote is used by @backstage/cli for scaffolder templates;
+# no user-controlled npm specs reach it in our deployment (templates
+# are curated, not user-authored).
+CVE-2026-9496
+
+# ─── CVEs: picomatch ────────────────────────────────────────────────
+# ReDoS via crafted extglob patterns. Fix: 4.0.4 (we're on 4.0.3).
+# Mitigation: picomatch is used in glob matching internally; no
+# user-controlled glob patterns reach it.
+CVE-2026-33671
+
+# ─── CVEs: sigstore ─────────────────────────────────────────────────
+# Unauthorized certificates accepted. Fix: 4.1.1 (we're on 3.1.0).
+# Mitigation: Backstage doesn't do image signature verification itself
+# (that's Phase 8 Kyverno's job).
+CVE-2026-48815
+
+# ─── CVEs: tar (node-tar) ───────────────────────────────────────────
+# 8 CVEs: gzip bomb DoS (CRITICAL), arbitrary file overwrite via
+# path/symlink attacks, hardlink traversal, long-path DoS, malformed
+# archive DoS. Fix: 7.5.19+ (we're on 6.2.1).
+# Mitigation: tar is used by yarn install itself + by scaffolder
+# template fetching. Yarn install only runs at build time (not
+# runtime), and scaffolder templates come from a curated repo.
+CVE-2026-23745
+CVE-2026-23950
+CVE-2026-24842
+CVE-2026-26960
+CVE-2026-29786
+CVE-2026-31802
+CVE-2026-59873
+CVE-2026-59874
+CVE-2026-73566
+
+# ─── CVEs: undici ───────────────────────────────────────────────────
+# 3 DoS CVEs (unbounded memory, invalid WebSocket). Fix: 6.27.0+ (we're
+# on 5.29.0). Mitigation: undici is Backstage's HTTP client for internal
+# service-to-service calls (K8s API, GitHub API). Not exposed to
+# untrusted inputs.
+CVE-2026-12151
+CVE-2026-1526
+CVE-2026-2229
+
+# ─── CVEs: urllib ───────────────────────────────────────────────────
+# Credential leakage via cross-origin redirects. Fix: 4.9.1 (we're on
+# 3.27.3). Mitigation: Backstage doesn't follow user-controlled redirects.
+CVE-2026-55553
