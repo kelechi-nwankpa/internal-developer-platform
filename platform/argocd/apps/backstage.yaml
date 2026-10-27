@@ -61,20 +61,31 @@ spec:
           name: backstage
 
         backstage:
+          # Phase 5 Wave 2: switched from upstream demo image to our
+          # custom-built image. The custom image bakes in:
+          #   - scaffolder-backend-module-github (click-to-create actions)
+          #   - @backstage-community/plugin-argocd (ArgoCD plugin UI)
+          #   - @terasky/backstage-plugin-crossplane-* (Crossplane plugin)
+          # Built via portal/Dockerfile; pushed by portal-ci.yml.
+          # Rotate `tag` on each portal release — image is per-commit
+          # SHA-tagged (sha-<7char>) + cosign-signed per Phase 7 pipeline.
           image:
             registry: ghcr.io
-            repository: backstage/backstage
-            tag: "1.32.0"
+            repository: kelechi-nwankpa/internal-developer-platform
+            tag: "sha-8ed9598"
           replicas: 1
-          # Override chart default NODE_ENV=production. Some Backstage
-          # auth flows (particularly guest and dev-only shortcuts) are
-          # gated behind NODE_ENV=development. Trying this as a Path C
-          # attempt before committing to Wave 2 custom image work.
-          # If Backstage doesn't come up cleanly with this, we pivot to
-          # Path B (defer + document).
-          extraEnvVars:
-            - name: NODE_ENV
-              value: development
+          # Mount the backstage-github-app Secret (populated by ESO from
+          # Vault at secret/backstage/github-app) as env vars. Prefix
+          # GITHUB_APP_ is added so the keys land as GITHUB_APP_APPID etc.
+          # The appConfig.integrations.github.apps block below references
+          # these via ${VAR} interpolation.
+          extraEnvVarsSecrets:
+            - backstage-github-app
+          # Chart default extraEnvVarsSecrets injects every key verbatim
+          # (no prefix). Our Secret has keys appId / installationId /
+          # clientId / privateKey — they land as env vars with those
+          # exact names. The ${appId} / ${privateKey} refs in app-config
+          # pick them up directly.
 
           # ───────────────────────────────────────────────────────────
           # App config overrides — required for guest auth to work
@@ -179,9 +190,25 @@ spec:
                   target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/templates/nodejs-fastify-svc/template.yaml
                   rules:
                     - allow: [Template]
-            # Placeholder integrations block — real GitHub token wired
-            # up in Wave 2 or Phase 8 when we add Software Templates.
-            integrations: {}
+            # Phase 5 Wave 2: real GitHub App integration (not a PAT).
+            # Credentials injected as env vars from backstage-github-app
+            # Secret via extraEnvVarsSecrets above. The App is
+            # kelechi-idp-scaffolder (App ID 5311202), installed on
+            # kelechi-nwankpa personal account.
+            #
+            # Scope: repo + contents + metadata (per the App install).
+            # Used by scaffolder-backend-module-github for publish:github
+            # and catalog:register actions when a developer clicks Create
+            # on a Backstage Software Template.
+            integrations:
+              github:
+                - host: github.com
+                  apps:
+                    - appId: ${appId}
+                      clientId: ${clientId}
+                      clientSecret: ""
+                      webhookSecret: ""
+                      privateKey: ${privateKey}
             # Backstage 1.32.0's schema REQUIRES a techdocs block even
             # if we're not using TechDocs. Minimal local-only config
             # satisfies the schema without depending on S3/GCS/Azure.

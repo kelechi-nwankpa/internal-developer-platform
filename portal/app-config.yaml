@@ -135,13 +135,23 @@ backend:
 integrations:
   github:
     - host: github.com
-      # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
-      # about setting up the GitHub integration here: https://backstage.io/docs/integrations/github/locations#configuration
-      token: ${GITHUB_TOKEN}
-    ### Example for how to add your GitHub Enterprise instance using the API:
-    # - host: ghe.example.net
-    #   apiBaseUrl: https://ghe.example.net/api/v3
-    #   token: ${GHE_TOKEN}
+      # GitHub App auth (NOT a PAT). The App is kelechi-idp-scaffolder
+      # (App ID 5311202), installed on this account. Credentials are
+      # injected as env vars from the backstage-github-app Kubernetes
+      # Secret via the Helm chart's extraEnvVarsSecrets (see
+      # platform/argocd/apps/backstage.yaml).
+      #
+      # The App primitive is preferred over PATs for Scaffolder operations:
+      #   - bounded scopes (repo + contents + metadata; no admin)
+      #   - bounded installation (only this account)
+      #   - no user-tied token (survives developer offboarding)
+      #   - rotation = regenerate key in GitHub UI, re-seed Vault, restart
+      apps:
+        - appId: ${GITHUB_APP_APP_ID}
+          clientId: ${GITHUB_APP_CLIENT_ID}
+          clientSecret: ""
+          webhookSecret: ""
+          privateKey: ${GITHUB_APP_PRIVATE_KEY}
 
 proxy:
   ### Example for how to add a proxy endpoint for the frontend.
