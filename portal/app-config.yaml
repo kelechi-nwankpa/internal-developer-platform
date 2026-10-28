@@ -161,12 +161,21 @@ integrations:
           webhookSecret: not-used-no-webhooks
 
 proxy:
-  ### Example for how to add a proxy endpoint for the frontend.
-  ### A typical reason to do this is to handle HTTPS and CORS for internal services.
-  # endpoints:
-  #   '/test':
-  #     target: 'https://example.com'
-  #     changeOrigin: true
+  # Backend proxy endpoints. Used by frontend plugins that cannot (or
+  # should not) call upstream services directly from the browser —
+  # avoids CORS, keeps secrets server-side, and lets the backend add
+  # auth headers transparently.
+  endpoints:
+    # ArgoCD plugin — forwards /api/proxy/argocd/api/* to the in-cluster
+    # argocd-server. Auth injected via basic-auth headers from
+    # ARGOCD_USERNAME + ARGOCD_PASSWORD env vars (ESO-materialised
+    # backstage-argocd Secret in production; set in .env for local
+    # yarn start). secure: false because the in-cluster TLS cert is
+    # self-signed.
+    '/argocd/api':
+      target: https://argocd-server.argocd.svc.cluster.local
+      changeOrigin: true
+      secure: false
 
 # Reference documentation http://backstage.io/docs/features/techdocs/configuration
 # Note: After experimenting with basic setup, use CI/CD to generate docs
@@ -199,6 +208,23 @@ auth:
 
 scaffolder:
   # see https://backstage.io/docs/features/software-templates/configuration for software template options
+
+# ArgoCD plugin (@backstage-community/plugin-argocd ^3.1.3)
+# Phase 5 Wave 3. Reads /api/proxy/argocd/api/* via the proxy endpoint
+# above. baseUrl is the public ArgoCD web console (where "Open in
+# ArgoCD" links point); appLocatorMethods tells the plugin where to
+# query via the proxy. Secrets come from env vars at runtime — see
+# platform/argocd/apps/backstage.yaml for the production path, or
+# export ARGOCD_USERNAME/ARGOCD_PASSWORD locally for `yarn start`.
+argocd:
+  baseUrl: https://argocd.idp.seniormankelz.dev
+  appLocatorMethods:
+    - type: 'config'
+      instances:
+        - name: kind-idp
+          url: https://argocd-server.argocd.svc.cluster.local
+          username: ${ARGOCD_USERNAME}
+          password: ${ARGOCD_PASSWORD}
 
 catalog:
   import:

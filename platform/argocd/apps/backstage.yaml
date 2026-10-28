@@ -81,6 +81,13 @@ spec:
           # these via ${VAR} interpolation.
           extraEnvVarsSecrets:
             - backstage-github-app
+            # Wave 3 — ArgoCD plugin basic-auth creds. Keys are
+            # UPPER_SNAKE_CASE in the Secret template (see
+            # platform/backstage/rbac/externalsecret-argocd.yaml) so
+            # they land as ARGOCD_USERNAME / ARGOCD_PASSWORD env vars.
+            # Admin creds for MVP — Phase 8 swaps to a dedicated
+            # read-only ArgoCD account.
+            - backstage-argocd
           # Chart default extraEnvVarsSecrets injects every key verbatim
           # (no prefix). Our Secret has keys appId / installationId /
           # clientId / privateKey — they land as env vars with those
@@ -248,6 +255,60 @@ spec:
                 type: local
               generator:
                 runIn: local
+
+            # ─────────────────────────────────────────────────────────
+            # Proxy — Backstage backend's HTTP proxy, used by the
+            # ArgoCD plugin for API calls (frontend never talks to
+            # argocd-server directly; it talks to Backstage's /api/proxy
+            # which proxies to argocd-server over cluster-internal DNS).
+            # ─────────────────────────────────────────────────────────
+            # Why proxy instead of frontend direct calls:
+            #   - CORS: argocd-server would reject cross-origin requests
+            #     from the Backstage UI origin.
+            #   - Secrets: the admin credentials never reach the browser;
+            #     the proxy injects auth headers server-side.
+            #   - Single auth path: one ARGOCD_* secret in Backstage
+            #     backend, not a token-per-user flow.
+            proxy:
+              endpoints:
+                '/argocd/api':
+                  target: https://argocd-server.argocd.svc.cluster.local
+                  changeOrigin: true
+                  # ArgoCD server on kind presents a self-signed cert
+                  # (ADR-0010 — kind cluster uses the chart's default
+                  # self-signed, cert-manager handles ingress-side).
+                  # The in-cluster call skips TLS verification.
+                  secure: false
+
+            # ─────────────────────────────────────────────────────────
+            # ArgoCD plugin (@backstage-community/plugin-argocd ^3.1.3)
+            # ─────────────────────────────────────────────────────────
+            # Shipped in Phase 5 Wave 3. Displays per-Component ArgoCD
+            # sync/health state via the `argocd/app-name` annotation
+            # on catalog entities (the nodejs-fastify-svc template adds
+            # this annotation automatically).
+            #
+            # baseUrl: where the UI links out to the ArgoCD web console.
+            # Pointed at the public ingress hostname (set up in Phase 2
+            # via cert-manager Certificate + Traefik Ingress).
+            #
+            # appLocatorMethods.config.instances[].url: where the backend
+            # proxy forwards requests. In-cluster DNS skips external DNS +
+            # Ingress for lower-latency + fewer failure modes.
+            #
+            # Auth: basic auth with admin creds from ESO-materialised
+            # backstage-argocd Secret (see externalsecret-argocd.yaml).
+            # Phase 8 security hardening replaces admin with a dedicated
+            # ArgoCD local account + apiKey token + narrower RBAC.
+            argocd:
+              baseUrl: https://argocd.idp.seniormankelz.dev
+              appLocatorMethods:
+                - type: 'config'
+                  instances:
+                    - name: kind-idp
+                      url: https://argocd-server.argocd.svc.cluster.local
+                      username: ${ARGOCD_USERNAME}
+                      password: ${ARGOCD_PASSWORD}
 
             # ─────────────────────────────────────────────────────────
             # Kubernetes plugin — live cluster state per Component
