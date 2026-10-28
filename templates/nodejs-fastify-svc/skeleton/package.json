@@ -1,7 +1,7 @@
 {
-  "name": "{{SERVICE_NAME}}",
+  "name": "${{ values.name }}",
   "version": "0.1.0",
-  "description": "{{DESCRIPTION}}",
+  "description": "${{ values.description }}",
   "type": "module",
   "main": "dist/index.js",
   "engines": {
@@ -12,8 +12,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "node --test dist/**/*.test.js",
-    "docker:build": "docker build -t {{SERVICE_NAME}}:local .",
-    "docker:run": "docker run --rm -p 3000:3000 --env-file .env {{SERVICE_NAME}}:local"
+    "docker:build": "docker build -t ${{ values.name }}:local .",
+    "docker:run": "docker run --rm -p 3000:3000 --env-file .env ${{ values.name }}:local"
   },
   "dependencies": {
     "fastify": "5.1.0",

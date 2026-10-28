@@ -1,5 +1,5 @@
 ---
-# servicemonitor.yaml — {{SERVICE_NAME}}
+# servicemonitor.yaml — ${{ values.name }}
 #
 # Tells kube-prometheus-stack's Prometheus to scrape /metrics on the
 # Service. Includes `release: kube-prometheus-stack` label because the
@@ -11,16 +11,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{SERVICE_NAME}}
+  name: ${{ values.name }}
   labels:
-    app: {{SERVICE_NAME}}
-    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}
     # Required for kube-prometheus-stack to discover this SM
     release: kube-prometheus-stack
 spec:
   selector:
     matchLabels:
-      app: {{SERVICE_NAME}}
+      app: ${{ values.name }}
   endpoints:
     - port: http
       path: /metrics

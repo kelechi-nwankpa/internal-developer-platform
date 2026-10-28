@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ─────────────────────────────────────────────────────────────────────
-# Multi-stage build for {{SERVICE_NAME}}
+# Multi-stage build for ${{ values.name }}
 # Stage 1 (builder): Node 22 with npm — install + compile TS
 # Stage 2 (runtime): distroless nodejs22 — no shell, no libc,
 #                    non-root user. Small attack surface.
@@ -39,6 +39,6 @@ CMD ["dist/index.js"]
 EXPOSE 3000
 
 # Kubernetes labels (OCI standard)
-LABEL org.opencontainers.image.title="{{SERVICE_NAME}}" \
-      org.opencontainers.image.description="{{DESCRIPTION}}" \
-      org.opencontainers.image.source="https://github.com/{{GITHUB_ORG}}/{{SERVICE_NAME}}"
+LABEL org.opencontainers.image.title="${{ values.name }}" \
+      org.opencontainers.image.description="${{ values.description }}" \
+      org.opencontainers.image.source="https://github.com/${{ values.github_org }}/${{ values.name }}"

@@ -1,5 +1,5 @@
 ---
-# objectbucket.yaml — {{SERVICE_NAME}}
+# objectbucket.yaml — ${{ values.name }}
 #
 # Crossplane XRC (Composite Resource Claim) that materialises an S3 bucket
 # via our Phase 4 XRD (see ADR-0027). The Composition then creates:
@@ -20,10 +20,10 @@
 apiVersion: platform.idp.io/v1alpha1
 kind: ObjectBucket
 metadata:
-  name: {{SERVICE_NAME}}
+  name: ${{ values.name }}
   labels:
-    app: {{SERVICE_NAME}}
-    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}
 spec:
   # NOTE: XRD schema (ADR-0027) wraps user-facing fields under
   # spec.parameters — not directly under spec. First template render
@@ -35,4 +35,4 @@ spec:
     versioning: true       # object versioning enabled — safe default
   # Where to write the connection details Deployment consumes via envFrom.
   writeConnectionSecretToRef:
-    name: {{SERVICE_NAME}}-bucket-conn
+    name: ${{ values.name }}-bucket-conn

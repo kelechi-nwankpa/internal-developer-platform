@@ -45,7 +45,7 @@ export const helloRoutes: FastifyPluginAsync = async (fastify) => {
 
     const key = `hello-${Date.now()}.json`;
     const payload = {
-      service: process.env['OTEL_SERVICE_NAME'] ?? '{{SERVICE_NAME}}',
+      service: process.env['OTEL_SERVICE_NAME'] ?? '${{ values.name }}',
       timestamp: new Date().toISOString(),
       message: 'Hello from the golden path template',
     };

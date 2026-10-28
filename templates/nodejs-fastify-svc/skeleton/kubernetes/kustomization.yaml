@@ -1,5 +1,5 @@
 ---
-# kustomization.yaml — {{SERVICE_NAME}}
+# kustomization.yaml — ${{ values.name }}
 #
 # Groups all k8s manifests so ArgoCD (or a human running `kubectl apply -k .`)
 # applies them together with consistent labels + namespace.
@@ -14,9 +14,9 @@ kind: Kustomization
 # Common labels applied to every resource. Adds portfolio-searchable
 # `app.kubernetes.io/*` labels without editing every file.
 commonLabels:
-  app.kubernetes.io/name: {{SERVICE_NAME}}
-  app.kubernetes.io/instance: {{SERVICE_NAME}}
-  app.kubernetes.io/part-of: {{OWNER}}
+  app.kubernetes.io/name: ${{ values.name }}
+  app.kubernetes.io/instance: ${{ values.name }}
+  app.kubernetes.io/part-of: ${{ values.owner }}
   app.kubernetes.io/managed-by: argocd
 
 # Resources in this directory (order = declaration order, but K8s

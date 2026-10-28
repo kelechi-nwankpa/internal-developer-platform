@@ -1,4 +1,4 @@
-# Makefile — {{SERVICE_NAME}}
+# Makefile — ${{ values.name }}
 # editorconfig-checker-disable-file
 # ^ Make continuation lines conventionally use tab + spaces for alignment
 #   under the command; editorconfig-checker wants pure tabs. Disabled here.
@@ -37,7 +37,7 @@ clean: ## Remove build artifacts + node_modules
 # Docker
 # ─────────────────────────────────────────────────────────────
 
-DOCKER_TAG ?= {{SERVICE_NAME}}:local
+DOCKER_TAG ?= ${{ values.name }}:local
 
 docker-build: ## Build container image (multi-stage distroless)
 	docker build -t $(DOCKER_TAG) .
@@ -57,7 +57,7 @@ docker-run: docker-build ## Run container locally (needs .env)
 # GitOps-first per CLAUDE.md §4: `k8s-apply` is a debugging tool, not
 # a deployment mechanism.
 
-NAMESPACE ?= {{SERVICE_NAME}}
+NAMESPACE ?= ${{ values.name }}
 
 k8s-apply: ## Apply k8s manifests (DEBUGGING ONLY — normal deploy is via ArgoCD)
 	@echo "WARNING: applying manifests outside ArgoCD. GitOps drift will occur." >&2

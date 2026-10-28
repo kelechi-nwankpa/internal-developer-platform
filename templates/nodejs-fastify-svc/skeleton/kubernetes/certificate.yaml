@@ -1,5 +1,5 @@
 ---
-# certificate.yaml — {{SERVICE_NAME}}
+# certificate.yaml — ${{ values.name }}
 #
 # cert-manager Certificate for TLS on the Ingress. On kind, the ClusterIssuer
 # `selfsigned` (set up in Phase 2) signs any cert we request — good enough
@@ -12,20 +12,20 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{SERVICE_NAME}}-tls
+  name: ${{ values.name }}-tls
   labels:
-    app: {{SERVICE_NAME}}
-    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}
 spec:
   # Secret cert-manager writes the cert into. Ingress references it by name.
-  secretName: {{SERVICE_NAME}}-tls
+  secretName: ${{ values.name }}-tls
   duration: 2160h    # 90 days (Let's Encrypt max; SelfSigned honours too)
   renewBefore: 720h  # renew when 30 days remain
   # Common name + SANs — the FQDN(s) the cert is valid for. Ingress host
   # must match one of these SANs.
-  commonName: {{SERVICE_NAME}}.idp.seniormankelz.dev
+  commonName: ${{ values.name }}.idp.seniormankelz.dev
   dnsNames:
-    - {{SERVICE_NAME}}.idp.seniormankelz.dev
+    - ${{ values.name }}.idp.seniormankelz.dev
   issuerRef:
     name: selfsigned                  # swap to `letsencrypt-prod` on EKS
     kind: ClusterIssuer

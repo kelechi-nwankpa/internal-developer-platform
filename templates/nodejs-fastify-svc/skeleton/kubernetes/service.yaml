@@ -1,5 +1,5 @@
 ---
-# service.yaml — {{SERVICE_NAME}}
+# service.yaml — ${{ values.name }}
 #
 # ClusterIP on port 3000. In-cluster only (Ingress in ingress.yaml exposes
 # via nginx-ingress once Phase 8 wires it). ServiceMonitor scrapes /metrics
@@ -8,15 +8,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{SERVICE_NAME}}
+  name: ${{ values.name }}
   labels:
-    app: {{SERVICE_NAME}}
-    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}
     app.kubernetes.io/component: api
 spec:
   type: ClusterIP
   selector:
-    app: {{SERVICE_NAME}}
+    app: ${{ values.name }}
   ports:
     - name: http
       port: 3000
@@ -29,7 +29,7 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{SERVICE_NAME}}
+  name: ${{ values.name }}
   labels:
-    app: {{SERVICE_NAME}}
-    app.kubernetes.io/name: {{SERVICE_NAME}}
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}

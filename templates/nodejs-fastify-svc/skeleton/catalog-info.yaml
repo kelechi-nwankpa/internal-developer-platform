@@ -1,5 +1,5 @@
 ---
-# catalog-info.yaml — Backstage Component entity for {{SERVICE_NAME}}
+# catalog-info.yaml — Backstage Component entity for ${{ values.name }}
 #
 # Rendered into the scaffolded service's git repo. Registered in Backstage
 # by adding a URL Location pointing at this file (users commit their
@@ -17,9 +17,9 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: {{SERVICE_NAME}}
-  title: "{{SERVICE_NAME}}"
-  description: "{{DESCRIPTION}}"
+  name: ${{ values.name }}
+  title: "${{ values.name }}"
+  description: "${{ values.description }}"
   tags:
     - nodejs
     - fastify
@@ -27,31 +27,31 @@ metadata:
     - golden-path
   links:
     - title: ArgoCD Application
-      url: https://argocd.idp.seniormankelz.dev/applications/{{SERVICE_NAME}}
+      url: https://argocd.idp.seniormankelz.dev/applications/${{ values.name }}
       icon: dashboard
     - title: Grafana dashboards
-      url: https://grafana.idp.seniormankelz.dev/d/nodejs-service?var-service={{SERVICE_NAME}}
+      url: https://grafana.idp.seniormankelz.dev/d/nodejs-service?var-service=${{ values.name }}
       icon: dashboard
     - title: Runbooks
-      url: https://github.com/{{GITHUB_ORG}}/{{SERVICE_NAME}}/tree/main/docs/runbooks
+      url: https://github.com/${{ values.github_org }}/${{ values.name }}/tree/main/docs/runbooks
       icon: docs
   annotations:
     # ─────────────────────────────────────────────────────────
     # Kubernetes plugin — pods/deployments show on Component page
     # ─────────────────────────────────────────────────────────
-    backstage.io/kubernetes-id: {{SERVICE_NAME}}
-    backstage.io/kubernetes-namespace: {{SERVICE_NAME}}
-    backstage.io/kubernetes-label-selector: "app={{SERVICE_NAME}}"
+    backstage.io/kubernetes-id: ${{ values.name }}
+    backstage.io/kubernetes-namespace: ${{ values.name }}
+    backstage.io/kubernetes-label-selector: "app=${{ values.name }}"
 
     # ─────────────────────────────────────────────────────────
     # ArgoCD plugin (Wave 2 of Phase 5 install)
     # ─────────────────────────────────────────────────────────
-    argocd/app-name: {{SERVICE_NAME}}
+    argocd/app-name: ${{ values.name }}
 
     # ─────────────────────────────────────────────────────────
     # GitHub integration (Wave 2 of Phase 5 install)
     # ─────────────────────────────────────────────────────────
-    github.com/project-slug: {{GITHUB_ORG}}/{{SERVICE_NAME}}
+    github.com/project-slug: ${{ values.github_org }}/${{ values.name }}
 
     # ─────────────────────────────────────────────────────────
     # TechDocs — auto-built from docs/ in the service repo
@@ -67,7 +67,7 @@ metadata:
 spec:
   type: service
   lifecycle: experimental       # bump to `production` once real traffic
-  owner: group:default/{{OWNER}}
+  owner: group:default/${{ values.owner }}
 
   # System — logical grouping. Change to whatever domain this service
   # belongs to (payments, catalog, checkout, etc.).
@@ -81,6 +81,6 @@ spec:
   # DependsOn — infrastructure + services this component needs to work.
   # These are cluster-scoped resources materialised by the platform.
   dependsOn:
-    - resource:default/{{SERVICE_NAME}}-bucket   # ObjectBucket XRC
+    - resource:default/${{ values.name }}-bucket   # ObjectBucket XRC
     - component:default/vault                    # secret backend
     - component:default/otel-collector           # trace collector

@@ -21,7 +21,7 @@ const isDev = process.env['NODE_ENV'] !== 'production';
 export const logger = pino({
   level: process.env['LOG_LEVEL'] ?? (isDev ? 'debug' : 'info'),
   base: {
-    service: process.env['OTEL_SERVICE_NAME'] ?? '{{SERVICE_NAME}}',
+    service: process.env['OTEL_SERVICE_NAME'] ?? '${{ values.name }}',
     environment: process.env['DEPLOYMENT_ENV'] ?? 'local',
   },
   // Inject trace_id + span_id from active OTel span on every log call.

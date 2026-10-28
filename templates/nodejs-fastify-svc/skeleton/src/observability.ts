@@ -17,7 +17,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { Resource } from '@opentelemetry/resources';
 
-const serviceName = process.env['OTEL_SERVICE_NAME'] ?? '{{SERVICE_NAME}}';
+const serviceName = process.env['OTEL_SERVICE_NAME'] ?? '${{ values.name }}';
 
 const sdk = new NodeSDK({
   // @opentelemetry/resources 1.28.0 does not export `resourceFromAttributes`

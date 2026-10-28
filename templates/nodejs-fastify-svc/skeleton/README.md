@@ -1,6 +1,6 @@
-# {{SERVICE_NAME}}
+# ${{ values.name }}
 
-{{DESCRIPTION}}
+${{ values.description }}
 
 Scaffolded from [nodejs-fastify-svc](https://github.com/kelechi-nwankpa/internal-developer-platform/tree/main/templates/nodejs-fastify-svc) — the IDP's Node.js golden path template ([ADR-0031](https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0031-golden-path-template-nodejs-fastify.md)).
 
@@ -25,8 +25,8 @@ npm install
 
 # Set OTel env vars pointing at your local OTel Collector (assumes kubectl port-forward)
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-export OTEL_SERVICE_NAME={{SERVICE_NAME}}
-export OTEL_RESOURCE_ATTRIBUTES="service.namespace={{OWNER}},deployment.environment=local"
+export OTEL_SERVICE_NAME=${{ values.name }}
+export OTEL_RESOURCE_ATTRIBUTES="service.namespace=${{ values.owner }},deployment.environment=local"
 
 # Hot-reload dev server
 npm run dev
@@ -47,7 +47,7 @@ curl http://localhost:3000/hello
 ## Building the container
 
 ```bash
-npm run docker:build   # → {{SERVICE_NAME}}:local
+npm run docker:build   # → ${{ values.name }}:local
 npm run docker:run     # runs locally with .env
 ```
 
@@ -58,17 +58,17 @@ The [`kubernetes/`](kubernetes/) directory has all resources needed:
 - `deployment.yaml` — 2 replicas, distroless image, envFrom the ExternalSecret + ObjectBucket connection secret
 - `service.yaml` — ClusterIP
 - `servicemonitor.yaml` — Prometheus scrape config (labels match kube-prometheus-stack's selector after the ADR-0024 postscript fix)
-- `externalsecret.yaml` — ESO CR pulling app config from Vault at `secret/{{OWNER}}/{{SERVICE_NAME}}`
+- `externalsecret.yaml` — ESO CR pulling app config from Vault at `secret/${{ values.owner }}/${{ values.name }}`
 - `objectbucket.yaml` — Crossplane XRC that provisions the S3 bucket + writes connection secret
 - `certificate.yaml` — cert-manager Certificate (SelfSigned issuer on kind, Let's Encrypt on EKS)
-- `ingress.yaml` — routes traffic at `https://{{SERVICE_NAME}}.idp.seniormankelz.dev/`
+- `ingress.yaml` — routes traffic at `https://${{ values.name }}.idp.seniormankelz.dev/`
 
 Deploy via ArgoCD:
 
 ```bash
 # Copy argocd/application.yaml into the platform repo
-cp argocd/application.yaml <platform-repo>/platform/argocd/apps/{{SERVICE_NAME}}.yaml
-git -C <platform-repo> add . && git -C <platform-repo> commit -m "feat: deploy {{SERVICE_NAME}}"
+cp argocd/application.yaml <platform-repo>/platform/argocd/apps/${{ values.name }}.yaml
+git -C <platform-repo> add . && git -C <platform-repo> commit -m "feat: deploy ${{ values.name }}"
 git -C <platform-repo> push
 # ArgoCD's root app-of-apps picks it up on next reconcile
 ```
@@ -108,8 +108,8 @@ install-and-test  →  build (multi-arch distroless)  →  trivy scan (HIGH/CRIT
 ### Observing a pipeline run
 
 - GitHub Actions tab in this repo shows the job graph + logs
-- Image tags in GHCR: `ghcr.io/{{GITHUB_ORG}}/{{SERVICE_NAME}}:sha-<7char>` (every push to main) + `:v<semver>` (on tag release)
-- cosign signatures: verify with `cosign verify --certificate-identity-regexp '.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/{{GITHUB_ORG}}/{{SERVICE_NAME}}:sha-<tag>`
+- Image tags in GHCR: `ghcr.io/${{ values.github_org }}/${{ values.name }}:sha-<7char>` (every push to main) + `:v<semver>` (on tag release)
+- cosign signatures: verify with `cosign verify --certificate-identity-regexp '.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/${{ values.github_org }}/${{ values.name }}:sha-<tag>`
 - Manifest commits: `git log --oneline kubernetes/ | grep "chore: deploy"`
 
 ### Rollback
@@ -127,9 +127,9 @@ git push
 
 Once deployed + serving traffic:
 
-- **Grafana Explore → Prometheus:** `up{job="{{SERVICE_NAME}}"} == 1` → confirms scraping
-- **Grafana Explore → Loki:** `{app="{{SERVICE_NAME}}"}` → structured JSON logs with `trace_id` on every line
-- **Grafana Explore → Tempo:** search by service name `{{SERVICE_NAME}}` → trace waterfall
+- **Grafana Explore → Prometheus:** `up{job="${{ values.name }}"} == 1` → confirms scraping
+- **Grafana Explore → Loki:** `{app="${{ values.name }}"}` → structured JSON logs with `trace_id` on every line
+- **Grafana Explore → Tempo:** search by service name `${{ values.name }}` → trace waterfall
 - **Cross-link:** click any log line with `trace_id` → "View Trace" button jumps to Tempo. Click a span in Tempo → "Logs for this span" jumps back to Loki filtered by span tags + time window.
 
 ## Interview talking points

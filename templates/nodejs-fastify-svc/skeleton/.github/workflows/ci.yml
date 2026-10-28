@@ -38,5 +38,5 @@ jobs:
       packages: write
       id-token: write
     with:
-      service-name: {{SERVICE_NAME}}
+      service-name: ${{ values.name }}
     secrets: inherit
