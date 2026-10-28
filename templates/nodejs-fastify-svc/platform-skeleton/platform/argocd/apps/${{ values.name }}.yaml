@@ -1,23 +1,22 @@
 ---
-# application.yaml — ${{ values.name }}
+# argocd-app.yaml — ArgoCD Application template for the Scaffolder
 #
-# ArgoCD Application that deploys this service. Sync loop:
-#   1. ArgoCD watches this service's own git repo (branch/tag pinned below).
-#   2. Runs `kustomize build kubernetes/` on the tracked revision.
-#   3. Applies the output to the ${{ values.name }} namespace.
-#   4. Reports Synced/OutOfSync + Healthy/Degraded in the ArgoCD UI.
+# Rendered by Backstage Scaffolder (fetch:template with values.X) and
+# committed to the platform repo via publish:github:pull-request at:
+#   platform/argocd/apps/${{ values.name }}.yaml
 #
-# INSTALL FLOW:
-#   1. Push this Application manifest to the platform repo at:
-#        platform/argocd/apps/${{ values.name }}.yaml
-#   2. Root app-of-apps auto-detects it on next reconcile (~3 min) and
-#      creates this Application in the argocd namespace.
-#   3. This Application then deploys the service's kubernetes/ manifests.
+# Sync loop once merged:
+#   1. ArgoCD root app-of-apps picks up the new file on next reconcile.
+#   2. Creates this Application in the argocd namespace.
+#   3. Application watches the SERVICE's own git repo (repoURL below).
+#   4. Runs `kustomize build kubernetes/` on the tracked revision.
+#   5. Applies the output to the ${{ values.name }} namespace.
 #
 # Two ArgoCD Applications working in tandem:
-#   - Platform-repo → deploys THIS Application manifest (Applications-of-
-#     Applications pattern, ADR-0015).
-#   - THIS Application → deploys the service's actual manifests.
+#   - Platform-repo root app-of-apps → deploys THIS Application manifest.
+#   - THIS Application → deploys the service's actual K8s manifests.
+#
+# See ADR-0015 for the Applications-of-Applications pattern.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
