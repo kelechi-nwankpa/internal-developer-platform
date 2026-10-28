@@ -5,9 +5,22 @@ import catalogPlugin from '@backstage/plugin-catalog/alpha';
 // `argocd/app-name` annotation. Backing API calls go via the backend
 // proxy endpoint defined in app-config.yaml (/argocd/api).
 import argocdPlugin from '@backstage-community/plugin-argocd';
+// TeraSky Crossplane resources plugin (new frontend system via /alpha
+// entry) — renders a Crossplane tab per Component showing the XR/XRC/MR
+// chain for Crossplane-managed infrastructure. Full automatic discovery
+// requires the TeraSky kubernetes-ingestor plugin (deferred to Phase 10
+// polish); for Wave 3 the plugin loads and renders what it can from
+// existing catalog annotations.
+import crossplaneResourcesPlugin from '@terasky/backstage-plugin-crossplane-resources-frontend/alpha';
 import { navModule } from './modules/nav';
 import { homeModule } from './modules/home';
 
 export default createApp({
-  features: [catalogPlugin, argocdPlugin, navModule, homeModule],
+  features: [
+    catalogPlugin,
+    argocdPlugin,
+    crossplaneResourcesPlugin,
+    navModule,
+    homeModule,
+  ],
 });

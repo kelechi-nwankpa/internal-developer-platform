@@ -69,4 +69,11 @@ backend.add(import('@backstage/plugin-signals-backend'));
 // mcp actions plugin
 backend.add(import('@backstage/plugin-mcp-actions-backend'));
 
+// Crossplane permissions-backend (TeraSky) — integrates Crossplane
+// resources with Backstage's permission framework. Companion to the
+// frontend crossplane-resources plugin registered in packages/app.
+backend.add(
+  import('@terasky/backstage-plugin-crossplane-permissions-backend'),
+);
+
 backend.start();
