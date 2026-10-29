@@ -123,6 +123,15 @@ spec:
               auth:
                 keys:
                   - secret: development-only-signing-key-do-not-use-in-prod
+                # Backstage 1.44+ enforces service tokens on every API
+                # route by default. The guest sign-in flow doesn't
+                # produce one, so every /api/catalog/* call 401s and
+                # the UI shows "Could not fetch catalog entities".
+                # Disabling the default policy restores the pre-1.44
+                # behavior where the frontend's guest cookie is enough.
+                # Phase 8 SSO wave re-enables this once GitHub OAuth
+                # produces real service tokens.
+                dangerouslyDisableDefaultAuthPolicy: true
               # SSRF protection allow-list. Backstage's UrlReader refuses
               # to fetch from any host that isn't either a configured
               # integration or explicitly allowed here. Learned this the

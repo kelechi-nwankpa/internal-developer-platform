@@ -103,9 +103,11 @@ backend:
   # Used for enabling authentication, secret is shared by all backend plugins
   # See https://backstage.io/docs/auth/service-to-service-auth for
   # information on the format
-  # auth:
-  #   keys:
-  #     - secret: ${BACKEND_SECRET}
+  auth:
+    # Backstage 1.44+ enforces service tokens on all API routes by
+    # default. Disabled for the MVP guest-auth flow (Phase 8 SSO wave
+    # re-enables when real tokens are available).
+    dangerouslyDisableDefaultAuthPolicy: true
   baseUrl: http://localhost:7007
   listen:
     port: 7007
