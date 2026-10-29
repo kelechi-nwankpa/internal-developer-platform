@@ -202,13 +202,14 @@ spec:
                 # Software Templates (Phase 6) — golden path scaffolds
                 # ─────────────────────────────────────────────────────
                 # Registered as kind: Template. Users see these in
-                # Backstage's Create page. Today (Wave 1 Backstage without
-                # Scaffolder) the Create button links to the template's
-                # README with `bin/render.sh` instructions. When Wave 2
-                # Scaffolder lands, the same Template entity becomes
-                # click-to-create — no re-registration.
+                # Backstage's Create page. Wave 3 Scaffolder reads
+                # ./skeleton + ./platform-skeleton relative to this URL,
+                # so it MUST be a github.com/blob URL (matches the GitHub
+                # App integration). raw.githubusercontent.com wouldn't
+                # match any integration and Scaffolder's fetch:template
+                # fails with "No integration found for location".
                 - type: url
-                  target: https://raw.githubusercontent.com/kelechi-nwankpa/internal-developer-platform/main/templates/nodejs-fastify-svc/template.yaml
+                  target: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/templates/nodejs-fastify-svc/template.yaml
                   rules:
                     - allow: [Template]
                 # ─────────────────────────────────────────────────────
