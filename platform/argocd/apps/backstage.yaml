@@ -147,6 +147,11 @@ spec:
               # opt-in. `production` requires dangerouslyAllowOutsideDevelopment.
               # For MVP kind: development is fine.
               environment: development
+              # Backstage 1.44+ replaced the guest sign-in flow. The new
+              # frontend's sign-in page expects either the new backend
+              # support or this legacy flag. Phase 8 SSO wave swaps guest
+              # for GitHub OAuth and this flag goes away.
+              legacyGuestToken: true
               providers:
                 guest: {}
             catalog:

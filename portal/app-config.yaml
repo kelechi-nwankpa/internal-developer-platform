@@ -190,6 +190,10 @@ techdocs:
 
 auth:
   # see https://backstage.io/docs/auth/ to learn about auth providers
+  # Backstage 1.44+ requires `legacyGuestToken: true` for the new
+  # frontend's sign-in page to accept the guest flow (replaced in
+  # Phase 8 SSO wave with GitHub OAuth).
+  legacyGuestToken: true
   providers:
     # See https://backstage.io/docs/auth/guest/provider
     guest: {}
