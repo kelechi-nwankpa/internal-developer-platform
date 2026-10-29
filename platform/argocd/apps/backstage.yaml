@@ -72,7 +72,7 @@ spec:
           image:
             registry: ghcr.io
             repository: kelechi-nwankpa/internal-developer-platform
-            tag: "sha-bac75af"
+            tag: "sha-faeb7fe"
           replicas: 1
           # Mount the backstage-github-app Secret (populated by ESO from
           # Vault at secret/backstage/github-app) as env vars. Prefix
