@@ -165,3 +165,19 @@ CVE-2026-109869
 # 1 major jump risk). Mitigation: zod validates INTERNAL types in
 # Backstage; no user-controlled schema input reaches it.
 CVE-2023-54404
+
+# ─── CVEs: undici (third finding, 2026-10-29) ───────────────────────
+# 3 more undici CVEs surfaced when Wave 3 plugins (ArgoCD + TeraSky
+# Crossplane) pulled in additional undici transitives:
+#   - CVE-2026-109383: Certificate validation bypass via dropped options
+#   - CVE-2026-109829: Cache poisoning + information disclosure
+#   - CVE-2026-87018:  DoS via TLS renegotiation with malformed cert
+# Fix: undici 6.29.1 / 7.30.1 / 8.12.2 (currently on 5.29.0, 7.30.0, 8.11.2
+# across transitives). Mitigation: same as earlier undici blocks —
+# internal in-cluster HTTP client, not reached by untrusted input;
+# cert-validation bypass only applies to Backstage calling OUT to our
+# own services (K8s API, GitHub via App) which are known-good.
+# Phase 8 security sweep will bump transitives via yarn resolutions.
+CVE-2026-109383
+CVE-2026-109829
+CVE-2026-87018
