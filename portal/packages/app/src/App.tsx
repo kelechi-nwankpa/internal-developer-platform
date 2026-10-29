@@ -1,5 +1,10 @@
 import { createApp } from '@backstage/frontend-defaults';
 import catalogPlugin from '@backstage/plugin-catalog/alpha';
+// Scaffolder plugin — adds the "Create" nav entry and the template
+// chooser + run pages. Backend is wired in packages/backend
+// (plugin-scaffolder-backend + the GitHub module); frontend needs
+// explicit registration in the new frontend system.
+import scaffolderPlugin from '@backstage/plugin-scaffolder/alpha';
 // Notifications plugin — required because other plugins (nav, home,
 // scaffolder) reference apiRef{plugin.notifications.service}; without
 // this registration the frontend throws
@@ -24,6 +29,7 @@ import { homeModule } from './modules/home';
 export default createApp({
   features: [
     catalogPlugin,
+    scaffolderPlugin,
     notificationsPlugin,
     argocdPlugin,
     crossplaneResourcesPlugin,
