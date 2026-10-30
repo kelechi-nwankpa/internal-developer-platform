@@ -11,7 +11,7 @@ Each phase of this project ships a discrete slice of the platform, with a writte
 | 2 | Cluster add-ons (GitOps'd) — ArgoCD + cert-manager + ESO + Vault + external-dns | ✅ shipped | [phase-2-platform.md](phase-2-platform.md) |
 | 3 | Observability stack — Wave 1 (metrics) + Wave 2 (logs + traces) | ✅ shipped | [phase-3-observability.md](phase-3-observability.md) |
 | 4 | Crossplane + AWS provider + first XRD (ObjectBucket) | ✅ shipped | [phase-4-crossplane.md](phase-4-crossplane.md) |
-| 5 | Backstage MVP — Wave 1 (install + catalog) + Wave 2 (custom image + GitHub App auth) shipped; Wave 3 (Scaffolder end-to-end + plugin wiring) pending | ✅ Waves 1+2 shipped | [phase-5-backstage.md](phase-5-backstage.md) |
+| 5 | Backstage MVP — Wave 1 (install + catalog) + Wave 2 (custom image + GitHub App auth) + Wave 3 (click-to-create end-to-end + plugin wiring) | ✅ shipped (all 3 waves) | [phase-5-backstage.md](phase-5-backstage.md) |
 | 6 | Golden path template (Node.js + Fastify) — template + first real service (`platform-hello`) end-to-end | ✅ shipped | [phase-6-golden-path.md](phase-6-golden-path.md) |
 | 7 | CI/CD golden pipeline — reusable workflow + OIDC + Trivy + cosign + CI-commits-manifest, first real service through it | ✅ shipped | [phase-7-cicd-golden-pipeline.md](phase-7-cicd-golden-pipeline.md) |
 | 8 | Security hardening | ⏳ pending | — |
