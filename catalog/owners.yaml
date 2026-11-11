@@ -14,13 +14,24 @@
 apiVersion: backstage.io/v1alpha1
 kind: User
 metadata:
-  name: kaycee
+  name: kelechi-nwankpa
+  # Renamed from `kaycee` in Phase 8 Wave 1 so the GitHub OAuth sign-in
+  # resolver (`usernameMatchingUserEntityName`) maps the authenticated
+  # GitHub login directly to this entity. The identity provider is now
+  # the catalog's source of truth for "who is this user" — keeping the
+  # entity name aligned with the GitHub login means no custom resolver
+  # work. When a second engineer joins, their User entity + GitHub
+  # login just need to match.
   description: "Platform engineer + project owner. Solo IC building the IDP."
+  annotations:
+    # Backstage's GitHub auth module reads this to confirm the
+    # OAuth-returned identity resolves back to this catalog entity.
+    github.com/user-login: kelechi-nwankpa
 spec:
   memberOf:
     - platform-team
   profile:
-    displayName: Kaycee
+    displayName: Kelechi Nwankpa
 
 ---
 apiVersion: backstage.io/v1alpha1

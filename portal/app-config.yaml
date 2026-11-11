@@ -103,11 +103,9 @@ backend:
   # Used for enabling authentication, secret is shared by all backend plugins
   # See https://backstage.io/docs/auth/service-to-service-auth for
   # information on the format
-  auth:
-    # Backstage 1.44+ enforces service tokens on all API routes by
-    # default. Disabled for the MVP guest-auth flow (Phase 8 SSO wave
-    # re-enables when real tokens are available).
-    dangerouslyDisableDefaultAuthPolicy: true
+  # Phase 8 Wave 1: dangerouslyDisableDefaultAuthPolicy removed.
+  # GitHub OAuth sign-in now produces real service tokens that
+  # satisfy Backstage 1.44+'s strict defaults.
   baseUrl: http://localhost:7007
   listen:
     port: 7007
@@ -192,13 +190,23 @@ techdocs:
 
 auth:
   # see https://backstage.io/docs/auth/ to learn about auth providers
-  # Backstage 1.44+ requires `legacyGuestToken: true` for the new
-  # frontend's sign-in page to accept the guest flow (replaced in
-  # Phase 8 SSO wave with GitHub OAuth).
-  legacyGuestToken: true
+  #
+  # Phase 8 Wave 1: guest sign-in removed. GitHub OAuth is now the
+  # only sign-in path. The `legacyGuestToken` escape hatch Wave 3 put
+  # in place came out with it.
+  environment: development
   providers:
-    # See https://backstage.io/docs/auth/guest/provider
-    guest: {}
+    github:
+      development:
+        clientId: ${GITHUB_OAUTH_CLIENT_ID}
+        clientSecret: ${GITHUB_OAUTH_CLIENT_SECRET}
+        signIn:
+          resolvers:
+            # Resolve the GitHub login returned by OAuth to a catalog
+            # User entity with the same metadata.name. Works because
+            # catalog/owners.yaml's User was renamed in 8W1.4 to
+            # `kelechi-nwankpa` to match the GitHub login.
+            - resolver: usernameMatchingUserEntityName
   # see https://backstage.io/docs/ai/mcp-actions#client-id-metadata-documents
   # to learn more about client id metadata documents
   clientIdMetadataDocuments:

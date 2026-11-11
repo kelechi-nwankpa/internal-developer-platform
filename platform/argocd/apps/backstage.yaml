@@ -88,6 +88,10 @@ spec:
             # Admin creds for MVP — Phase 8 swaps to a dedicated
             # read-only ArgoCD account.
             - backstage-argocd
+            # Phase 8 Wave 1 — GitHub OAuth sign-in creds. Keys are
+            # GITHUB_OAUTH_CLIENT_ID + GITHUB_OAUTH_CLIENT_SECRET;
+            # referenced by appConfig.auth.providers.github below.
+            - backstage-github-oauth
           # Chart default extraEnvVarsSecrets injects every key verbatim
           # (no prefix). Our Secret has keys appId / installationId /
           # clientId / privateKey — they land as env vars with those
@@ -120,18 +124,15 @@ spec:
               # Backstage requires a signing key for its internal service
               # tokens. Random string here — real deployment would source
               # from ESO. MVP good enough.
+              #
+              # Phase 8 Wave 1: dangerouslyDisableDefaultAuthPolicy
+              # removed. GitHub OAuth now produces real per-user
+              # service tokens that satisfy Backstage 1.44+'s strict
+              # defaults (debt tracked back to CVE class of accidentally-
+              # authenticated-but-no-token requests).
               auth:
                 keys:
                   - secret: development-only-signing-key-do-not-use-in-prod
-                # Backstage 1.44+ enforces service tokens on every API
-                # route by default. The guest sign-in flow doesn't
-                # produce one, so every /api/catalog/* call 401s and
-                # the UI shows "Could not fetch catalog entities".
-                # Disabling the default policy restores the pre-1.44
-                # behavior where the frontend's guest cookie is enough.
-                # Phase 8 SSO wave re-enables this once GitHub OAuth
-                # produces real service tokens.
-                dangerouslyDisableDefaultAuthPolicy: true
               # SSRF protection allow-list. Backstage's UrlReader refuses
               # to fetch from any host that isn't either a configured
               # integration or explicitly allowed here. Learned this the
@@ -152,17 +153,28 @@ spec:
                 allow:
                   - host: raw.githubusercontent.com
             auth:
-              # `development` environment allows guest auth without extra
-              # opt-in. `production` requires dangerouslyAllowOutsideDevelopment.
-              # For MVP kind: development is fine.
+              # `development` environment allows local-dev auth flows.
+              # `production` requires dangerouslyAllowOutsideDevelopment
+              # on each provider. Phase 9 EKS swaps this to `production`
+              # once the public callback URL is wired.
               environment: development
-              # Backstage 1.44+ replaced the guest sign-in flow. The new
-              # frontend's sign-in page expects either the new backend
-              # support or this legacy flag. Phase 8 SSO wave swaps guest
-              # for GitHub OAuth and this flag goes away.
-              legacyGuestToken: true
+              # Phase 8 Wave 1 — GitHub OAuth is the only sign-in path.
+              # Guest provider + legacyGuestToken escape hatch removed.
+              # Credentials come from backstage-github-oauth Secret (ESO-
+              # materialised from Vault secret/backstage/github-oauth).
               providers:
-                guest: {}
+                github:
+                  development:
+                    clientId: ${GITHUB_OAUTH_CLIENT_ID}
+                    clientSecret: ${GITHUB_OAUTH_CLIENT_SECRET}
+                    signIn:
+                      resolvers:
+                        # Maps the OAuth-returned GitHub login to a
+                        # catalog User entity with the same name. The
+                        # `kelechi-nwankpa` User in catalog/owners.yaml
+                        # was renamed in 8W1.4 to match the GitHub login
+                        # — no custom resolver work needed.
+                        - resolver: usernameMatchingUserEntityName
             catalog:
               # Rules: what entity kinds Backstage will accept from
               # configured locations. Full list for maximum flexibility.

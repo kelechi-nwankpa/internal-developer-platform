@@ -44,7 +44,7 @@ metadata:
       url: https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0031-golden-path-template-nodejs-fastify.md
       icon: docs
 spec:
-  owner: user:default/kaycee
+  owner: user:default/kelechi-nwankpa
   type: service
 
   # ─────────────────────────────────────────────────────────────

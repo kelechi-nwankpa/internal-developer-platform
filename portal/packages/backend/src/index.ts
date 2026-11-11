@@ -25,9 +25,19 @@ backend.add(import('@backstage/plugin-techdocs-backend'));
 
 // auth plugin
 backend.add(import('@backstage/plugin-auth-backend'));
-// See https://backstage.io/docs/backend-system/building-backends/migrating#the-auth-plugin
+// Phase 8 Wave 1: GitHub OAuth sign-in. Replaces the guest-provider
+// path. Backed by the GitHub OAuth App registered in the kelechi-platform
+// org; credentials come from the backstage-github-oauth K8s Secret
+// (ESO-materialised from Vault secret/backstage/github-oauth).
+backend.add(
+  import('@backstage/plugin-auth-backend-module-github-provider'),
+);
+// Guest provider kept for emergency recovery — no `guest: {}` under
+// appConfig.auth.providers means the provider is loaded but inert.
+// If the GitHub OAuth App or Vault go sideways and we need to get back
+// into Backstage without GitHub, add the provider back under
+// appConfig.auth.providers to re-enable it temporarily.
 backend.add(import('@backstage/plugin-auth-backend-module-guest-provider'));
-// See https://backstage.io/docs/auth/guest/provider
 
 // catalog plugin
 backend.add(import('@backstage/plugin-catalog-backend'));
