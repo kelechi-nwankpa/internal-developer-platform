@@ -1,4 +1,8 @@
 import { createApp } from '@backstage/frontend-defaults';
+import { createFrontendModule } from '@backstage/frontend-plugin-api';
+import { githubAuthApiRef } from '@backstage/core-plugin-api';
+import { SignInPageBlueprint } from '@backstage/plugin-app-react';
+import { SignInPage } from '@backstage/core-components';
 import catalogPlugin from '@backstage/plugin-catalog/alpha';
 // Scaffolder plugin — adds the "Create" nav entry and the template
 // chooser + run pages. Backend is wired in packages/backend
@@ -26,6 +30,31 @@ import crossplaneResourcesPlugin from '@terasky/backstage-plugin-crossplane-reso
 import { navModule } from './modules/nav';
 import { homeModule } from './modules/home';
 
+// Phase 8 Wave 1 — override the default sign-in page extension so the
+// only auth path is GitHub OAuth. Without this override, Backstage's
+// new-frontend-system ships a default sign-in page that renders a
+// Guest tile regardless of appConfig.auth.providers, which defeats
+// Wave 1's goal (removing the guest escape hatch entirely).
+//
+// Singular `provider={...}` (not `providers=[...]`): the multi-provider
+// example in Backstage docs explicitly re-adds 'guest' alongside the
+// chosen provider, which is the opposite of what we want.
+const signInPage = SignInPageBlueprint.make({
+  params: {
+    loader: async () => props => (
+      <SignInPage
+        {...props}
+        provider={{
+          id: 'github-auth-provider',
+          title: 'GitHub',
+          message: 'Sign in using GitHub',
+          apiRef: githubAuthApiRef,
+        }}
+      />
+    ),
+  },
+});
+
 export default createApp({
   features: [
     catalogPlugin,
@@ -35,5 +64,12 @@ export default createApp({
     crossplaneResourcesPlugin,
     navModule,
     homeModule,
+    // SignInPage override wrapped in an inline frontend module — this
+    // is the registration shape SignInPageBlueprint extensions require
+    // in the new frontend system (see @backstage/frontend-plugin-api).
+    createFrontendModule({
+      pluginId: 'app',
+      extensions: [signInPage],
+    }),
   ],
 });
