@@ -35,6 +35,10 @@ on:
       - '.github/workflows/portal-ci.yml'
       - '.github/workflows/reusable-service-ci.yml'
     tags: ['portal-v*']
+  # Manual trigger — useful for re-running after a repo restore (when
+  # Actions re-registration is flaky) or when the path filter above
+  # doesn't match but a rebuild is still needed.
+  workflow_dispatch: {}
 
 # Consistent with platform-hello wrapper. contents:write needed if a
 # future wave adds Helm-chart commit-back; harmless to grant up front.
