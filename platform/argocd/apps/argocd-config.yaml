@@ -1,0 +1,48 @@
+---
+# argocd-config.yaml — ArgoCD Application that syncs ArgoCD's own
+# configuration ConfigMaps (argocd-cm + argocd-rbac-cm patches).
+#
+# Phase 8 Wave 1 Task 8W1.5. Enables GitOps for ArgoCD's local-account
+# + RBAC configuration — changes to accounts or policies happen via PR
+# + merge, not direct kubectl edits.
+#
+# Why separate from vault-config / backstage-rbac:
+#   Same split-by-lifecycle rationale. ArgoCD config changes cadence
+#   differs from the underlying ArgoCD version/install (Makefile-driven),
+#   so they get separate Applications.
+#
+# See: platform/argocd/config/
+#      Makefile `argocd-install` target (installs ArgoCD core; this
+#      Application layers config on top via SSA).
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-config
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/argocd/config
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      # The install-time apply from `make argocd-install` owns the
+      # empty `data: {}` on argocd-cm/argocd-rbac-cm under a different
+      # field manager. SSA merge resolves non-conflicting keys. If a
+      # conflict surfaces on a chart bump, re-run `argocd-install`
+      # then trigger a sync here — the install apply only sets keys
+      # that didn't exist, so our patches survive.

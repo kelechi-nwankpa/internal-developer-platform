@@ -323,10 +323,17 @@ spec:
             # proxy forwards requests. In-cluster DNS skips external DNS +
             # Ingress for lower-latency + fewer failure modes.
             #
-            # Auth: basic auth with admin creds from ESO-materialised
-            # backstage-argocd Secret (see externalsecret-argocd.yaml).
-            # Phase 8 security hardening replaces admin with a dedicated
-            # ArgoCD local account + apiKey token + narrower RBAC.
+            # Auth: apiKey token for a dedicated, scoped ArgoCD local
+            # account (Phase 8 Wave 1 Task 8W1.5). The `backstage`
+            # account is declared in platform/argocd/config/argocd-cm.yaml
+            # with `apiKey` capability and granted `role:backstage-reader`
+            # (applications: get + list only) in argocd-rbac-cm.yaml.
+            # Token lives at Vault's secret/backstage/argocd under the
+            # `token` key, materialised into the backstage-argocd
+            # Secret as ARGOCD_AUTH_TOKEN by the ESO ExternalSecret.
+            #
+            # Was admin basic-auth in Wave 3 — flagged as debt at the
+            # Wave 3 close-out; this task closes it.
             argocd:
               baseUrl: https://argocd.idp.seniormankelz.dev
               appLocatorMethods:
@@ -334,8 +341,7 @@ spec:
                   instances:
                     - name: kind-idp
                       url: https://argocd-server.argocd.svc.cluster.local
-                      username: ${ARGOCD_USERNAME}
-                      password: ${ARGOCD_PASSWORD}
+                      token: ${ARGOCD_AUTH_TOKEN}
 
             # ─────────────────────────────────────────────────────────
             # Kubernetes plugin — live cluster state per Component

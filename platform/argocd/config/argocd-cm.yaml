@@ -1,0 +1,62 @@
+---
+# argocd-cm.yaml — ArgoCD main ConfigMap patch.
+#
+# ArgoCD is installed from the upstream raw manifest via `make
+# argocd-install` (see Makefile). The install ships an empty
+# `argocd-cm` ConfigMap. This manifest OWNS the data-key patches
+# we layer on top.
+#
+# Phase 8 Wave 1: adds a dedicated `backstage` local account with
+# `apiKey` capability so the Backstage ArgoCD plugin can authenticate
+# against a scoped account instead of the chart-generated admin
+# credentials it used in Wave 3 (now a flagged security debt in the
+# phase-5-backstage.md close-out).
+#
+# Why a local account vs an OIDC-federated one:
+#   - Local accounts in ArgoCD only need argocd-cm + argocd-rbac-cm
+#     edits — no identity-provider wiring, no OIDC round-trip. Right
+#     tool for an in-cluster machine identity (vs human SSO which is
+#     Phase 8 Wave 1 Part A — the Backstage GitHub OAuth).
+#   - `apiKey` capability (not `login`) → the account can mint tokens
+#     via `argocd account generate-token` but cannot sign in to the
+#     ArgoCD UI. Prevents the token from doubling as human access.
+#
+# Owning fields via server-side apply:
+#   The upstream argocd-cm declares `data: {}`. This manifest adds the
+#   `accounts.backstage` key under a different field manager (ArgoCD
+#   itself, when it syncs this Application), so there's no SSA
+#   conflict with the install-time apply.
+#
+# Bootstrap after this manifest syncs (one-time):
+#   # 1. Port-forward to ArgoCD and login as admin
+#   kubectl -n argocd port-forward svc/argocd-server 8081:443 &
+#   argocd login localhost:8081 --insecure \
+#     --username admin \
+#     --password "$(kubectl -n argocd get secret argocd-initial-admin-secret \
+#                    -o jsonpath='{.data.password}' | base64 -d)"
+#
+#   # 2. Generate a token for the backstage account
+#   TOKEN=$(argocd account generate-token --account backstage)
+#
+#   # 3. Seed to Vault
+#   kubectl -n vault exec -i vault-0 -- \
+#     env VAULT_TOKEN="$VAULT_ROOT_TOKEN" \
+#     vault kv patch -mount=secret backstage/argocd token="$TOKEN"
+#
+#   # 4. Force ESO to re-sync (picks up the new `token` key)
+#   kubectl -n backstage annotate externalsecret backstage-argocd \
+#     force-sync=$(date +%s) --overwrite
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # Local accounts — keys are "accounts.<name>" with comma-separated
+  # capabilities. apiKey = can mint JWT tokens; login = can UI-sign-in.
+  # Backstage only needs apiKey.
+  accounts.backstage: apiKey

@@ -237,8 +237,11 @@ argocd:
       instances:
         - name: kind-idp
           url: https://argocd-server.argocd.svc.cluster.local
-          username: ${ARGOCD_USERNAME}
-          password: ${ARGOCD_PASSWORD}
+          # Phase 8 Wave 1: token-based auth with the dedicated
+          # `backstage` local account (apiKey capability, narrow
+          # role:backstage-reader RBAC). Admin basic-auth removed;
+          # debt banked at the Wave 3 close-out.
+          token: ${ARGOCD_AUTH_TOKEN}
 
 catalog:
   import:

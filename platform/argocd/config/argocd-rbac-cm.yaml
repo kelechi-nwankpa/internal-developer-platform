@@ -1,0 +1,47 @@
+---
+# argocd-rbac-cm.yaml — ArgoCD RBAC ConfigMap patch.
+#
+# Pairs with argocd-cm.yaml's `accounts.backstage` entry. Grants the
+# backstage account read-only access to Applications and nothing else.
+#
+# ArgoCD RBAC syntax (per docs):
+#   p = policy line (role gets action on resource)
+#   g = grant line (user gets role)
+#   format: action, resource, pattern, effect
+#   action verbs: get, list, create, update, delete, sync, override,
+#                 action, invoke
+#   resources: applications, applicationsets, clusters, repositories,
+#              certificates, accounts, gpgkeys, logs, exec, projects,
+#              extensions
+#
+# Why a custom `role:backstage-reader` vs the built-in `role:readonly`:
+#   Built-in `role:readonly` grants `get` on EVERY resource (clusters,
+#   repositories, gpgkeys, etc.). We only need Applications visibility
+#   for the Backstage ArgoCD plugin UI. Narrow role = smaller blast
+#   radius if the token leaks.
+#
+# What the backstage account CAN'T do (even with this grant):
+#   - Trigger syncs (`sync` verb not granted)
+#   - Delete or update apps
+#   - Read cluster/repository credentials
+#   - Access the exec/logs sub-resources
+#
+# policy.default: unset here (defaults to no implicit access). Combined
+# with the narrow grant above = deny-by-default RBAC.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-rbac-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  policy.csv: |
+    # Role: read-only on Applications for the Backstage plugin
+    p, role:backstage-reader, applications, get, */*, allow
+    p, role:backstage-reader, applications, list, */*, allow
+
+    # Grant the `backstage` local account the role above
+    g, backstage, role:backstage-reader
