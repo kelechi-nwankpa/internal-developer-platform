@@ -42,6 +42,14 @@ data:
     # Role: read-only on Applications for the Backstage plugin
     p, role:backstage-reader, applications, get, */*, allow
     p, role:backstage-reader, applications, list, */*, allow
+    # ArgoCD's Application search endpoint (findApplicationsByName,
+    # /api/v1/applications?name=…) filters results by what the caller
+    # can see in the parent project. Without a `projects, get, *`
+    # grant, ArgoCD hides apps as 404 even when `applications, get`
+    # would permit them -- surfaced in 8W1.5 as "Deployment tab 404
+    # Not Found" in the Backstage ArgoCD plugin. Granting read-only
+    # on projects (get only; no create/update/delete) closes the gap.
+    p, role:backstage-reader, projects, get, *, allow
 
     # Grant the `backstage` local account the role above
     g, backstage, role:backstage-reader
