@@ -4,6 +4,13 @@ import { githubAuthApiRef } from '@backstage/core-plugin-api';
 import { SignInPageBlueprint } from '@backstage/plugin-app-react';
 import { SignInPage } from '@backstage/core-components';
 import catalogPlugin from '@backstage/plugin-catalog/alpha';
+// Kubernetes plugin (frontend) — required by @backstage-community/plugin-argocd
+// which calls apiRef{plugin.kubernetes.service} transitively on its
+// Deployment tab. Without this registration, loading the ArgoCD tab
+// throws NotImplementedError and the whole Deployment view fails.
+// The plugin was installed in packages/app/package.json since Wave 2
+// but never wired in createApp features.
+import kubernetesPlugin from '@backstage/plugin-kubernetes/alpha';
 // Scaffolder plugin — adds the "Create" nav entry and the template
 // chooser + run pages. Backend is wired in packages/backend
 // (plugin-scaffolder-backend + the GitHub module); frontend needs
@@ -60,6 +67,7 @@ export default createApp({
     catalogPlugin,
     scaffolderPlugin,
     notificationsPlugin,
+    kubernetesPlugin,
     argocdPlugin,
     crossplaneResourcesPlugin,
     navModule,
