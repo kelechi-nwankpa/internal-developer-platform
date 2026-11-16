@@ -232,6 +232,11 @@ scaffolder:
 # export ARGOCD_USERNAME/ARGOCD_PASSWORD locally for `yarn start`.
 argocd:
   baseUrl: https://argocd.idp.seniormankelz.dev
+  # In-cluster argocd-server uses a self-signed cert; backend plugin's
+  # undici fetch rejects that by default. `localDevelopment: true`
+  # flips the plugin to a custom Agent with rejectUnauthorized=false.
+  # Phase 9 EKS swaps for a proper trust bundle.
+  localDevelopment: true
   appLocatorMethods:
     - type: 'config'
       instances:

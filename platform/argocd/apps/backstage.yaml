@@ -336,6 +336,15 @@ spec:
             # Wave 3 close-out; this task closes it.
             argocd:
               baseUrl: https://argocd.idp.seniormankelz.dev
+              # Backend plugin TLS: the plugin's undici fetch uses a
+              # custom Agent with rejectUnauthorized=false when
+              # argocd.localDevelopment=true. Required because the
+              # in-cluster argocd-server URL uses a self-signed cert
+              # (same reason the appConfig proxy block carries
+              # secure: false). Phase 9 EKS will swap this for a
+              # proper trust bundle via cert-manager + ArgoCD's
+              # Ingress chain.
+              localDevelopment: true
               appLocatorMethods:
                 - type: 'config'
                   instances:
