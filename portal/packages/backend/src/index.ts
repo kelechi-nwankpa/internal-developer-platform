@@ -86,4 +86,13 @@ backend.add(
   import('@terasky/backstage-plugin-crossplane-permissions-backend'),
 );
 
+// ArgoCD backend plugin (@backstage-community) — companion to the
+// frontend plugin registered in packages/app. The frontend's
+// Deployment tab calls /api/argocd/find/name/<x>?expand=applications
+// which 404s without this backend handler. Discovered during Phase 8
+// Wave 1 Task 8W1.5 after RBAC / token diagnostics all came back
+// green — the plugin ships in two packages (frontend + backend) and
+// the backend was never wired in Wave 3.
+backend.add(import('@backstage-community/plugin-argocd-backend'));
+
 backend.start();
