@@ -57,13 +57,14 @@ COPY packages/app/package.json ./packages/app/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 
 # Install OS deps native modules (better-sqlite3, tree-sitter) need
-# to compile. Wolfi's apk ships these packages. Needs root; we're
-# in the -dev variant which allows that.
+# to compile. Wolfi's apk conventions: `build-base` is the meta-package
+# covering gcc + g++ + make (Alpine-descended naming; Debian equivalent
+# is `build-essential`). `python3` and `sqlite-dev` separately.
+# Needs root; we're in the -dev variant which allows that.
 USER root
 RUN apk add --no-cache \
+        build-base \
         python3 \
-        make \
-        g++ \
         sqlite-dev
 USER node
 
