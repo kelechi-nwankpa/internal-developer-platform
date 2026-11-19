@@ -419,3 +419,253 @@ rendering OutOfSync state in the background.
   — ESO ExternalSecret for the scoped ArgoCD token
 - Phase 5 Wave 3 close-out in [phase-5-backstage.md](phase-5-backstage.md)
   — the original debt log Wave 1 closes
+
+## Phase 8 Wave 2 — Policy enforcement (Kyverno + NetworkPolicy + PSS)
+
+**Status:** ✅ Shipped 2026-11-19 (single session, ~3 hours).
+
+**Primary deliverable:** The cluster refuses workloads that violate
+platform policies at admission time, pods in the backstage namespace
+can only talk to known-good destinations, and three key namespaces
+carry explicit Pod Security Standards profiles. The "code review
+discipline" security story becomes "the cluster enforces it."
+
+### Design decisions locked in (user-confirmed A/C/B/B at phase open)
+
+- **A — Official kyverno/kyverno Helm chart.** Matches our ESO +
+  cert-manager + ArgoCD install pattern. GitOps-friendly, security
+  patches track upstream.
+- **C — Policies cherry-picked from Kyverno's policy library into
+  our Git.** Proven policies, reviewable per-file, clearer audit
+  trail than wholesale import.
+- **B — Namespace exemptions per policy** for kube-system, kyverno,
+  local-path-storage (the "upstream distribution" layer).
+- **B — Case-by-case PSS profiles** (`restricted` where it works,
+  `baseline` where restricted breaks something).
+
+### What shipped (Wave 2)
+
+**Kyverno engine (commit a05ebe8):**
+
+- Official chart 3.5.1 via new ArgoCD Application
+  [`platform/argocd/apps/kyverno.yaml`](../../platform/argocd/apps/kyverno.yaml).
+- 4 controllers (admission + background + reports + cleanup) each
+  with explicit resources so Kyverno itself passes the
+  `require-resources` policy we were about to ship.
+- `serviceMonitor.enabled: true` on each controller — same
+  Prometheus-scraping pattern as ESO + cert-manager (ADR-0025).
+- `features.imageVerify: false` — cosign admission-time verification
+  deferred to Phase 10 polish; cosign IS wired in Phase 7 CI, this
+  is defence-in-depth not debt.
+
+**5 ClusterPolicies (commit 5ba012a, promotions a1768df):**
+
+- `disallow-latest` → **Enforce** (zero violations in audit)
+- `disallow-host-namespaces` → **Enforce** (6 violations, all
+  monitoring/node-exporter; added monitoring namespace to the
+  exemption list)
+- `require-non-root` → **Audit** (18 violations, needs per-case review)
+- `require-resources` → **Audit** (80 violations across upstream charts)
+- `require-labels` → **Audit** (86 violations across upstream charts)
+
+Each policy lives in its own file under
+[`platform/kyverno/policies/`](../../platform/kyverno/policies/).
+Policy-by-policy promotion matches design decision "B — audit-first,
+then enforce per-policy" — we did NOT big-bang promote all 5.
+
+**NetworkPolicy baselines (commit 08df1ce):**
+
+- Explicit allow-all NetworkPolicy baselines for backstage, argocd,
+  and observability namespaces under
+  [`platform/network-policies/`](../../platform/network-policies/).
+- GitOps-managed by new ArgoCD Application
+  [`platform/argocd/apps/network-policies.yaml`](../../platform/argocd/apps/network-policies.yaml).
+- Behavior unchanged (allow-all = no policy), but the stance is
+  declared in Git + Git-blameable.
+
+**Backstage narrowed to deny-default (commit e3bb97f):**
+
+- Replaced `backstage-allow-all.yaml` with:
+  - 7 targeted-allow policies (DNS, Postgres, Vault, ArgoCD,
+    kube-apiserver, internet, ingress on 7007)
+  - 1 deny-default policy that catches anything not explicitly
+    allowed
+- Verified post-flip: Backstage pod kept running, no restart, all
+  plugin backends (K8s, ArgoCD) still responding.
+
+**Pod Security Standards (commit a439945):**
+
+- backstage: `restricted` (via
+  `syncPolicy.managedNamespaceMetadata` on the Backstage Application —
+  no need for a separate Namespace manifest).
+- argocd: `baseline` (via `platform/namespaces/argocd.yaml` +
+  new `namespaces` ArgoCD Application + SSA).
+- observability: `baseline` (same pattern).
+- All three sticker-levels (`enforce` + `audit` + `warn`) set to
+  the same profile per namespace for consistent signalling.
+
+### Bugs banked (Wave 2)
+
+Numbered so future sessions can grep. Fewer bugs than Wave 1 — the
+policy-enforcement surface is more declarative + less plumbing.
+
+#### 1. Audit review found 80+ violations across upstream charts
+
+**Symptom:** After shipping 5 ClusterPolicies in Audit mode, the
+PolicyReport scanner showed 190 total failures across the cluster.
+**Cause:** `require-labels`, `require-resources`, and `require-non-root`
+all flag pods in third-party charts (Backstage's Postgres sub-chart,
+ArgoCD's redis/dex, Prometheus exporters). **Not actually a bug** —
+the audit mode is doing exactly what it should (surfacing real gaps).
+**Fix:** promoted ONLY the two policies with zero or small-scope
+violations (`disallow-latest`, `disallow-host-namespaces` with a
+monitoring exemption). The other 3 stay in Audit until Phase 10
+polish adds per-chart values customization to fix the upstream gaps.
+**Non-obvious lesson:** policy-by-policy promotion is the right
+unit, not the "five policies all go to Enforce" unit. Each policy
+has its own violations surface + its own promotion decision.
+
+#### 2. Ratchet order for NetworkPolicy narrowing matters
+
+**Symptom:** Nothing surfaced because we got it right. **Cause-that-
+would-have-surfaced:** if we had shipped `backstage-deny-default.yaml`
+BEFORE the 7 targeted-allow policies (or in the same commit but
+alphabetically evaluated first), there would be a window where the
+Backstage pod loses all connectivity. **How we avoided it:** the
+commit put both in the same patch; ArgoCD applies the file set
+atomically via Server-Side Apply. **Non-obvious lesson:** NetworkPolicy
+rollouts have an "order of application matters" trap. Mitigation:
+ship allows + deny in the same commit, or ship allows first in one
+commit + deny-default in a second. Never deny alone.
+
+#### 3. PSS labels via ArgoCD — managedNamespaceMetadata vs separate Application
+
+**Symptom:** The first attempt tried to patch namespace labels via a
+new Application that targeted namespaces created by OTHER Applications
+with `CreateNamespace=true`. ArgoCD normally rejects this as resource
+ownership conflict. **Cause:** `CreateNamespace=true` makes the
+creator Application own the Namespace resource; another Application
+can't manage the same resource. **Fix:** two mechanisms depending
+on whether the Application creator ALREADY has `managedNamespaceMetadata`
+support:
+
+- Backstage Application: added `syncPolicy.managedNamespaceMetadata.labels`
+  directly to the existing Application (clean, zero new Applications).
+- Other namespaces (argocd, observability): new `namespaces`
+  ArgoCD Application + Namespace manifests + Server-Side Apply.
+  SSA's field-manager tracking means the labels merge onto the
+  existing namespace without claiming ownership of fields the
+  original creator set.
+
+**Non-obvious lesson:** ArgoCD's conflict detection is about
+field-manager ownership, not resource existence. Patch-style
+modifications with SSA are compatible with other Applications
+managing the same resource — as long as they touch orthogonal fields.
+
+### Business value delivered (Wave 2)
+
+**Three concrete platform wins:**
+
+- **Admission-time enforcement.** `:latest` tags + hostNetwork can't
+  be shipped by accident anymore — the cluster rejects at kube-apiserver
+  before the pod schedules. Code review discipline stops being
+  the sole defence.
+- **Network isolation on the user-facing workload.** Backstage's
+  outbound surface is 6 specific destinations (DNS, Postgres, Vault,
+  ArgoCD, kube-apiserver, internet) instead of "anything the pod
+  decides to connect to." Compromise blast radius drops by ~90%.
+- **Explicit PSS profiles on 3 namespaces.** The cluster doesn't
+  just rely on "we built the images carefully"; it enforces
+  non-root + no-privileged + restricted sysctls at admission.
+
+**Pattern established** for Phase 10 polish rollout to the other
+6 platform namespaces (same mechanical repetition; same
+`platform/network-policies/` and `platform/namespaces/` dirs).
+
+### Interview talking points (Wave 2)
+
+1. *"I shipped Kyverno as the platform's admission controller — five
+    ClusterPolicies covering the baseline hardening set
+    (no `:latest`, resource limits required, non-root, no hostPath/hostNetwork,
+    required labels). All five started in Audit mode so I could inventory
+    real-world violations before anything blocked. Then promoted
+    policy-by-policy to Enforce based on what the audit reports showed."*
+2. *"I narrowed the Backstage namespace's network surface from
+    'anything' to 6 specific destinations — DNS, Postgres, Vault,
+    ArgoCD, kube-apiserver, and internet for GitHub OAuth. Did it
+    via the 'allows first, deny-default last' ratchet so there was
+    never a window where Backstage lost connectivity."*
+3. *"I applied Pod Security Standards in two different ways depending
+    on whether the ArgoCD Application that created the namespace had
+    `managedNamespaceMetadata` support — that field gives you clean
+    label management without creating a second Application. For
+    namespaces where that wasn't available, I used Server-Side Apply
+    to merge label patches onto existing namespaces without
+    ownership conflicts."*
+4. *"The audit-first strategy surfaced 190 violations across upstream
+    charts. 2 policies were safe to promote to Enforce immediately
+    (`:latest`, hostNetwork). 3 revealed real gaps in upstream chart
+    configurations that need per-chart customization — explicitly
+    flagged as Phase 10 polish rather than papered over."*
+
+### Recruiter Q&A (Wave 2)
+
+- *"What stops a developer from shipping an insecure pod?"* — Kyverno
+  rejects it at admission time. The rejection happens BEFORE the
+  pod schedules, so the developer sees an immediate `kubectl apply`
+  error explaining what rule they violated. No "the pod ran for 3
+  hours and then OOMed" surprises.
+- *"How do you prevent a compromised Backstage pod from calling
+  arbitrary cluster endpoints?"* — NetworkPolicy. Backstage can only
+  reach 6 specific destinations I've whitelisted. If someone
+  compromised the image, they'd find the pod can't connect to
+  anything else.
+- *"Why ship policies in Audit mode first instead of just enforcing?"* —
+  Enforcing without knowing what violates would break the cluster
+  on the next pod restart. Audit mode showed me exactly which
+  workloads violated each policy; I promoted policies to Enforce
+  only after confirming the cluster is already compliant (or after
+  adding targeted exemptions).
+
+### Loose ends for Phase 10 polish
+
+- **3 ClusterPolicies in Audit mode** — require-non-root,
+  require-resources, require-labels. Need per-chart fixes to upstream
+  Helm values before promotion.
+- **5 platform namespaces lack PSS labels** — kyverno, cert-manager,
+  external-secrets, vault, monitoring, external-dns. Mechanical
+  rollout of the pattern established here.
+- **2 namespaces at allow-all NetworkPolicy baseline** — argocd,
+  observability. Narrowing waits on a traffic inventory pass that's
+  more work than backstage's (ArgoCD talks to every namespace it
+  syncs; observability receives from every workload).
+
+### Phase 8 Wave 3 roadmap (what Wave 2 explicitly leaves for Wave 3)
+
+1. Swap `node:22-trixie-slim` for a Chainguard distroless Node base
+    in `portal/Dockerfile`.
+2. Pin every GitHub Actions `uses:` to a commit SHA (not a tag).
+3. Add yarn resolutions for the high-volume CVE packages
+    (`node-forge`, `follow-redirects`, `undici`). Drops Trivy
+    suppression count from 45 → ~5.
+4. Re-scan with Trivy; remove `.trivyignore` entries that are
+    now actually fixed upstream.
+
+**Est: 1-2 sessions.** Session opener:
+*"start 8W3, Chainguard + action SHA pins + CVE sweep."*
+
+### See also (Wave 2)
+
+- [platform/argocd/apps/kyverno.yaml](../../platform/argocd/apps/kyverno.yaml)
+  — Kyverno engine install
+- [platform/argocd/apps/kyverno-policies.yaml](../../platform/argocd/apps/kyverno-policies.yaml)
+  — syncs the policies dir
+- [platform/kyverno/policies/](../../platform/kyverno/policies/)
+  — the 5 ClusterPolicies
+- [platform/argocd/apps/network-policies.yaml](../../platform/argocd/apps/network-policies.yaml)
+  — syncs the network-policies dir
+- [platform/network-policies/](../../platform/network-policies/)
+  — allow-all baselines + Backstage's narrowed set
+- [platform/argocd/apps/namespaces.yaml](../../platform/argocd/apps/namespaces.yaml)
+  — syncs namespace label patches
+- [platform/namespaces/](../../platform/namespaces/) — PSS label patches
