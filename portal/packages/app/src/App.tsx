@@ -34,6 +34,12 @@ import argocdPlugin from '@backstage-community/plugin-argocd';
 // polish); for Wave 3 the plugin loads and renders what it can from
 // existing catalog annotations.
 import crossplaneResourcesPlugin from '@terasky/backstage-plugin-crossplane-resources-frontend/alpha';
+// API docs plugin — renders the "Definition" tab on API entities
+// (OpenAPI/AsyncAPI/GraphQL specs via swagger-ui). Installed since the
+// initial scaffold but never wired (found during the 8W3.2 smoke test:
+// API entity pages had no Definition tab on ANY image). Same
+// installed-≠-wired class of bug as kubernetesPlugin above.
+import apiDocsPlugin from '@backstage/plugin-api-docs/alpha';
 import { navModule } from './modules/nav';
 import { homeModule } from './modules/home';
 
@@ -70,6 +76,7 @@ export default createApp({
     kubernetesPlugin,
     argocdPlugin,
     crossplaneResourcesPlugin,
+    apiDocsPlugin,
     navModule,
     homeModule,
     // SignInPage override wrapped in an inline frontend module — this
