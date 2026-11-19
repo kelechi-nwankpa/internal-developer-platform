@@ -1,24 +1,64 @@
-# Dependabot configuration
+# Dependabot — automated dependency freshness (Phase 8 Wave 3, 8W3.5).
 #
-# Weekly PRs to keep our GitHub Actions versions current. As other ecosystems
-# arrive (npm in Phase 5, docker in Phase 6, pip in Phase 8 for cdk-nag),
-# their ecosystems will be added here.
+# WHY this exists: 8W3.4 SHA-pinned every third-party Action, and 8W3.3
+# showed what happens when a lockfile sits still for a month (29 CVE
+# entries of pure staleness). Pinning without automated bumping trades
+# supply-chain risk for staleness risk; this file closes the loop.
 #
-# Reason: supply-chain hygiene is a first-class concern. Pinned but stale
-# action versions accumulate known CVEs; unpinned versions expose us to
-# compromise. Weekly Dependabot PRs keep us moving without manual work.
+# WHY no `docker` ecosystem entry: portal/Dockerfile FROMs
+# cgr.dev/chainguard/wolfi-base on its only free tag (`latest`), so
+# there is no version for Dependabot to bump. Digest-pinning the base
+# (which would give Dependabot a digest to roll) is banked for the
+# Phase 10 full-distroless refactor.
 
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  # ── GitHub Actions (both workflow files) ──────────────────────────
+  # Bumps the SHA pin + its `# vX.Y.Z` comment together — Dependabot
+  # understands the pin-with-comment convention natively.
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
-      day: "monday"
-    labels:
-      - "dependencies"
-      - "github-actions"
+      interval: weekly
+      day: monday
     open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    # Keep Dependabot PRs on our conventional-commit style (Phase 0
+    # convention, carried over from the original github-actions-only
+    # version of this file).
     commit-message:
       prefix: "chore(deps)"
-      include: "scope"
+      include: scope
+
+  # ── Backstage app (portal/) ───────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /portal
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - portal
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    # @backstage/* framework packages move as ONE coherent release
+    # line via `backstage-cli versions:bump`, never individually —
+    # per-package bumps create exactly the duplicate-copy drift we
+    # root-caused in 8W3.3 (backend-defaults@0.12.3 residue pinning
+    # vulnerable urllib@3/undici@5). Community + third-party plugins
+    # (@backstage-community/*, @terasky/*) version independently and
+    # stay in scope.
+    ignore:
+      - dependency-name: "@backstage/*"
+    # ~1700 transitives would otherwise mean PR-per-package noise;
+    # one grouped PR per week keeps review tractable. Majors stay
+    # ungrouped (and rare) so breaking changes get individual review.
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
