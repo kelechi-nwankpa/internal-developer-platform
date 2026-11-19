@@ -55,7 +55,8 @@ FROM cgr.dev/chainguard/wolfi-base AS deps
 # Node 22 (project-pinned major) + yarn-berry launcher (defers to the
 # repo-pinned Yarn release via .yarnrc.yml yarnPath) + native-module
 # build chain. `build-base` = Wolfi's gcc/g++/make meta-package.
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
         nodejs-22 \
         npm \
         yarn-berry \
@@ -110,7 +111,8 @@ FROM cgr.dev/chainguard/wolfi-base AS runtime
 # image build time — a full-distroless runtime that drops yarn is the
 # Phase 10 polish refactor), sqlite-libs for better-sqlite3's runtime
 # linkage, ca-certificates for HTTPS.
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
         nodejs-22 \
         yarn-berry \
         sqlite-libs \
