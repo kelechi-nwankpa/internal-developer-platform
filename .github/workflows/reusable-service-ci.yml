@@ -139,10 +139,10 @@ jobs:
         working-directory: ${{ inputs.docker-context }}
     steps:
       - name: Checkout service repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node ${{ inputs.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
@@ -210,14 +210,14 @@ jobs:
       packages: write    # by-digest push on push events
     steps:
       - name: Checkout service repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to GHCR (push events only)
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ inputs.image-registry }}
           username: ${{ github.actor }}
@@ -227,13 +227,13 @@ jobs:
       # by-digest pushes are deliberately untagged.
       - name: Compute OCI labels
         id: docker-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
 
       - name: Build (PR — validate only, no push)
         if: github.event_name != 'push'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs.docker-context }}
           file: ${{ inputs.dockerfile-path }}
@@ -246,7 +246,7 @@ jobs:
       - name: Build + push by digest (push events)
         if: github.event_name == 'push'
         id: docker-build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs.docker-context }}
           file: ${{ inputs.dockerfile-path }}
@@ -265,7 +265,7 @@ jobs:
 
       - name: Upload digest artifact
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: digests-${{ matrix.slug }}
           path: /tmp/digests/*
@@ -282,17 +282,17 @@ jobs:
     needs: build
     steps:
       - name: Checkout service repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       # Re-build amd64-only + load into local Docker daemon so Trivy
       # can scan the image by name. Reuses the amd64-SCOPED GHA cache
       # from the build matrix leg above — effectively a cache replay,
       # not a real rebuild.
       - name: Build amd64 image into local Docker for scanning
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs.docker-context }}
           file: ${{ inputs.dockerfile-path }}
@@ -307,7 +307,7 @@ jobs:
       # repo can repoint v0.36.0 to a malicious commit; a SHA pin can't
       # be forged).
       - name: Trivy scan (HIGH + CRITICAL blocks)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ inputs.service-name }}:scan
           format: table
@@ -340,17 +340,17 @@ jobs:
       image-digest: ${{ steps.manifest.outputs.digest }}
     steps:
       - name: Download per-arch digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to GHCR (via OIDC-federated GITHUB_TOKEN)
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ inputs.image-registry }}
           username: ${{ github.actor }}
@@ -358,7 +358,7 @@ jobs:
 
       - name: Compute tags
         id: docker-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
           tags: |
@@ -407,12 +407,12 @@ jobs:
       id-token: write    # OIDC federation → Fulcio identity attestation
     steps:
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
         with:
           cosign-release: v2.4.1
 
       - name: Login to GHCR for signature push
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ inputs.image-registry }}
           username: ${{ github.actor }}
@@ -449,7 +449,7 @@ jobs:
       contents: write    # push the manifest-bump commit back
     steps:
       - name: Checkout service repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Fetch all refs so git push works cleanly after our commit.
           fetch-depth: 0
