@@ -13,19 +13,29 @@
 #   1. deps:    cache yarn.lock + install deps once (reused by builder
 #               if source changes but deps don't)
 #   2. builder: compile TypeScript + run backend bundle step
-#   3. runtime: node:22-slim with the bundle + production deps only
+#   3. runtime: Chainguard Node with the bundle + production deps only
 #
-# WHY node:22 (not node:24 like the scaffold):
-#   - CLAUDE.md pins Node 22 LTS for the whole project
-#   - Backstage root package.json engines allows "22 || 24"
-#   - 22 is the current LTS; 24 is the newer release but less stable
+# WHY Chainguard Node (Phase 8 Wave 3 Task 8W3.2 swap from node:22-trixie-slim):
+#   Chainguard rebuilds their images on every upstream CVE fix in the
+#   Wolfi-based distro. Wolfi ships significantly fewer system packages
+#   than Debian Trixie, which means fewer transitive CVEs surface in
+#   Trivy. Pre-swap we had 2 zlib CVEs suppressed; Chainguard's
+#   node:latest-dev doesn't ship zlib as a user-accessible CVE at all.
+#   Phase 9 EKS reproducibility concerns may pin to a specific digest
+#   later; for now `latest-dev` moves with Chainguard's patch cadence.
 #
-# WHY not distroless like platform-hello:
-#   - Backstage backend needs libsqlite3 (SQLite plugin), apt + glibc
-#     for native modules (keytar, better-sqlite3, tree-sitter grammars).
-#     Distroless doesn't ship those; adding them defeats the "small
-#     attack surface" story. Phase 8 security hardening could migrate
-#     via Chainguard Node image which includes glibc + minimal apt.
+# WHY `-dev` variant for runtime (vs the fully distroless `cgr.dev/chainguard/node:latest`):
+#   The runtime stage runs `yarn workspaces focus --all --production`
+#   at build time to install production-only deps into the image.
+#   `yarn` is not in the distroless variant — it ships only the node
+#   binary. Moving the `workspaces focus` step to the builder stage
+#   would let us go full-distroless but requires re-engineering the
+#   bundle layout. Phase 10 polish task.
+#
+# WHY swap `apt-get install` for `apk add`:
+#   Chainguard images are Wolfi-based, not Debian-based. `apk` is
+#   Wolfi's package manager (Alpine-descended, not glibc-incompatible —
+#   Wolfi ships glibc, not musl, so native modules compile cleanly).
 #
 # Context: this Dockerfile expects docker build to be run with context
 # = portal/ (project root for the Backstage workspace), NOT with
@@ -35,7 +45,7 @@
 # ─────────────────────────────────────────────────────────────────
 # Stage 1: deps — install dependencies, cache yarn resolution
 # ─────────────────────────────────────────────────────────────────
-FROM node:22-trixie-slim AS deps
+FROM cgr.dev/chainguard/node:latest-dev AS deps
 
 WORKDIR /build
 
@@ -46,18 +56,20 @@ COPY backstage.json ./
 COPY packages/app/package.json ./packages/app/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 
-# Install OS deps native modules need
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Install OS deps native modules (better-sqlite3, tree-sitter) need
+# to compile. Wolfi's apk ships these packages. Needs root; we're
+# in the -dev variant which allows that.
+USER root
+RUN apk add --no-cache \
         python3 \
         make \
         g++ \
-        libsqlite3-dev && \
-    rm -rf /var/lib/apt/lists/*
+        sqlite-dev
+USER node
 
 # Install ALL deps (including devDeps — builder needs tsc etc.)
-RUN --mount=type=cache,target=/root/.yarn-cache,sharing=locked \
-    YARN_CACHE_FOLDER=/root/.yarn-cache \
+RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
+    YARN_CACHE_FOLDER=/home/node/.yarn-cache \
     yarn install --immutable
 
 # ─────────────────────────────────────────────────────────────────
@@ -83,23 +95,21 @@ RUN yarn tsc
 RUN yarn build:backend
 
 # ─────────────────────────────────────────────────────────────────
-# Stage 3: runtime — node:22-slim with production deps + bundle
+# Stage 3: runtime — Chainguard Node dev with production deps + bundle
 # ─────────────────────────────────────────────────────────────────
-FROM node:22-trixie-slim AS runtime
+FROM cgr.dev/chainguard/node:latest-dev AS runtime
 
-# Runtime OS deps: libsqlite3 for the SQLite plugin, ca-certificates
-# for HTTPS calls to GHCR/GitHub/etc.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libsqlite3-0 \
-        ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-# Switch to the unprivileged `node` user (uid 1000) that the base image provides
+# Runtime OS deps: sqlite-libs for better-sqlite3 at runtime,
+# ca-certificates for HTTPS calls.
+USER root
+RUN apk add --no-cache sqlite-libs ca-certificates
 USER node
+
 WORKDIR /app
 
-# Copy yarn infrastructure + lockfile (production install needs it)
+# Copy yarn infrastructure + lockfile (production install needs it).
+# Chainguard's `node` user is uid 65532 (not 1000 like the previous
+# Debian base). COPY --chown reflects that.
 COPY --chown=node:node --from=builder /build/.yarn ./.yarn
 COPY --chown=node:node --from=builder /build/.yarnrc.yml /build/backstage.json ./
 COPY --chown=node:node --from=builder /build/yarn.lock /build/package.json ./
@@ -109,9 +119,10 @@ COPY --chown=node:node --from=builder /build/yarn.lock /build/package.json ./
 COPY --chown=node:node --from=builder /build/packages/backend/dist/skeleton.tar.gz ./
 RUN tar xzf skeleton.tar.gz && rm skeleton.tar.gz
 
-# Install production-only deps (strips devDeps — much smaller runtime)
+# Install production-only deps (strips devDeps — much smaller runtime).
+# uid=65532 matches Chainguard's `node` user.
 ENV NODE_ENV=production
-RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=1000,gid=1000 \
+RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
     YARN_CACHE_FOLDER=/home/node/.yarn-cache \
     yarn workspaces focus --all --production
 
