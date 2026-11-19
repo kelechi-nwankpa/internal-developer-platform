@@ -1,0 +1,91 @@
+---
+# disallow-latest.yaml — forbid :latest image tags.
+#
+# Phase 8 Wave 2 Task 8W2.3. First of 5 core ClusterPolicies.
+#
+# Why this rule is non-negotiable:
+#   `:latest` is a moving tag. A pod that worked yesterday may fail
+#   today because the image behind `:latest` shifted. For a GitOps
+#   platform where "what's running" must match "what's in git",
+#   floating tags are an unresolvable drift source.
+#
+# CLAUDE.md §9 non-negotiable:
+#   "No `:latest` image tags in Kubernetes manifests."
+#   This policy enforces that rule at admission time instead of
+#   trusting PR reviewers to spot it.
+#
+# Mode: Audit (Wave 2.3). Promoted to Enforce in Wave 2.4 after
+# PolicyReports confirm no accidental violations in the current
+# cluster state.
+#
+# Exemptions:
+#   - kube-system: control plane pods may legitimately use :latest
+#     for dev-image-pull-policy patterns.
+#   - kyverno: the engine's own operator images.
+#   - local-path-storage: kind's built-in storage provisioner.
+#   These are the three namespaces from the "upstream distribution"
+#   layer that we don't own.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest
+  annotations:
+    policies.kyverno.io/title: Disallow :latest image tags
+    policies.kyverno.io/category: Best Practices, Phase 8 Wave 2
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Image tags that float (`:latest`, no tag at all, pure digest-less
+      refs) make the cluster's state non-reproducible. Every container
+      image must be pinned to a specific tag or digest.
+spec:
+  # Wave 2.3 ships every policy in Audit. PolicyReports surface
+  # violations without blocking admission. Promote to Enforce in
+  # Wave 2.4 after reviewing reports.
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Container image must be pinned to a specific tag or digest.
+          `:latest` (or no tag at all) is forbidden per CLAUDE.md §9.
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
+            # initContainers: same rule applies. Pattern on the
+            # whole spec covers both.
+
+    - name: require-image-tag-on-init
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Init container image must be pinned to a specific tag or
+          digest. `:latest` (or no tag at all) is forbidden.
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "!*:latest"

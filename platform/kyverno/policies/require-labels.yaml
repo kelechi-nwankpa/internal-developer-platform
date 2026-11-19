@@ -1,0 +1,71 @@
+---
+# require-labels.yaml — require standard labels for observability
+# + ownership.
+#
+# Phase 8 Wave 2 Task 8W2.3. Fifth and final core ClusterPolicy
+# for Wave 2.3.
+#
+# Why this rule matters:
+#   Labels are how everything else in the cluster refers to a pod:
+#     - Services select pods by label
+#     - NetworkPolicy allow/deny rules select by label (Task 8W2.6)
+#     - Prometheus ServiceMonitor targets by label
+#     - Grafana dashboards group by label
+#     - Backstage's Kubernetes plugin queries by label
+#   A pod without the standard labels is effectively invisible to
+#   the platform. The golden-path template (Phase 6) already ships
+#   these labels; this policy ensures anything NOT from the template
+#   also carries them.
+#
+# Required labels (Kubernetes recommended set + ours):
+#   - app.kubernetes.io/name       (the service name)
+#   - app.kubernetes.io/part-of    (the owning team/system)
+#
+# Mode: Audit (Wave 2.3), promoted to Enforce in Wave 2.4.
+#
+# Known violations to accept in audit review:
+#   - Many chart-installed Pods (Backstage, ArgoCD, etc.) use the
+#     chart's conventions which include these labels. Should be clean.
+#   - Scratch/debug pods (ephemeral `kubectl run`) will fail this
+#     policy. That's a feature, not a bug — scratch pods shouldn't
+#     be long-lived in a GitOps cluster.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-labels
+  annotations:
+    policies.kyverno.io/title: Require standard Kubernetes labels
+    policies.kyverno.io/category: Best Practices, Phase 8 Wave 2
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods must carry app.kubernetes.io/name and app.kubernetes.io/part-of
+      labels so Services, NetworkPolicies, Prometheus, Grafana, and
+      Backstage can all target them consistently.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-name-and-part-of
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Pods must have labels `app.kubernetes.io/name` and
+          `app.kubernetes.io/part-of`. See the golden-path template
+          in templates/nodejs-fastify-svc/ for the canonical shape.
+        pattern:
+          metadata:
+            labels:
+              app.kubernetes.io/name: "?*"
+              app.kubernetes.io/part-of: "?*"

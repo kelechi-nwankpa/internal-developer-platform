@@ -1,0 +1,45 @@
+---
+# kyverno-policies.yaml — ArgoCD Application that syncs Kyverno
+# ClusterPolicies from platform/kyverno/policies/.
+#
+# Phase 8 Wave 2 Task 8W2.3. Separate from kyverno.yaml (the engine
+# install) so each follows its own lifecycle: engine upgrades move
+# with chart releases, policy changes move with security reviews.
+# Same split-by-lifecycle pattern as cert-manager / cert-manager-issuers
+# and vault / vault-config.
+#
+# Policies ship in Audit mode in 8W2.3 — PolicyReports surface
+# violations without blocking admission. 8W2.4 reviews reports, fixes
+# any workload violations, and promotes each policy to Enforce one at
+# a time (per-policy ratchet, not a big-bang flip).
+#
+# See: platform/kyverno/policies/
+#      docs/phases/phase-8-security-hardening.md (Wave 2 section)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/kyverno/policies
+
+  destination:
+    server: https://kubernetes.default.svc
+    # ClusterPolicies are cluster-scoped; namespace here is a defensive
+    # default per our established convention.
+    namespace: kyverno
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

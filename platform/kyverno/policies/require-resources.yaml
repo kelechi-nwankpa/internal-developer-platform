@@ -1,0 +1,67 @@
+---
+# require-resources.yaml — require resource requests + limits.
+#
+# Phase 8 Wave 2 Task 8W2.3. Second of 5 core ClusterPolicies.
+#
+# Why this rule matters:
+#   A pod without requests has no scheduling budget — the scheduler
+#   places it anywhere with capacity, then it can starve other pods.
+#   A pod without limits can consume unbounded CPU/memory, triggering
+#   noisy-neighbor incidents and node-level OOM kills.
+#   Together they're the baseline for predictable pod behavior.
+#
+# What's required:
+#   - resources.requests.cpu
+#   - resources.requests.memory
+#   - resources.limits.cpu
+#   - resources.limits.memory
+#   All four must be present on every container. Not just "limits
+#   derived from requests" — our template ships explicit values for
+#   both so developers see them.
+#
+# Mode: Audit (Wave 2.3), promoted to Enforce in Wave 2.4.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resources
+  annotations:
+    policies.kyverno.io/title: Require resource requests + limits
+    policies.kyverno.io/category: Best Practices, Phase 8 Wave 2
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods must declare resource requests and limits for CPU and
+      memory on every container. Prevents scheduling into capacity-
+      unknown nodes and noisy-neighbor incidents.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-container-resources
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Every container must declare resources.requests.cpu,
+          resources.requests.memory, resources.limits.cpu, and
+          resources.limits.memory. This pod is missing one or more.
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"

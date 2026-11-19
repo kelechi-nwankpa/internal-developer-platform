@@ -1,0 +1,80 @@
+---
+# require-non-root.yaml — require containers to run as non-root.
+#
+# Phase 8 Wave 2 Task 8W2.3. Third of 5 core ClusterPolicies.
+#
+# Why this rule matters:
+#   A container running as root inside the container also has root
+#   inside the container's user namespace. If an attacker escapes
+#   the container (CVE in runc, kernel bug, misconfigured mount),
+#   they land as root on the host. Running as a non-root UID is the
+#   single highest-leverage container hardening step.
+#
+# What's required:
+#   - pod OR container has `securityContext.runAsNonRoot: true`, OR
+#   - pod OR container has `securityContext.runAsUser` set to a
+#     non-zero value
+#
+# Mode: Audit (Wave 2.3), promoted to Enforce in Wave 2.4.
+#
+# Known exemption surface for 2.4 promotion:
+#   Prometheus node-exporter runs as root (it reads /proc + /sys).
+#   Expected to show up in audit reports; will need a per-namespace
+#   or per-labels exemption when promoting this policy.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root
+  annotations:
+    policies.kyverno.io/title: Require non-root containers
+    policies.kyverno.io/category: Pod Security Standards, Phase 8 Wave 2
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Containers must run as a non-root user. Set runAsNonRoot: true
+      or runAsUser to a non-zero value at the pod or container level.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Containers must run as a non-root user. Set
+          securityContext.runAsNonRoot: true at the pod level, or
+          securityContext.runAsUser to a non-zero value at the pod
+          or container level.
+        anyPattern:
+          # Option 1: pod-level runAsNonRoot: true
+          - spec:
+              securityContext:
+                runAsNonRoot: true
+
+          # Option 2: pod-level runAsUser to a non-zero value
+          - spec:
+              securityContext:
+                runAsUser: ">0"
+
+          # Option 3: every container has its own runAsNonRoot: true
+          - spec:
+              containers:
+                - securityContext:
+                    runAsNonRoot: true
+
+          # Option 4: every container has its own runAsUser > 0
+          - spec:
+              containers:
+                - securityContext:
+                    runAsUser: ">0"

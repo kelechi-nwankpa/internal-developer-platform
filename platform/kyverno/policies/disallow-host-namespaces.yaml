@@ -1,0 +1,90 @@
+---
+# disallow-host-namespaces.yaml — forbid hostPath, hostNetwork,
+# hostPID, hostIPC.
+#
+# Phase 8 Wave 2 Task 8W2.3. Fourth of 5 core ClusterPolicies.
+#
+# Why this rule matters:
+#   Each "host*" field punches a hole from the pod into the host:
+#     - hostPath: mounts a host filesystem path into the container.
+#       An attacker with container escape OR a compromised image can
+#       read/write host files (kubeconfig, SSH keys, container runtime
+#       socket).
+#     - hostNetwork: the pod shares the host's network namespace.
+#       Bypasses ALL NetworkPolicy. The pod can bind to host ports.
+#     - hostPID: shares the host process namespace. ps auxwww from
+#       inside the pod shows every process running on the node.
+#     - hostIPC: shares the host IPC namespace. Can snoop/inject
+#       shared memory segments.
+#
+#   Together they form the standard container-breakout surface. The
+#   only legitimate users are system agents (node-exporter, CNI
+#   plugins) running in kube-system.
+#
+# Mode: Audit (Wave 2.3), promoted to Enforce in Wave 2.4.
+#
+# Known violations to accept in audit review:
+#   - metrics-server / node-exporter in the monitoring namespace
+#     need hostNetwork for scraping node metrics. Will need targeted
+#     exemption when promoting to Enforce.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-host-namespaces
+  annotations:
+    policies.kyverno.io/title: Disallow host namespaces + hostPath mounts
+    policies.kyverno.io/category: Pod Security Standards, Phase 8 Wave 2
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods must not share the host network, PID, or IPC namespaces
+      and must not mount hostPath volumes. These are container-
+      breakout surfaces. Only system agents in kube-system may use
+      them.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: disallow-host-namespaces
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Pods must not set hostNetwork, hostPID, or hostIPC. These
+          bypass isolation boundaries.
+        pattern:
+          spec:
+            =(hostNetwork): "false"
+            =(hostPID): "false"
+            =(hostIPC): "false"
+
+    - name: disallow-hostpath
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - local-path-storage
+      validate:
+        message: >-
+          Pods must not mount hostPath volumes. Use a PersistentVolumeClaim
+          or an emptyDir/configMap/secret volume instead.
+        pattern:
+          spec:
+            =(volumes):
+              - X(hostPath): "null"
