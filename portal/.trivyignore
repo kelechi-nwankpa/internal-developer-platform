@@ -7,230 +7,96 @@
 #   - Trivy still prints these on every CI run (gitleaks-style visibility)
 # ────────────────────────────────────────────────────────────────────
 #
-# ─── CONTEXT (why so many at once) ──────────────────────────────────
-# Backstage's own package.json pulls in ~1700 transitive deps. 26 of
-# them have published CVEs as of 2026-10-27 — all HIGH or CRITICAL,
-# almost all Denial-of-Service in widely-used libraries (brace-expansion,
-# tar, undici, picomatch, basic-ftp, @graphql-tools/utils, ...).
+# ─── CONTEXT ────────────────────────────────────────────────────────
+# Backstage pulls in ~1700 transitive deps; a handful always carry
+# open CVEs. The 8W3.3 sweep (2026-11-19) fixed everything fixable
+# without a major-version jump:
+#   - yarn up -R for in-range stale resolutions
+#     (node-forge 1.4.3, follow-redirects 1.16.3, undici 7.30.2/8.12.4,
+#      markdown-it 14.3.3, body-parser 1.20.9/2.4.0, multer 2.5.0)
+#   - yarn resolutions for out-of-range requests
+#     (undici exact-pin 7.29.0 → ^7.30.1)
+#   - base-image CVEs (zlib1g) died with the 8W3.2 Wolfi swap
+#   - 12 stale blocks (tar, brace-expansion, picomatch, sigstore,
+#     pacote, ip-address, zod, ...) had already been fixed by normal
+#     dependency drift — verified gone via local Trivy fs scan of
+#     yarn.lock, which is a SUPERSET of the image scan (image strips
+#     devDeps), then pruned.
 #
-# For OUR deployment context:
-#   1. Backstage runs behind an Ingress with TLS + authenticated session
-#      (guest mode on kind; GitHub OAuth or SSO on EKS per Phase 9)
-#   2. Request rate-limiting is applied at the Ingress / LB layer
-#   3. The DoS CVEs are exploitable by sending crafted inputs; our
-#      threat model has those inputs already filtered by the auth
-#      proxy before they reach Backstage's Node runtime
-#   4. The one Backstage-SPECIFIC CVE (CVE-2026-106492, service
-#      credential delegation bypass in @backstage/backend-defaults
-#      <0.17.8) requires a direct Backstage dep bump — out of scope
-#      for a kind-local MVP; Phase 8 security hardening addresses it
-#      together with the whole CVE sweep
+# What remains falls in exactly two buckets:
+#   1. Fix requires a major-version jump of a transitive we don't
+#      control (undici 5→6 under urllib@3) — tolerated with mitigation
+#      until the owning @backstage package line moves
+#   2. Fix requires bumping the @backstage framework line itself —
+#      that's a dedicated Backstage-upgrade task, not a resolutions
+#      patch (resolutions on framework packages break plugin wiring)
 #
-# Full remediation (bump @backstage/* + yarn resolutions for transitives
-# that have risky major-version jumps like tar 6→7, undici 5→6,
-# @graphql-tools/utils 8→12) is a dedicated Phase 8 sub-wave.
-#
-# Review cycle: WEEKLY (7-day). The upstream Backstage team ships a
-# release every 2 weeks and the latest release almost always resolves
-# a chunk of these transitives. Re-fetch scan output; remove entries
-# whose latest-tag Backstage has fixed; keep + document the rest.
-# Next review: 2026-11-03
-#
+# Review cycle: WEEKLY (7-day). Re-run the local scan
+#   (docker run --rm -v "$PWD:/scan" aquasec/trivy fs \
+#      --scanners vuln --severity HIGH,CRITICAL /scan)
+# against portal/; remove entries that no longer appear.
+# Next review: 2026-11-26
+
 # ─── CVEs: @backstage/backend-defaults ──────────────────────────────
 # Access control bypass via improper service credential delegation.
-# Fix: @backstage/backend-defaults >= 0.17.8 (we're on 0.12.3).
-# Mitigation: Backstage runs with auth=guest on kind; no credential
-# delegation surface exploitable without first bypassing the ingress.
+# Fix: @backstage/backend-defaults >= 0.17.8. The tree holds BOTH
+# 0.17.8+ (our backend) and an old 0.12.3 copy pinned by an older
+# plugin's dependency range — the flagged copy is the 0.12.3 one.
+# Mitigation: since Phase 8 Wave 1 all requests pass GitHub OAuth
+# (guest provider inert); the delegation bypass needs an
+# authenticated foothold first. Real fix is the Backstage framework
+# bump (dedicated upgrade task).
 CVE-2026-106492
 
 # ─── CVEs: @fastify/busboy ──────────────────────────────────────────
-# DoS from crafted form-data headers. Fix: 3.2.1 (we're on 2.1.1).
-# Mitigation: Backstage's form endpoints are all authenticated.
+# DoS from crafted form-data headers. Fix: 3.2.1 (we're on 2.1.1,
+# major jump). Mitigation: Backstage's form endpoints are all behind
+# GitHub OAuth since Wave 1.
 CVE-2026-19481
 
 # ─── CVEs: @graphql-tools/utils ─────────────────────────────────────
-# DoS via prototype pollution in mergeDeep. Fix: 12.0.1 (we're on 8.x).
-# Mitigation: Backstage doesn't expose GraphQL mutations to anonymous
-# traffic; prototype pollution requires attacker-controlled input to
-# mergeDeep which is only reached via internal API calls.
+# DoS via prototype pollution in mergeDeep. Fix: 12.0.1 (we're on
+# 8.13.1, 4-major jump). Mitigation: Backstage doesn't expose GraphQL
+# mutations to anonymous traffic; mergeDeep is only reached via
+# internal API calls.
 CVE-2026-104852
 
 # ─── CVEs: basic-ftp ────────────────────────────────────────────────
-# DoS via crafted Unix directory listings. Fix: 6.2.1 (we're on 5.3.1).
-# Mitigation: Backstage doesn't initiate FTP from user input.
+# DoS via crafted Unix directory listings. Fix: 6.2.1 (we're on
+# 5.3.1, major jump). Mitigation: Backstage doesn't initiate FTP from
+# user input.
 CVE-2026-102990
 
-# ─── CVEs: brace-expansion ──────────────────────────────────────────
-# 5 DoS variants (stack exhaustion, uncontrolled recursion, exponential
-# complexity, memory exhaustion, unbounded intermediate arrays).
-# Fix: 2.1.5+ (we're on 2.0.2). Mitigation: brace-expansion is used
-# internally by glob matching; no user-controlled brace patterns reach it.
-CVE-2026-102276
-CVE-2026-102278
-CVE-2026-13149
-CVE-2026-14257
-CVE-2026-69152
-
-# ─── CVEs: ip-address ───────────────────────────────────────────────
-# SSRF via inconsistent IP address parsing. Fix: 10.3.1 (we're on 10.1.0).
-# Mitigation: Backstage's UrlReader has deny-by-default SSRF protection
-# (ADR applied in Phase 5 Wave 1 for raw.githubusercontent.com allow).
-CVE-2026-69192
-
-# ─── CVEs: pacote ───────────────────────────────────────────────────
-# DoS via crafted spec.rawSpec in addGitSha. Fix: 21.5.1 (we're on 19/20).
-# Mitigation: pacote is used by @backstage/cli for scaffolder templates;
-# no user-controlled npm specs reach it in our deployment (templates
-# are curated, not user-authored).
-CVE-2026-9496
-
-# ─── CVEs: picomatch ────────────────────────────────────────────────
-# ReDoS via crafted extglob patterns. Fix: 4.0.4 (we're on 4.0.3).
-# Mitigation: picomatch is used in glob matching internally; no
-# user-controlled glob patterns reach it.
-CVE-2026-33671
-
-# ─── CVEs: sigstore ─────────────────────────────────────────────────
-# Unauthorized certificates accepted. Fix: 4.1.1 (we're on 3.1.0).
-# Mitigation: Backstage doesn't do image signature verification itself
-# (that's Phase 8 Kyverno's job).
-CVE-2026-48815
-
-# ─── CVEs: tar (node-tar) ───────────────────────────────────────────
-# 8 CVEs: gzip bomb DoS (CRITICAL), arbitrary file overwrite via
-# path/symlink attacks, hardlink traversal, long-path DoS, malformed
-# archive DoS. Fix: 7.5.19+ (we're on 6.2.1).
-# Mitigation: tar is used by yarn install itself + by scaffolder
-# template fetching. Yarn install only runs at build time (not
-# runtime), and scaffolder templates come from a curated repo.
-CVE-2026-23745
-CVE-2026-23950
-CVE-2026-24842
-CVE-2026-26960
-CVE-2026-29786
-CVE-2026-31802
-CVE-2026-59873
-CVE-2026-59874
-CVE-2026-73566
-
-# ─── CVEs: undici ───────────────────────────────────────────────────
-# 3 DoS CVEs (unbounded memory, invalid WebSocket). Fix: 6.27.0+ (we're
-# on 5.29.0). Mitigation: undici is Backstage's HTTP client for internal
-# service-to-service calls (K8s API, GitHub API). Not exposed to
-# untrusted inputs.
+# ─── CVEs: undici (5.x line only, under urllib@3) ───────────────────
+# 5 CVEs against undici 5.29.0: unbounded-memory DoS (CVE-2026-12151,
+# CVE-2026-1526), invalid-WebSocket DoS (CVE-2026-2229), certificate
+# validation bypass via dropped options (CVE-2026-109383), TLS
+# renegotiation DoS (CVE-2026-87018). No fixed 5.x release exists —
+# fixes start at 6.27.0/6.29.1, a major jump under urllib@3 (built
+# for undici 5 APIs), itself pinned by the old
+# @backstage/backend-defaults@0.12.3 copy (see CVE-2026-106492).
+# The 8W3.3 sweep moved every OTHER undici line to patched versions
+# (7.30.2 / 8.12.4); this is the single remaining vulnerable copy.
+# Mitigation: undici here is an internal in-cluster HTTP client
+# (K8s API, GitHub API) — not reached by untrusted input; the
+# cert-validation bypass only applies to Backstage calling OUT to
+# known-good endpoints. Dies with the Backstage framework bump.
 CVE-2026-12151
 CVE-2026-1526
 CVE-2026-2229
-
-# ─── CVEs: urllib ───────────────────────────────────────────────────
-# Credential leakage via cross-origin redirects. Fix: 4.9.1 (we're on
-# 3.27.3). Mitigation: Backstage doesn't follow user-controlled redirects.
-CVE-2026-55553
-
-# ─── NEW (added after Trivy DB refresh 2026-10-27) ──────────────────
-# ─── CVEs: @azure/msal-node ─────────────────────────────────────────
-# MSAL Node authorization code flow may disclose parameters to third
-# parties. Fix: 7.1.0 (we're on 6.0.1). Mitigation: msal-node is
-# transitively pulled by @backstage/plugin-auth-backend-module-azure
-# which we don't configure/use — Azure OAuth is not enabled in our
-# auth providers list.
-CVE-2026-109461
-
-# ─── CVEs: body-parser ──────────────────────────────────────────────
-# DoS via unhandled exception on malformed JSON. Fix: 1.20.9 (we're
-# on 1.20.8 — one patch bump away). Mitigation: express/body-parser
-# is behind the auth proxy; malformed JSON would 400 quickly.
-CVE-2026-111181
-
-# ─── CVEs: markdown-it ──────────────────────────────────────────────
-# DoS via unclosed autolink patterns. Fix: 14.3.3 (we're on 14.3.2).
-# Mitigation: markdown-it is used by TechDocs rendering; techdocs is
-# disabled in our MVP (no catalog pages trigger it).
-CVE-2026-111758
-
-# ─── CVEs: multer ───────────────────────────────────────────────────
-# DoS via aborted request during multipart upload. Fix: 2.5.0 (we're
-# on 2.4.0). Mitigation: no scaffolder uploads enabled in Wave 2
-# (Wave 3 may; revisit then).
-CVE-2026-113872
-
-# ─── CVEs: undici (second finding) ──────────────────────────────────
-# DoS via unhandled stream error. Fix: 7.30.1 (one found at 7.30.0,
-# other transitive on 6.x). Shares the mitigation of the earlier
-# undici entries — internal in-cluster HTTP client only.
-CVE-2026-109869
-
-# ─── CVEs: zod ──────────────────────────────────────────────────────
-# DoS via unbounded array validation. Fix: 4.6.6 (we're on 3.25.76 —
-# 1 major jump risk). Mitigation: zod validates INTERNAL types in
-# Backstage; no user-controlled schema input reaches it.
-CVE-2023-54404
-
-# ─── CVEs: undici (third finding, 2026-10-29) ───────────────────────
-# 3 more undici CVEs surfaced when Wave 3 plugins (ArgoCD + TeraSky
-# Crossplane) pulled in additional undici transitives:
-#   - CVE-2026-109383: Certificate validation bypass via dropped options
-#   - CVE-2026-109829: Cache poisoning + information disclosure
-#   - CVE-2026-87018:  DoS via TLS renegotiation with malformed cert
-# Fix: undici 6.29.1 / 7.30.1 / 8.12.2 (currently on 5.29.0, 7.30.0, 8.11.2
-# across transitives). Mitigation: same as earlier undici blocks —
-# internal in-cluster HTTP client, not reached by untrusted input;
-# cert-validation bypass only applies to Backstage calling OUT to our
-# own services (K8s API, GitHub via App) which are known-good.
-# Phase 8 security sweep will bump transitives via yarn resolutions.
 CVE-2026-109383
-CVE-2026-109829
 CVE-2026-87018
 
-# ─── CVEs: node-forge (new finding, 2026-11-11) ─────────────────────
-# 7 HIGH CVEs across node-forge 1.4.0:
-#   - CVE-2026-118779: DoS via inefficient parsing
-#   - CVE-2026-118782: integrity verification bypass
-#   - CVE-2026-119187: DoS via call-stack exhaustion
-#   - CVE-2026-119188: DoS via interleaved parsing
-#   - CVE-2026-119190: server/client impersonation
-#   - CVE-2026-119191: DoS via nested ASN.1
-#   - CVE-2026-119192: RSA PKCS#1 v1.5 signature forgery (non-canonical)
-# Fix: node-forge 1.4.1 (patch bump). Mitigation: node-forge is used by
-# Backstage's auth libraries for JWT signing against KNOWN keys
-# (GitHub App PEM loaded from Vault at startup). We are signing, not
-# verifying external signatures from untrusted sources; the forgery
-# and impersonation vectors require attacker control of either the
-# signing key or the verifying party — neither applies here. DoS
-# vectors require untrusted input into node-forge; we don't expose
-# node-forge APIs to request handlers.
-# Phase 8 Wave 3 CVE sweep: add `node-forge: "^1.4.1"` under
-# resolutions in portal/package.json.
-CVE-2026-118779
-CVE-2026-118782
-CVE-2026-119187
-CVE-2026-119188
-CVE-2026-119190
-CVE-2026-119191
-CVE-2026-119192
+# ─── CVEs: urllib ───────────────────────────────────────────────────
+# Credential leakage via cross-origin redirects. Fix: 4.9.1 — also in
+# the tree; the flagged copy is urllib@3.27.3 under the old
+# backend-defaults@0.12.3 (same root cause as the undici 5.x block).
+# Mitigation: Backstage doesn't follow user-controlled redirects.
+CVE-2026-55553
 
-# ─── CVEs: follow-redirects (new finding, 2026-11-11) ───────────────
-# Information disclosure via redirect handling. Fix: 1.16.2 (patch
-# bump from 1.16.1). Mitigation: follow-redirects is used by Backstage's
-# axios-based integrations (GitHub API, TechDocs fetches) where
-# redirects come from known-good hosts (github.com, raw.githubusercontent.com
-# — see backend.reading.allow). No user-controlled URL reaches it.
-# Phase 8 Wave 3 CVE sweep: add `follow-redirects: "^1.16.2"` under
-# resolutions in portal/package.json.
-CVE-2026-116689
-
-# ─── CVEs: zlib1g (new finding, 2026-11-11) ─────────────────────────
-# Base-image system package (node:22-trixie-slim ships Debian 13's
-# zlib1g 1:1.3.dfsg+really1.3.1-1+b1; fix is +deb13u1).
-#   - CVE-2026-85091: heap buffer overflow in gz_vacate()
-#   - CVE-2026-76844: webpack-dev-middleware info disclosure (also
-#     tagged against zlib due to shared dependency surface)
-# Fix: `apt-get update && apt-get upgrade zlib1g` in the Dockerfile,
-# OR swap to Chainguard base (planned for 8W3). Mitigation: Backstage
-# doesn't accept untrusted compressed input into zlib — static assets
-# are served via Node's http module, not through a gzip-in path that
-# routes attacker bytes into zlib's gz_vacate.
-# Phase 8 Wave 3 CVE sweep: swap node:22-trixie-slim for a Chainguard
-# distroless Node image.
-CVE-2026-85091
-CVE-2026-76844
+# ─── CVEs: @azure/msal-node ─────────────────────────────────────────
+# MSAL Node authorization code flow may disclose parameters to third
+# parties. Fix: 7.1.0 (we're on 6.0.1, major jump). Mitigation:
+# msal-node is transitively pulled by the Azure auth module which we
+# don't configure — Azure OAuth is not in our providers list.
+CVE-2026-109461
