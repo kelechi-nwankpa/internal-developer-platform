@@ -72,7 +72,7 @@ spec:
           image:
             registry: ghcr.io
             repository: kelechi-nwankpa/internal-developer-platform
-            tag: "sha-a9adcf7"
+            tag: "sha-ae5593c"
 
           # ───────────────────────────────────────────────────────────
           # Pod Security Standards compliance (Phase 8 Wave 3)
