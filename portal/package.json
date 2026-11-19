@@ -63,5 +63,16 @@
       "prettier --write"
     ]
   },
-  "packageManager": "yarn@4.13.0"
+  "packageManager": "yarn@4.13.0",
+  "dependenciesMeta": {
+    "@tree-sitter-grammars/tree-sitter-yaml": {
+      "built": false
+    },
+    "tree-sitter": {
+      "built": false
+    },
+    "tree-sitter-json": {
+      "built": false
+    }
+  }
 }

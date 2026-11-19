@@ -5,31 +5,37 @@
 # Phase 8 Wave 3 Task 8W3.2: base swapped from node:22-trixie-slim
 # (Debian) to cgr.dev/chainguard/wolfi-base + apk-installed Node 22.
 #
-# WHY wolfi-base + `apk add nodejs-22` instead of chainguard/node:
-#   Root-caused across 4 CI iterations + a local repro (full story in
+# WHY wolfi-base + `apk add nodejs-24` instead of chainguard/node:
+#   Root-caused across 5 CI iterations + local repros (full story in
 #   docs/phases/phase-8-security-hardening.md Wave 3 bugs):
-#     - Chainguard's FREE tier only publishes `latest` tags; the
-#       node:latest-dev image ships Node 26 (nodejs-26 apk package).
-#     - Backstage's engines field allows "22 || 24" — and the older
-#       native modules in its tree (tree-sitter 0.21, cpu-features
-#       0.0.10) fail node-gyp compilation against Node 26's V8
-#       headers. This was the real cause of the CI failures, NOT
-#       missing build packages.
-#     - Version-pinned images (node:22-dev) are Chainguard paid-tier
-#       only (MANIFEST_UNKNOWN on free pulls).
-#     - Wolfi's apk repo DOES ship versioned Node for free:
-#       `apk add nodejs-22` → 22.x (22.23.2 at time of writing).
-#   Local repro verified tree-sitter@0.21.1 + cpu-features@0.0.10 +
-#   better-sqlite3 all compile cleanly on wolfi-base + nodejs-22 +
-#   build-base + python3.
+#     - Chainguard's FREE tier only publishes `latest` image tags;
+#       node:latest-dev ships Node 26 — outside Backstage's engines
+#       range ("22 || 24") and incompatible with older native modules
+#       in its tree. Version-pinned IMAGES (node:22-dev) are paid-tier
+#       (MANIFEST_UNKNOWN on free pulls).
+#     - Wolfi's apk repo ships versioned Node free — BUT the free
+#       index only receives CVE-patch rebuilds on CURRENT streams.
+#       nodejs-22 sat at 22.23.2-r1 with 3 known-fixed HIGH CVEs whose
+#       patched builds (22.23.4+) are paid-catalog only. nodejs-24
+#       (24.22.3-r2) scanned CLEAN (local Trivy, zero findings).
+#     - Node 24 is inside Backstage's engines range, so: nodejs-24.
+#
+# WHY tree-sitter native builds are SKIPPED (see dependenciesMeta in
+# package.json — tree-sitter / tree-sitter-json / tree-sitter-yaml
+# have `built: false`):
+#   @swagger-api/apidom-parser-adapter-* exact-pin tree-sitter@0.21.1,
+#   whose C++ predates Node 24's V8 (ConditionalStackAllocatedBase
+#   compile error, verified by local node-gyp repro). The apidom
+#   adapters ship a web-tree-sitter (WASM) fallback for exactly this
+#   case, so skipping the native build is safe — the standard
+#   Backstage-community pattern for tree-sitter. cpu-features and
+#   better-sqlite3 compile clean on Node 24 (verified locally).
 #
 # WHY this keeps the Chainguard/Wolfi CVE story:
 #   wolfi-base is the same distroless-lineage distro Chainguard's
-#   images are built from — minimal package set, rebuilt on every
-#   upstream CVE fix. The `nodejs-22` apk tracks the latest 22.x
-#   patch, so we inherit Node security patches on rebuild while the
-#   MAJOR stays pinned to the project standard (CLAUDE.md §10,
-#   .nvmrc, Backstage engines).
+#   images are built from — minimal package set, rebuilt on upstream
+#   CVE fixes. The `nodejs-24` apk tracks the latest 24.x patch on
+#   rebuild; the MAJOR stays inside Backstage's supported range.
 #
 # USER model (differs from the chainguard/node attempts):
 #   wolfi-base defaults to root — so build stages (deps, builder)
@@ -57,7 +63,7 @@ FROM cgr.dev/chainguard/wolfi-base AS deps
 # build chain. `build-base` = Wolfi's gcc/g++/make meta-package.
 RUN apk upgrade --no-cache && \
     apk add --no-cache \
-        nodejs-22 \
+        nodejs-24 \
         npm \
         yarn-berry \
         build-base \
@@ -113,7 +119,7 @@ FROM cgr.dev/chainguard/wolfi-base AS runtime
 # linkage, ca-certificates for HTTPS.
 RUN apk upgrade --no-cache && \
     apk add --no-cache \
-        nodejs-22 \
+        nodejs-24 \
         yarn-berry \
         sqlite-libs \
         ca-certificates
