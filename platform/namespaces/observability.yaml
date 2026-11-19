@@ -1,0 +1,20 @@
+---
+# observability.yaml — PSS labels for the observability namespace.
+#
+# Phase 8 Wave 2 Task 8W2.7. Namespace already exists (created by the
+# otel-collector + loki + tempo + alloy Applications). This manifest
+# patches PSS labels onto it via SSA — label-only merge, no conflict.
+#
+# Profile: baseline. See platform/namespaces/README.md for rationale.
+# Short version: Loki + Tempo + Alloy are chart-managed with PSS
+# compliance varying across versions; baseline avoids a per-upgrade
+# PSS chase.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline

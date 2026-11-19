@@ -1,0 +1,22 @@
+---
+# argocd.yaml — PSS labels for the argocd namespace.
+#
+# Phase 8 Wave 2 Task 8W2.7. Namespace already exists (created by the
+# argocd-install Makefile target). This manifest patches PSS labels
+# onto it via ArgoCD + Server-Side Apply — no conflict with the
+# install-time apply because we only set label fields.
+#
+# Profile: baseline. See platform/namespaces/README.md for rationale.
+# Short version: ArgoCD's chart has mixed PSS compliance across its
+# sub-components (dex, redis, repo-server) and baseline strikes the
+# right balance — rejects the breakout surface, accepts the chart.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    # Kubernetes PSS admission plugin reads these three keys.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline

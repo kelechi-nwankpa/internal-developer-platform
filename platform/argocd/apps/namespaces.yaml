@@ -1,0 +1,43 @@
+---
+# namespaces.yaml — ArgoCD Application that patches labels onto
+# existing namespaces.
+#
+# Phase 8 Wave 2 Task 8W2.7. Follows the split-by-lifecycle pattern:
+# the namespaces themselves are created by other Applications (which
+# use CreateNamespace=true); this one owns the PSS label fields on
+# top. SSA field-manager semantics keep the labels patch orthogonal
+# to the creator Applications.
+#
+# See: platform/namespaces/README.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespaces
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/namespaces
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Defensive default; each manifest specifies its own target
+    # namespace via metadata.name.
+    namespace: default
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # SSA is critical here — we're patching fields on an existing
+      # resource that a different Application owns. SSA's field-manager
+      # tracking ensures we only touch label fields, not the creator's
+      # other fields.
+      - ServerSideApply=true

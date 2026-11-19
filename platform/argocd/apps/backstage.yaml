@@ -480,3 +480,17 @@ spec:
       # Backstage chart resources aren't especially large — SSA is still
       # good defensive default per our established pattern (ADR-0014).
       - ServerSideApply=true
+    # Phase 8 Wave 2 Task 8W2.7 — Pod Security Standards labels on the
+    # namespace via ArgoCD's managed-namespace-metadata. `restricted` is
+    # the strictest profile; works for backstage because:
+    #   - Our custom image runs as a non-root user (Dockerfile USER directive)
+    #   - No privileged/hostPath/hostNetwork
+    #   - Backstage's Postgres sub-chart (bitnami/postgresql) also runs non-root
+    # The chart's SecurityContext defaults already satisfy restricted.
+    # audit + warn levels match enforce so any future workload addition
+    # that violates restricted surfaces in events + kubectl warnings.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/warn: restricted
