@@ -1,0 +1,43 @@
+---
+# backstage-deny-default.yaml — default-deny NetworkPolicy for the
+# backstage namespace.
+#
+# Phase 8 Wave 2 Task 8W2.6. Companion to backstage-targeted-allow.yaml.
+# This policy denies every flow NOT explicitly allowed by a targeted
+# allow rule. It MUST ship with (or after) the targeted-allow policies,
+# never before — a deny-default with no corresponding allows isolates
+# every pod in the namespace.
+#
+# How Kubernetes NetworkPolicy evaluation works:
+#   - A pod is "selected" by any policy whose podSelector matches.
+#   - If a pod is selected by at least one Ingress policy, ALL ingress
+#     is denied EXCEPT what matching Ingress rules allow.
+#   - If a pod is selected by at least one Egress policy, ALL egress
+#     is denied EXCEPT what matching Egress rules allow.
+#   - Two policies on the same pod UNION their allow rules.
+#
+# This policy selects EVERY pod (podSelector: {}) with EMPTY ingress
+# AND empty egress rules. Combined with the targeted-allow policies,
+# it says: "every pod is subject to policy enforcement; anything not
+# in an allow rule is denied."
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-deny-default
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  # Match every pod in the namespace.
+  podSelector: {}
+  # Both directions are governed. If a direction isn't in policyTypes,
+  # it's untouched (default allow-all).
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules + Ingress in policyTypes = deny all ingress
+  # unless another policy allows it.
+  # No egress rules + Egress in policyTypes = same for egress.

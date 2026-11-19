@@ -1,0 +1,255 @@
+---
+# backstage-targeted-allow.yaml — targeted allow rules for the
+# backstage namespace.
+#
+# Phase 8 Wave 2 Task 8W2.6. REPLACES backstage-allow-all.yaml (which
+# gets pruned by ArgoCD when this file replaces it in Git).
+#
+# Order of effective-policy evaluation when a pod has multiple
+# NetworkPolicies:
+#   - If ANY policy with a matching podSelector allows a flow, the
+#     flow is allowed (union, not intersection).
+#   - If NO allow policy covers a flow, the flow is denied.
+# So this file + backstage-deny-default.yaml work together: targeted
+# allows cover known-good flows, deny-default says "if no allow matched,
+# reject".
+#
+# Dependency inventory for backstage (what the pod legitimately needs):
+#   EGRESS:
+#     - DNS resolution (kube-system/kube-dns:53 UDP+TCP)
+#     - backstage-postgresql:5432 TCP (intra-namespace, Backstage's DB)
+#     - vault.vault.svc:8200 TCP (ESO reads Vault at pod startup)
+#     - argocd-server.argocd.svc:443 TCP (ArgoCD plugin backend fetches)
+#     - kubernetes.default.svc:443 TCP (Kubernetes plugin backend)
+#     - raw.githubusercontent.com (catalog Location URLs — external internet)
+#     - api.github.com (GitHub App API calls — external internet)
+#     - github.com (OAuth flow — external internet)
+#   INGRESS:
+#     - port 7007 from anywhere (port-forward from the host; a real
+#       deploy would narrow this to the Ingress controller)
+#     - kube-probe from the kubelet (liveness/readiness)
+
+# ─────────────────────────────────────────────────────────────────────
+# Policy 1: allow DNS from every backstage pod
+# ─────────────────────────────────────────────────────────────────────
+# Every outbound connection starts with a DNS lookup. Without this,
+# nothing else works.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-dns
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# ─────────────────────────────────────────────────────────────────────
+# Policy 2: allow egress to Postgres (intra-namespace)
+# ─────────────────────────────────────────────────────────────────────
+# Backstage reads its catalog + template run history from the bundled
+# Postgres sub-chart.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-postgresql
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-postgresql
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  # Match only the backstage frontend/backend pod — the Postgres pod
+  # itself doesn't need egress TO itself.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# ─────────────────────────────────────────────────────────────────────
+# Policy 3: allow egress to Vault (via ESO, at startup)
+# ─────────────────────────────────────────────────────────────────────
+# ESO materialises Backstage's Secrets from Vault; the Secrets then
+# mount as env vars. Direct runtime egress to Vault is only needed
+# when ESO re-syncs, which is the external-secrets-controller's job,
+# not Backstage's. BUT: the Backstage pod does start up before ESO
+# finishes initial sync in some cases, and Backstage's own code
+# doesn't call Vault directly — ESO handles it. This rule is actually
+# unused in happy-path runtime; kept for the "ESO re-sync + Backstage
+# read-through" case that may land in later waves.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-vault
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-vault
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault
+      ports:
+        - port: 8200
+          protocol: TCP
+---
+# ─────────────────────────────────────────────────────────────────────
+# Policy 4: allow egress to ArgoCD (plugin backend fetches)
+# ─────────────────────────────────────────────────────────────────────
+# Phase 8 Wave 1 Task 8W1.5 wired the ArgoCD plugin's backend to call
+# argocd-server directly via undici. Without this allow rule the
+# plugin's Deployment tab stops working after we flip deny-default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-argocd
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-argocd
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: argocd
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-server
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+---
+# ─────────────────────────────────────────────────────────────────────
+# Policy 5: allow egress to kube-apiserver (Kubernetes plugin backend)
+# ─────────────────────────────────────────────────────────────────────
+# @backstage/plugin-kubernetes-backend calls the kube-apiserver at
+# https://kubernetes.default.svc to list pods/deployments/etc for the
+# Component Overview tab.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kube-apiserver
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-kube-apiserver
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes: [Egress]
+  egress:
+    - to:
+        # No podSelector/namespaceSelector — targeting the apiserver
+        # by Service IP via ipBlock. 10.96.0.1 is the default
+        # kubernetes.default.svc ClusterIP on kind. EKS uses a
+        # different range; Phase 9 updates this.
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# ─────────────────────────────────────────────────────────────────────
+# Policy 6: allow egress to the internet (GitHub OAuth + API + raw)
+# ─────────────────────────────────────────────────────────────────────
+# Backstage calls GitHub for OAuth sign-in, GitHub App API (Scaffolder
+# publish:github etc), and raw.githubusercontent.com for catalog
+# Location URLs. Expressing these by DNS name in NetworkPolicy isn't
+# supported — we use an ipBlock that covers all public IPv4 EXCEPT
+# the cluster's pod + service CIDRs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-internet
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-internet
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            # kind's default pod + service CIDRs — exclude these so
+            # this policy doesn't accidentally allow intra-cluster
+            # traffic that the per-service rules above should cover.
+            except:
+              - 10.244.0.0/16  # kind pod CIDR
+              - 10.96.0.0/12   # kind service CIDR
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+---
+# ─────────────────────────────────────────────────────────────────────
+# Policy 7: allow ingress on 7007 from anywhere + kubelet probes
+# ─────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-7007
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-ingress
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes: [Ingress]
+  ingress:
+    # Empty from: matches ALL sources — kubectl port-forward comes
+    # from the host, which isn't a pod with a selector. Phase 9 EKS
+    # tightens this to only the Ingress controller's pods.
+    - from: []
+      ports:
+        - port: 7007
+          protocol: TCP
