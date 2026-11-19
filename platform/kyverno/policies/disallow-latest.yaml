@@ -40,10 +40,11 @@ metadata:
       refs) make the cluster's state non-reproducible. Every container
       image must be pinned to a specific tag or digest.
 spec:
-  # Wave 2.3 ships every policy in Audit. PolicyReports surface
-  # violations without blocking admission. Promote to Enforce in
-  # Wave 2.4 after reviewing reports.
-  validationFailureAction: Audit
+  # Wave 2.4 promoted to Enforce: zero violations found across the
+  # cluster in audit mode. The golden-path template pins tags per
+  # release; nothing else was shipping :latest. Safest policy to
+  # enforce first.
+  validationFailureAction: Enforce
   background: true
   rules:
     - name: require-image-tag
