@@ -60,17 +60,23 @@ COPY packages/backend/package.json ./packages/backend/package.json
 # to compile. Wolfi's apk conventions: `build-base` is the meta-package
 # covering gcc + g++ + make (Alpine-descended naming; Debian equivalent
 # is `build-essential`). `python3` and `sqlite-dev` separately.
-# Needs root; we're in the -dev variant which allows that.
-USER root
+#
+# Chainguard's node:latest-dev default USER is root. We stay root
+# through the deps + builder stages — switching to a lower-privilege
+# user here runs into COPY-ownership semantics: COPY without --chown
+# puts files as root:root regardless of current USER, so a later
+# `USER node` + yarn install would fail with EACCES on node_modules/
+# creation. The runtime stage below drops to node:node with --chown
+# on every COPY.
 RUN apk add --no-cache \
         build-base \
         python3 \
         sqlite-dev
-USER node
 
-# Install ALL deps (including devDeps — builder needs tsc etc.)
-RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
-    YARN_CACHE_FOLDER=/home/node/.yarn-cache \
+# Install ALL deps (including devDeps — builder needs tsc etc.).
+# Runs as root; cache mount uid/gid default (root) matches.
+RUN --mount=type=cache,target=/root/.yarn-cache,sharing=locked \
+    YARN_CACHE_FOLDER=/root/.yarn-cache \
     yarn install --immutable
 
 # ─────────────────────────────────────────────────────────────────
