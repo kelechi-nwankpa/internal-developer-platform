@@ -49,7 +49,7 @@
     "@terasky/backstage-plugin-crossplane-permissions-backend": "^1.1.18",
     "app": "link:../app",
     "better-sqlite3": "^12.0.0",
-    "node-gyp": "^10.0.0",
+    "node-gyp": "^13.1.0",
     "pg": "^8.11.3"
   },
   "devDependencies": {
