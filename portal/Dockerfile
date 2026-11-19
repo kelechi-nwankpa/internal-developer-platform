@@ -47,36 +47,45 @@
 # ─────────────────────────────────────────────────────────────────
 FROM cgr.dev/chainguard/node:latest-dev AS deps
 
+# Chainguard's node:latest-dev default USER is `node` (uid 65532),
+# NOT root — matches the distroless variant's non-root-by-default
+# stance, just with shell + apk added for build steps. Three-way
+# COPY/USER gotcha this creates:
+#   - WORKDIR /build creates /build owned by whoever the current
+#     USER is (node by default).
+#   - COPY without --chown puts files as root:root regardless of
+#     current USER (Docker spec).
+#   - apk add needs root to write /etc/apk.
+# Fix: `--chown=node:node` on every COPY, `USER root` block around
+# apk add, yarn install runs as the default (node) user.
+
 WORKDIR /build
 
-# Copy yarn infrastructure + lockfile first (cache-friendly)
-COPY .yarn ./.yarn
-COPY .yarnrc.yml package.json yarn.lock ./
-COPY backstage.json ./
-COPY packages/app/package.json ./packages/app/package.json
-COPY packages/backend/package.json ./packages/backend/package.json
+# Copy yarn infrastructure + lockfile first (cache-friendly).
+# --chown required because COPY defaults to root:root; yarn then
+# can't write into these directories when it runs as node.
+COPY --chown=node:node .yarn ./.yarn
+COPY --chown=node:node .yarnrc.yml package.json yarn.lock ./
+COPY --chown=node:node backstage.json ./
+COPY --chown=node:node packages/app/package.json ./packages/app/package.json
+COPY --chown=node:node packages/backend/package.json ./packages/backend/package.json
 
 # Install OS deps native modules (better-sqlite3, tree-sitter) need
 # to compile. Wolfi's apk conventions: `build-base` is the meta-package
 # covering gcc + g++ + make (Alpine-descended naming; Debian equivalent
 # is `build-essential`). `python3` and `sqlite-dev` separately.
-#
-# Chainguard's node:latest-dev default USER is root. We stay root
-# through the deps + builder stages — switching to a lower-privilege
-# user here runs into COPY-ownership semantics: COPY without --chown
-# puts files as root:root regardless of current USER, so a later
-# `USER node` + yarn install would fail with EACCES on node_modules/
-# creation. The runtime stage below drops to node:node with --chown
-# on every COPY.
+USER root
 RUN apk add --no-cache \
         build-base \
         python3 \
         sqlite-dev
+USER node
 
 # Install ALL deps (including devDeps — builder needs tsc etc.).
-# Runs as root; cache mount uid/gid default (root) matches.
-RUN --mount=type=cache,target=/root/.yarn-cache,sharing=locked \
-    YARN_CACHE_FOLDER=/root/.yarn-cache \
+# Runs as the default node user (uid 65532); cache mount uid/gid
+# match so yarn's cache dir is writable.
+RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
+    YARN_CACHE_FOLDER=/home/node/.yarn-cache \
     yarn install --immutable
 
 # ─────────────────────────────────────────────────────────────────
@@ -86,12 +95,13 @@ FROM deps AS builder
 
 WORKDIR /build
 
-# Copy source
-COPY tsconfig.json ./
-COPY packages ./packages
-COPY plugins ./plugins
-COPY examples ./examples
-COPY app-config.yaml app-config.production.yaml ./
+# Copy source — same --chown=node:node requirement as deps stage;
+# yarn tsc + build:backend run as node and need to write dist/.
+COPY --chown=node:node tsconfig.json ./
+COPY --chown=node:node packages ./packages
+COPY --chown=node:node plugins ./plugins
+COPY --chown=node:node examples ./examples
+COPY --chown=node:node app-config.yaml app-config.production.yaml ./
 
 # Compile TypeScript (noEmit — just type check)
 RUN yarn tsc
