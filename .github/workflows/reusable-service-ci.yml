@@ -23,12 +23,28 @@
 #
 # Fail-fast job chain:
 #   install-and-test  → compile + unit tests
-#   build             → multi-arch distroless container (amd64 + arm64)
-#   scan              → Trivy HIGH/CRITICAL blocks the push
-#   push              → ghcr.io, ONLY on push to main or tag (not PRs)
+#   build             → per-arch NATIVE builds (amd64 on ubuntu-latest,
+#                       arm64 on ubuntu-24.04-arm). No QEMU anywhere.
+#                       On push events each leg pushes BY DIGEST (no
+#                       tags yet); on PRs it only builds.
+#   scan              → Trivy HIGH/CRITICAL blocks the pipeline
+#   merge             → stitches the per-arch digests into one tagged
+#                       multi-arch manifest (buildx imagetools create),
+#                       ONLY on push to main or tag (not PRs)
 #   sign              → cosign keyless signing via GitHub OIDC → Rekor
 #   update-manifest   → kustomize edit set image + commit back to repo
 #                       (ONLY on push to main, not tag or PR)
+#
+# WHY native runners instead of QEMU (Phase 8 Wave 3, 8W3.2):
+#   QEMU user-mode emulation reliably mis-compiles heavy node-gyp
+#   native modules (tree-sitter, cpu-features): the identical
+#   Dockerfile compiled clean on native amd64 (CI) and native arm64
+#   (local repro) but failed only on the QEMU-emulated arm64 CI leg.
+#   GitHub's free arm64 runners for public repos remove the emulator
+#   from the chain entirely — and cut arm64 build time massively.
+#   Note: by-digest blobs land in GHCR before Trivy passes, but no
+#   TAG exists until merge (post-scan), so nothing referenceable by
+#   tag ever ships unscanned.
 #
 # Permissions principle: nothing has write by default. Each job declares
 # ONLY what it needs. The consumer wrapper grants the superset; this
@@ -101,7 +117,7 @@ on:
     outputs:
       image-ref:
         description: "Fully-qualified image reference pushed to the registry"
-        value: ${{ jobs.push.outputs.image-ref }}
+        value: ${{ jobs.merge.outputs.image-ref }}
 
 # Default top-level permissions = read-only. Each write-needing job
 # declares its own.
@@ -165,61 +181,96 @@ jobs:
         run: yarn test
 
   # ─────────────────────────────────────────────────────────────────
-  # build — multi-arch distroless container via buildx.
-  # Uses GHA cache for layer reuse (second build ~30s vs ~3min cold).
+  # build — per-arch NATIVE container builds. amd64 on ubuntu-latest,
+  # arm64 on GitHub's free arm64 runners. No QEMU (see header).
+  # GHA layer cache is SCOPED per arch so the legs don't clobber
+  # each other's cache entries.
+  #
+  # On push events each leg pushes by digest (untagged) and exports
+  # the digest as an artifact; the merge job downstream stitches the
+  # digests into the tagged multi-arch manifest AFTER Trivy passes.
+  # On PR events this is build-only validation.
   # ─────────────────────────────────────────────────────────────────
   build:
     name: Build container
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     needs: install-and-test
-    outputs:
-      image-digest: ${{ steps.docker-build.outputs.digest }}
-      metadata-tags: ${{ steps.docker-meta.outputs.tags }}
-      metadata-labels: ${{ steps.docker-meta.outputs.labels }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            slug: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            slug: arm64
+    permissions:
+      contents: read
+      packages: write    # by-digest push on push events
     steps:
       - name: Checkout service repo
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for cross-arch build
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # docker/metadata-action computes tags from the current ref:
-      #   - push to main → :sha-<7char>
-      #   - tag push v* → :v<semver>, :<major>, :<major.minor>
-      #   - PR → :pr-<number>-<sha-short>
-      # Also emits OCI labels (source, revision, created, etc.) that
-      # the Dockerfile LABEL block in the skeleton reinforces.
-      - name: Compute image tags + labels
+      - name: Login to GHCR (push events only)
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.image-registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Labels only here — TAGS are computed in the merge job, because
+      # by-digest pushes are deliberately untagged.
+      - name: Compute OCI labels
         id: docker-meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
-          tags: |
-            type=sha,prefix=sha-,format=short
-            type=semver,pattern=v{{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
-            type=semver,pattern=v{{major}}
-            type=ref,event=pr,prefix=pr-
 
-      # Build the image for all target platforms. On PR events, we build
-      # but do NOT push (push=false). On main/tag push, the "push" job
-      # below handles the actual push + sign + manifest commit.
-      - name: Build container (no push — push job handles that)
+      - name: Build (PR — validate only, no push)
+        if: github.event_name != 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.docker-context }}
+          file: ${{ inputs.dockerfile-path }}
+          platforms: ${{ matrix.platform }}
+          push: false
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
+
+      - name: Build + push by digest (push events)
+        if: github.event_name == 'push'
         id: docker-build
         uses: docker/build-push-action@v6
         with:
           context: ${{ inputs.docker-context }}
           file: ${{ inputs.dockerfile-path }}
-          platforms: ${{ inputs.platforms }}
-          push: false
-          load: ${{ inputs.platforms == 'linux/amd64' }}
-          tags: ${{ steps.docker-meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.docker-meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ inputs.image-registry }}/${{ inputs.image-repo }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
+
+      - name: Export digest for merge job
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.docker-build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
 
   # ─────────────────────────────────────────────────────────────────
   # scan — Trivy on the built image. Fail on HIGH + CRITICAL.
@@ -237,8 +288,9 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # Re-build amd64-only + load into local Docker daemon so Trivy
-      # can scan the image by name. Reuses the GHA cache from the
-      # build job above.
+      # can scan the image by name. Reuses the amd64-SCOPED GHA cache
+      # from the build matrix leg above — effectively a cache replay,
+      # not a real rebuild.
       - name: Build amd64 image into local Docker for scanning
         uses: docker/build-push-action@v6
         with:
@@ -247,7 +299,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ${{ inputs.service-name }}:scan
-          cache-from: type=gha
+          cache-from: type=gha,scope=amd64
 
       # Pinned to tag for Phase 7. Phase 8 security hardening will
       # repin all third-party actions to commit SHAs to defeat tag-moving
@@ -270,26 +322,29 @@ jobs:
           trivyignores: ${{ inputs.docker-context }}/.trivyignore
 
   # ─────────────────────────────────────────────────────────────────
-  # push — docker push to GHCR via OIDC. Only on push to main or tag.
-  # NOT on PRs (we don't want PR authors pushing arbitrary images).
+  # merge — stitch the per-arch digests (pushed by the build matrix)
+  # into ONE tagged multi-arch manifest. Only on push to main or tag.
+  # NOT on PRs. Runs AFTER Trivy, so no tag ever points at an
+  # unscanned image.
   # ─────────────────────────────────────────────────────────────────
-  push:
+  merge:
     name: Push to GHCR
     runs-on: ubuntu-latest
-    needs: scan
+    needs: [build, scan]
     if: github.event_name == 'push'
     permissions:
-      packages: write    # ghcr.io push via GITHUB_TOKEN
-      id-token: write    # OIDC federation (future-proof for cosign chain)
+      packages: write    # manifest push via GITHUB_TOKEN
+      id-token: write    # OIDC federation (cosign chain downstream)
     outputs:
-      image-ref: ${{ steps.push.outputs.image-ref }}
-      image-digest: ${{ steps.push.outputs.digest }}
+      image-ref: ${{ steps.ref.outputs.image-ref }}
+      image-digest: ${{ steps.manifest.outputs.digest }}
     steps:
-      - name: Checkout service repo
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU for cross-arch
-        uses: docker/setup-qemu-action@v3
+      - name: Download per-arch digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -301,7 +356,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute tags again (idempotent — scoped to this job)
+      - name: Compute tags
         id: docker-meta
         uses: docker/metadata-action@v5
         with:
@@ -312,18 +367,25 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
 
-      - name: Build + push
-        id: push
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ inputs.docker-context }}
-          file: ${{ inputs.dockerfile-path }}
-          platforms: ${{ inputs.platforms }}
-          push: true
-          tags: ${{ steps.docker-meta.outputs.tags }}
-          labels: ${{ steps.docker-meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create + push multi-arch manifest
+        id: manifest
+        env:
+          REPO: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
+        run: |
+          cd /tmp/digests
+          # Each file is named after one arch digest (sha256 hex).
+          tag_args=$(echo "${{ steps.docker-meta.outputs.tags }}" | xargs -I{} echo -n "-t {} ")
+          echo "Creating manifest with tags: ${tag_args}"
+          # shellcheck disable=SC2046,SC2086
+          docker buildx imagetools create ${tag_args} \
+            $(printf "${REPO}@sha256:%s " *)
+          # Resolve the MERGED manifest's own digest for cosign.
+          sha_tag=$(echo "${{ steps.docker-meta.outputs.tags }}" | grep -m1 ":sha-")
+          digest=$(docker buildx imagetools inspect "${sha_tag}" \
+            --format '{{ json .Manifest.Digest }}' | tr -d '"')
+          echo "Merged manifest digest: ${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "${sha_tag}"
 
       - name: Emit SHA-tag ref for downstream jobs
         id: ref
@@ -339,7 +401,7 @@ jobs:
   sign:
     name: cosign keyless sign
     runs-on: ubuntu-latest
-    needs: push
+    needs: merge
     permissions:
       packages: write    # cosign writes signature manifest alongside image
       id-token: write    # OIDC federation → Fulcio identity attestation
@@ -358,7 +420,10 @@ jobs:
 
       - name: Sign image by digest (immutable reference)
         env:
-          IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-repo }}@${{ needs.push.outputs.image-digest }}
+          # The MERGED multi-arch manifest digest (resolved by the
+          # merge job's imagetools inspect) — signing this covers
+          # both per-arch images via the manifest list.
+          IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-repo }}@${{ needs.merge.outputs.image-digest }}
         run: |
           echo "Signing ${IMAGE}"
           cosign sign --yes "${IMAGE}"
