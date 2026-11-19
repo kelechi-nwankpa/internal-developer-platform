@@ -2,90 +2,82 @@
 # ─────────────────────────────────────────────────────────────────────
 # Multi-stage build for the idp-portal Backstage app.
 #
-# Replaces the scaffolded packages/backend/Dockerfile (host-build
-# pattern that assumes yarn install + yarn tsc + yarn build:backend
-# were run on the host first). Our Phase 7 reusable CI/CD workflow
-# does NOT run yarn before docker build — it treats the Dockerfile
-# as the self-contained build definition. So this file runs the full
-# install + compile + bundle inside docker.
+# Phase 8 Wave 3 Task 8W3.2: base swapped from node:22-trixie-slim
+# (Debian) to cgr.dev/chainguard/wolfi-base + apk-installed Node 22.
 #
-# Stage layout:
-#   1. deps:    cache yarn.lock + install deps once (reused by builder
-#               if source changes but deps don't)
-#   2. builder: compile TypeScript + run backend bundle step
-#   3. runtime: Chainguard Node with the bundle + production deps only
+# WHY wolfi-base + `apk add nodejs-22` instead of chainguard/node:
+#   Root-caused across 4 CI iterations + a local repro (full story in
+#   docs/phases/phase-8-security-hardening.md Wave 3 bugs):
+#     - Chainguard's FREE tier only publishes `latest` tags; the
+#       node:latest-dev image ships Node 26 (nodejs-26 apk package).
+#     - Backstage's engines field allows "22 || 24" — and the older
+#       native modules in its tree (tree-sitter 0.21, cpu-features
+#       0.0.10) fail node-gyp compilation against Node 26's V8
+#       headers. This was the real cause of the CI failures, NOT
+#       missing build packages.
+#     - Version-pinned images (node:22-dev) are Chainguard paid-tier
+#       only (MANIFEST_UNKNOWN on free pulls).
+#     - Wolfi's apk repo DOES ship versioned Node for free:
+#       `apk add nodejs-22` → 22.x (22.23.2 at time of writing).
+#   Local repro verified tree-sitter@0.21.1 + cpu-features@0.0.10 +
+#   better-sqlite3 all compile cleanly on wolfi-base + nodejs-22 +
+#   build-base + python3.
 #
-# WHY Chainguard Node (Phase 8 Wave 3 Task 8W3.2 swap from node:22-trixie-slim):
-#   Chainguard rebuilds their images on every upstream CVE fix in the
-#   Wolfi-based distro. Wolfi ships significantly fewer system packages
-#   than Debian Trixie, which means fewer transitive CVEs surface in
-#   Trivy. Pre-swap we had 2 zlib CVEs suppressed; Chainguard's
-#   node:latest-dev doesn't ship zlib as a user-accessible CVE at all.
-#   Phase 9 EKS reproducibility concerns may pin to a specific digest
-#   later; for now `latest-dev` moves with Chainguard's patch cadence.
+# WHY this keeps the Chainguard/Wolfi CVE story:
+#   wolfi-base is the same distroless-lineage distro Chainguard's
+#   images are built from — minimal package set, rebuilt on every
+#   upstream CVE fix. The `nodejs-22` apk tracks the latest 22.x
+#   patch, so we inherit Node security patches on rebuild while the
+#   MAJOR stays pinned to the project standard (CLAUDE.md §10,
+#   .nvmrc, Backstage engines).
 #
-# WHY `-dev` variant for runtime (vs the fully distroless `cgr.dev/chainguard/node:latest`):
-#   The runtime stage runs `yarn workspaces focus --all --production`
-#   at build time to install production-only deps into the image.
-#   `yarn` is not in the distroless variant — it ships only the node
-#   binary. Moving the `workspaces focus` step to the builder stage
-#   would let us go full-distroless but requires re-engineering the
-#   bundle layout. Phase 10 polish task.
+# USER model (differs from the chainguard/node attempts):
+#   wolfi-base defaults to root — so build stages (deps, builder)
+#   run as root exactly like the old Debian file did, and the
+#   COPY-without---chown → root-owned-files behavior is consistent
+#   with the executing user. No permission juggling.
+#   The runtime stage drops to Wolfi's standard `nonroot` user
+#   (uid/gid 65532) with --chown on every COPY.
 #
-# WHY swap `apt-get install` for `apk add`:
-#   Chainguard images are Wolfi-based, not Debian-based. `apk` is
-#   Wolfi's package manager (Alpine-descended, not glibc-incompatible —
-#   Wolfi ships glibc, not musl, so native modules compile cleanly).
+# Stage layout (unchanged):
+#   1. deps:    cache yarn.lock + install deps once
+#   2. builder: compile TypeScript + bundle backend
+#   3. runtime: Node 22 + production deps + bundle, as nonroot
 #
-# Context: this Dockerfile expects docker build to be run with context
-# = portal/ (project root for the Backstage workspace), NOT with
-# context = repo root. The Phase 7 reusable workflow sets context to
-# the service repo root; the CI wrapper for portal maps that to portal/.
+# Context: docker build context = portal/ (NOT repo root). The Phase 7
+# reusable workflow maps docker-context: ./portal.
 
 # ─────────────────────────────────────────────────────────────────
 # Stage 1: deps — install dependencies, cache yarn resolution
 # ─────────────────────────────────────────────────────────────────
-FROM cgr.dev/chainguard/node:latest-dev AS deps
+FROM cgr.dev/chainguard/wolfi-base AS deps
 
-# Chainguard's node:latest-dev default USER is `node` (uid 65532),
-# NOT root — matches the distroless variant's non-root-by-default
-# stance, just with shell + apk added for build steps. Three-way
-# COPY/USER gotcha this creates:
-#   - WORKDIR /build creates /build owned by whoever the current
-#     USER is (node by default).
-#   - COPY without --chown puts files as root:root regardless of
-#     current USER (Docker spec).
-#   - apk add needs root to write /etc/apk.
-# Fix: `--chown=node:node` on every COPY, `USER root` block around
-# apk add, yarn install runs as the default (node) user.
+# Node 22 (project-pinned major) + yarn-berry launcher (defers to the
+# repo-pinned Yarn release via .yarnrc.yml yarnPath) + native-module
+# build chain. `build-base` = Wolfi's gcc/g++/make meta-package.
+RUN apk add --no-cache \
+        nodejs-22 \
+        npm \
+        yarn-berry \
+        build-base \
+        python3 \
+        sqlite-dev
 
 WORKDIR /build
 
 # Copy yarn infrastructure + lockfile first (cache-friendly).
-# --chown required because COPY defaults to root:root; yarn then
-# can't write into these directories when it runs as node.
-COPY --chown=node:node .yarn ./.yarn
-COPY --chown=node:node .yarnrc.yml package.json yarn.lock ./
-COPY --chown=node:node backstage.json ./
-COPY --chown=node:node packages/app/package.json ./packages/app/package.json
-COPY --chown=node:node packages/backend/package.json ./packages/backend/package.json
+# Runs as root (wolfi-base default) — COPY's root:root default
+# ownership matches the executing user, so no --chown needed in
+# build stages.
+COPY .yarn ./.yarn
+COPY .yarnrc.yml package.json yarn.lock ./
+COPY backstage.json ./
+COPY packages/app/package.json ./packages/app/package.json
+COPY packages/backend/package.json ./packages/backend/package.json
 
-# Install OS deps native modules (better-sqlite3, tree-sitter) need
-# to compile. Wolfi's apk conventions: `build-base` is the meta-package
-# covering gcc + g++ + make (Alpine-descended naming; Debian equivalent
-# is `build-essential`). `python3` and `sqlite-dev` separately.
-USER root
-RUN apk add --no-cache \
-        build-base \
-        python3 \
-        sqlite-dev
-USER node
-
-# Install ALL deps (including devDeps — builder needs tsc etc.).
-# Runs as the default node user (uid 65532); cache mount uid/gid
-# match so yarn's cache dir is writable.
-RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
-    YARN_CACHE_FOLDER=/home/node/.yarn-cache \
+# Install ALL deps (including devDeps — builder needs tsc etc.)
+RUN --mount=type=cache,target=/root/.yarn-cache,sharing=locked \
+    YARN_CACHE_FOLDER=/root/.yarn-cache \
     yarn install --immutable
 
 # ─────────────────────────────────────────────────────────────────
@@ -95,67 +87,69 @@ FROM deps AS builder
 
 WORKDIR /build
 
-# Copy source — same --chown=node:node requirement as deps stage;
-# yarn tsc + build:backend run as node and need to write dist/.
-COPY --chown=node:node tsconfig.json ./
-COPY --chown=node:node packages ./packages
-COPY --chown=node:node plugins ./plugins
-COPY --chown=node:node examples ./examples
-COPY --chown=node:node app-config.yaml app-config.production.yaml ./
+# Copy source
+COPY tsconfig.json ./
+COPY packages ./packages
+COPY plugins ./plugins
+COPY examples ./examples
+COPY app-config.yaml app-config.production.yaml ./
 
 # Compile TypeScript (noEmit — just type check)
 RUN yarn tsc
 
 # Build the backend bundle (produces packages/backend/dist/bundle.tar.gz
-# and packages/backend/dist/skeleton.tar.gz) — matches what the
-# scaffolded Dockerfile's host-build step would have produced.
+# and packages/backend/dist/skeleton.tar.gz).
 RUN yarn build:backend
 
 # ─────────────────────────────────────────────────────────────────
-# Stage 3: runtime — Chainguard Node dev with production deps + bundle
+# Stage 3: runtime — Node 22 on Wolfi + production deps, as nonroot
 # ─────────────────────────────────────────────────────────────────
-FROM cgr.dev/chainguard/node:latest-dev AS runtime
+FROM cgr.dev/chainguard/wolfi-base AS runtime
 
-# Runtime OS deps: sqlite-libs for better-sqlite3 at runtime,
-# ca-certificates for HTTPS calls.
-USER root
-RUN apk add --no-cache sqlite-libs ca-certificates
-USER node
+# Runtime deps: Node 22, yarn (for the production-focus install at
+# image build time — a full-distroless runtime that drops yarn is the
+# Phase 10 polish refactor), sqlite-libs for better-sqlite3's runtime
+# linkage, ca-certificates for HTTPS.
+RUN apk add --no-cache \
+        nodejs-22 \
+        yarn-berry \
+        sqlite-libs \
+        ca-certificates
 
+# Wolfi convention: `nonroot` user, uid/gid 65532. Create /app owned
+# by it before dropping privileges.
 WORKDIR /app
+RUN chown -R nonroot:nonroot /app
+USER nonroot
 
-# Copy yarn infrastructure + lockfile (production install needs it).
-# Chainguard's `node` user is uid 65532 (not 1000 like the previous
-# Debian base). COPY --chown reflects that.
-COPY --chown=node:node --from=builder /build/.yarn ./.yarn
-COPY --chown=node:node --from=builder /build/.yarnrc.yml /build/backstage.json ./
-COPY --chown=node:node --from=builder /build/yarn.lock /build/package.json ./
+# Copy yarn infrastructure + lockfile (production install needs it)
+COPY --chown=nonroot:nonroot --from=builder /build/.yarn ./.yarn
+COPY --chown=nonroot:nonroot --from=builder /build/.yarnrc.yml /build/backstage.json ./
+COPY --chown=nonroot:nonroot --from=builder /build/yarn.lock /build/package.json ./
 
-# Copy the skeleton (per-package package.json files only, for yarn to
-# resolve the workspace layout) + the actual backend bundle
-COPY --chown=node:node --from=builder /build/packages/backend/dist/skeleton.tar.gz ./
+# Skeleton (per-package package.json files for workspace resolution)
+COPY --chown=nonroot:nonroot --from=builder /build/packages/backend/dist/skeleton.tar.gz ./
 RUN tar xzf skeleton.tar.gz && rm skeleton.tar.gz
 
-# Install production-only deps (strips devDeps — much smaller runtime).
-# uid=65532 matches Chainguard's `node` user.
+# Install production-only deps (strips devDeps). uid/gid 65532 =
+# Wolfi nonroot, so the shared cache mount is writable.
 ENV NODE_ENV=production
-RUN --mount=type=cache,target=/home/node/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
-    YARN_CACHE_FOLDER=/home/node/.yarn-cache \
+RUN --mount=type=cache,target=/home/nonroot/.yarn-cache,sharing=locked,uid=65532,gid=65532 \
+    YARN_CACHE_FOLDER=/home/nonroot/.yarn-cache \
     yarn workspaces focus --all --production
 
 # Examples (sample catalog data) + app-config
-COPY --chown=node:node --from=builder /build/examples ./examples
-COPY --chown=node:node --from=builder /build/app-config.yaml /build/app-config.production.yaml ./
+COPY --chown=nonroot:nonroot --from=builder /build/examples ./examples
+COPY --chown=nonroot:nonroot --from=builder /build/app-config.yaml /build/app-config.production.yaml ./
 
 # Backend bundle itself
-COPY --chown=node:node --from=builder /build/packages/backend/dist/bundle.tar.gz ./
+COPY --chown=nonroot:nonroot --from=builder /build/packages/backend/dist/bundle.tar.gz ./
 RUN tar xzf bundle.tar.gz && rm bundle.tar.gz
 
 EXPOSE 7007
 
-# Entrypoint: Backstage backend serves on port 7007 by default.
-# Merge both app-config files at runtime; environment-specific overrides
-# (like database URL for prod) live in app-config.production.yaml.
+# Entrypoint: Backstage backend on 7007; both app-configs merged at
+# runtime (env-specific overrides in app-config.production.yaml).
 CMD ["node", "packages/backend", "--config", "app-config.yaml", "--config", "app-config.production.yaml"]
 
 # OCI labels for cross-tool traceability
