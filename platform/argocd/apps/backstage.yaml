@@ -103,6 +103,22 @@ spec:
             readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]
+
+          # Kyverno's require-resources policy (Wave 2, audit mode)
+          # flagged this very Deployment during the Wave 3 pod roll —
+          # the chart ships no resources block by default. Fixing our
+          # own workload is step one of promoting that policy to
+          # Enforce (Wave 2.4 left it in Audit precisely because of
+          # violations like this one). Sizes based on observed usage:
+          # Backstage idles ~300-400Mi / minimal CPU on kind; spikes
+          # during catalog refresh + Scaffolder runs.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           replicas: 1
           # Mount the backstage-github-app Secret (populated by ESO from
           # Vault at secret/backstage/github-app) as env vars. Prefix
