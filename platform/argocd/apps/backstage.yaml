@@ -73,6 +73,36 @@ spec:
             registry: ghcr.io
             repository: kelechi-nwankpa/internal-developer-platform
             tag: "sha-544848d"
+
+          # ───────────────────────────────────────────────────────────
+          # Pod Security Standards compliance (Phase 8 Wave 3)
+          # ───────────────────────────────────────────────────────────
+          # The backstage namespace enforces PSS `restricted` since
+          # Wave 2.7 (a439945) — but the running pod PREDATES that
+          # label, so the next roll is the first admission under
+          # restricted. An empty securityContext fails restricted;
+          # these fields are the minimum the profile demands.
+          #
+          # runAsUser 65532 = Wolfi's `nonroot` user, matching the
+          # image USER after the 8W3.2 wolfi-base swap (the old Debian
+          # image used uid 1000). Pinned explicitly so a future base
+          # image drift can't silently change the runtime identity.
+          #
+          # readOnlyRootFilesystem stays false for MVP — Backstage
+          # writes tmp/cache paths at runtime. Phase 10 polish can
+          # mount emptyDirs for those and flip this true.
+          podSecurityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containerSecurityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
           replicas: 1
           # Mount the backstage-github-app Secret (populated by ESO from
           # Vault at secret/backstage/github-app) as env vars. Prefix
