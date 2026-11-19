@@ -1,0 +1,38 @@
+---
+# network-policies.yaml — ArgoCD Application that syncs NetworkPolicy
+# manifests from platform/network-policies/.
+#
+# Phase 8 Wave 2 Task 8W2.5. Split from the kyverno policies for
+# the same split-by-lifecycle reasons: NetworkPolicy changes cadence
+# with network topology and cross-namespace dependency discovery,
+# not with Kyverno engine upgrades.
+#
+# See: platform/network-policies/README.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: network-policies
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/network-policies
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Defensive default namespace. Each manifest specifies its own
+    # target namespace; this field isn't used for namespaced resources.
+    namespace: default
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

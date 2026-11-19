@@ -1,0 +1,45 @@
+---
+# backstage-allow-all.yaml — explicit allow-all baseline for the
+# backstage namespace.
+#
+# Phase 8 Wave 2 Task 8W2.5. See platform/network-policies/README.md
+# for the strategy + ratchet. This file ships the baseline; a
+# companion `backstage-deny-default.yaml` lands in 8W2.6 after
+# targeted allows are written.
+#
+# Behavior: identical to no NetworkPolicy. All pod traffic in + out
+# of backstage pods is permitted. The point of shipping this is to
+# declare a stance in Git that Wave 2.6 narrows.
+#
+# When 8W2.6 narrows:
+#   This allow-all is REPLACED with multiple targeted-allow policies
+#   (one per known-good destination: Postgres, Vault via ESO, GitHub
+#   API egress, kube-apiserver for the Kubernetes plugin, ArgoCD-server
+#   for the ArgoCD plugin) PLUS a default-deny companion. The order
+#   of operations matters — allows first, deny-default last.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-baseline
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-baseline
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  # podSelector: {} matches EVERY pod in the namespace.
+  podSelector: {}
+  # policyTypes declares both ingress + egress are governed by this
+  # policy. Even an empty rule set below would be stricter than no
+  # NetworkPolicy — the presence of the policyType means "I'm
+  # declaring intent here."
+  policyTypes:
+    - Ingress
+    - Egress
+  # Ingress rule with an empty from: matches ALL sources.
+  ingress:
+    - {}
+  # Egress rule with an empty to: matches ALL destinations.
+  egress:
+    - {}

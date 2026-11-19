@@ -1,0 +1,31 @@
+---
+# argocd-allow-all.yaml — explicit allow-all baseline for the
+# argocd namespace.
+#
+# Phase 8 Wave 2 Task 8W2.5. Pattern mirror of backstage-allow-all.yaml.
+# See platform/network-policies/README.md for the strategy.
+#
+# ArgoCD has busy cross-namespace egress (talks to kube-apiserver +
+# every namespace where it syncs manifests + Git over the internet),
+# which makes narrowing it in a future Phase 10 polish task more
+# involved than backstage. Shipping the baseline here declares the
+# stance; narrowing waits.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-baseline
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: network-policy-baseline
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}
+  egress:
+    - {}

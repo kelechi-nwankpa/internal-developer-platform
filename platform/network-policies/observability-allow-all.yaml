@@ -1,0 +1,30 @@
+---
+# observability-allow-all.yaml — explicit allow-all baseline for the
+# observability namespace (Loki + Tempo + Alloy + OTel collector).
+#
+# Phase 8 Wave 2 Task 8W2.5. Pattern mirror of backstage-allow-all.yaml.
+#
+# Observability needs cross-namespace ingress from every workload
+# that sends logs/traces/metrics, and cross-namespace egress to
+# push to internal storage + external backends. Narrowing this in
+# a future Phase 10 polish task requires careful inventory of all
+# the OTel/pino/Loki flows.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-baseline
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: network-policy-baseline
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "8.2"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}
+  egress:
+    - {}
