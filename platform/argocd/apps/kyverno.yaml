@@ -1,0 +1,154 @@
+---
+# kyverno.yaml — Kyverno policy engine install.
+#
+# Phase 8 Wave 2 Task 8W2.2. First piece of the policy-enforcement
+# story: install the engine. Policies ride in a separate Application
+# (kyverno-policies.yaml, arriving in Task 8W2.3) under the same
+# split-by-lifecycle pattern as cert-manager / cert-manager-issuers
+# and ESO / external-secrets-stores.
+#
+# Why Kyverno vs OPA Gatekeeper (user-confirmed design decision 1/A):
+#   Kyverno authors policies in plain YAML (ClusterPolicy CRs).
+#   Gatekeeper uses Rego, a declarative logic DSL with a steeper
+#   learning curve. For a solo portfolio project where policy changes
+#   happen in PRs reviewed by humans, YAML wins on readability. ADR
+#   writes up the decision.
+#
+# Chart choice (design decision A):
+#   Official kyverno/kyverno Helm chart. Our pattern for ESO,
+#   cert-manager, ArgoCD — official charts are GitOps-friendly and
+#   track upstream security patches without us hand-reconciling.
+#
+# Policy sourcing strategy (design decision C — set by Phase 8 Wave 2
+# open):
+#   Policies come from Kyverno's pod-security + best-practices
+#   policy library, cherry-picked per-policy into
+#   platform/kyverno/policies/, not wholesale-imported. Keeps the
+#   audit trail clear (every policy is a reviewable file).
+#
+# Namespace exemptions (design decision B):
+#   kube-system, kyverno itself, and metrics-server have pods that
+#   legitimately violate some of our policies (hostNetwork, privileged
+#   containers). These are declared exempt in each ClusterPolicy's
+#   match/exclude block — not via chart config here.
+#
+# See: docs/phases/phase-8-security-hardening.md (Wave 2 section)
+#      platform/kyverno/policies/ (ClusterPolicy CRs, Task 8W2.3)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://kyverno.github.io/kyverno/
+    chart: kyverno
+    # Pinned to a known-stable 3.x. Kyverno follows semver; 3.x
+    # ships ClusterPolicy v2beta1 which we target. 4.x will migrate
+    # policy CRD versions and warrants a dedicated session when it
+    # lands.
+    targetRevision: 3.5.1
+    helm:
+      valuesObject:
+        # ─────────────────────────────────────────────────────────────
+        # Admission controller — the webhook pod
+        # ─────────────────────────────────────────────────────────────
+        admissionController:
+          replicas: 1  # kind-local MVP; EKS Phase 9 bumps to 3 for HA
+          # /metrics endpoint for Prometheus scraping — matches our
+          # pattern from ESO + cert-manager (ADR-0025).
+          serviceMonitor:
+            enabled: true
+          # Resource floors so Kyverno itself passes the
+          # `require-resources` policy we're about to ship (otherwise
+          # we'd be in an awkward "the engine can't follow its own
+          # rules" state when PSS lands).
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+
+        # ─────────────────────────────────────────────────────────────
+        # Background controller — reconciles existing resources
+        # ─────────────────────────────────────────────────────────────
+        # Generates PolicyReport CRs for audit-mode violations against
+        # existing cluster state. Essential for the audit→enforce
+        # ratchet: it lets us see what WOULD be denied if we flipped
+        # to enforce, without actually denying anything yet.
+        backgroundController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+        # ─────────────────────────────────────────────────────────────
+        # Reports controller — exposes policy reports via CRDs
+        # ─────────────────────────────────────────────────────────────
+        reportsController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+        # ─────────────────────────────────────────────────────────────
+        # Cleanup controller — runs CleanupPolicy-driven deletions
+        # ─────────────────────────────────────────────────────────────
+        # Not used in Wave 2 but installed so future CleanupPolicy
+        # work doesn't require a chart-config change.
+        cleanupController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+        # ─────────────────────────────────────────────────────────────
+        # Features we DON'T enable in Wave 2
+        # ─────────────────────────────────────────────────────────────
+        features:
+          # Image-signature verification via cosign. Cosign IS wired
+          # in Phase 7 CI, but admission-time verification is
+          # defence-in-depth deferred to Phase 10 polish. Flipping this
+          # on now would start rejecting pods whose images aren't
+          # cosign-signed in a way Kyverno recognises.
+          imageVerify:
+            enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # SSA sidesteps the 256KB annotation limit on large CRDs.
+      # Kyverno ships several (ClusterPolicy, PolicyReport, etc).
+      - ServerSideApply=true
