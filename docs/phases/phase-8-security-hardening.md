@@ -1058,3 +1058,133 @@ and image regression were all ruled out.
 - [.github/workflows/reusable-service-ci.yml](../../.github/workflows/reusable-service-ci.yml):
   native runners, digest merge, SHA pins
 - [.github/dependabot.yml](../../.github/dependabot.yml)
+
+---
+
+## Wave 3 aftercare (2026-11-20) — first Dependabot cycle
+
+**Status:** ✅ Done. The first real Dependabot cycle across both repos:
+every proposed update was merged, closed with a reason, or replaced
+by a better fix. Every upgraded action is proven in a real pipeline.
+
+### What was merged
+
+**Platform repo:** Actions majors checkout 7.0.1 (#10), setup-node
+7.1.0 (#11), setup-python 7.1.0 (#9), download-artifact 8.0.2 (#7),
+metadata-action 6.2.0 (#8); the `/portal` minor+patch group (#12); a
+fastify security release in the service template (#17).
+
+**platform-hello:** Dependabot config (78c055b), the corrected
+`.trivyignore` (9244b68), the OpenTelemetry set upgrade (5783316),
+fast-uri (#2), the minor+patch group (#8), pino 9 → 10 (#9).
+
+Each major was checked against its release notes and against how our
+workflows use it, not just against a green tick. The two that
+mattered:
+
+- **checkout v6+ stores the persisted token in a separate file.** Our
+  manifest job pushes with that token, and only platform-hello's
+  pipeline runs that job. Proven by the bot commit `8e69bdd chore:
+  deploy sha-9244b68`.
+- **download-artifact v8 fails on a hash mismatch** instead of
+  warning. Proven by the multi-arch merge job in both repos.
+
+### What was closed, and why
+
+| PR | Reason | Durable fix |
+|---|---|---|
+| react 19, react-router 8, react-router-dom 7, jest-dom 7 (`/portal`) | Majors are set by the Backstage release line | Ignore rule (befd74a) |
+| OpenTelemetry auto-instrumentations 0.75 (template) | Splits the OTel set; the vulnerable exporter is never started | Alert #99 left open as visible debt |
+| typescript 7, @types/node 26 (platform-hello) | @types/node must match runtime Node 22; TS 7 is a planned upgrade | Ignore rules (d78a3e9) |
+| node 22-slim → 26-slim (platform-hello) | Builder and runtime must share a Node major | Ignore rule (5689f07) |
+| Grouped minor+patch (platform-hello #4/#7) | Split the OTel set, npm ERESOLVE | OTel group (9558a6f) + manual set upgrade (5783316) |
+
+### Bugs banked (aftercare)
+
+#### 15. Dependabot grouping split OpenTelemetry's lockstep set
+
+**Symptom:** platform-hello's grouped PR failed `npm ci` with
+ERESOLVE: `@opentelemetry/resources@2.12.0` peers `api <1.10`, but
+the group had bumped `api` to 1.10. **Cause:** OTel JS releases as a
+matched set whose versions cross semver boundaries together.
+sdk-node 0.223 → 0.301 counts as a "minor" (0.x), but it requires
+resources/core 2 → 3, a "major", so the minor+patch group took one
+half of the set and left the other. The template's PR #18 was the
+same mistake from the other side: one package bumped alone, which
+would have installed two OTel SDKs. **Fix:** a dedicated
+`opentelemetry` group listed first (first match wins) taking all
+update types, plus a manual set upgrade verified by running the app
+against a local OTel collector (6 spans received). **Gotcha:**
+`@dependabot recreate` on the old group PR ignored the new group
+order. Only a fresh run (#8) produced a clean group without OTel.
+**Lesson:** group by *release unit*, not by semver label. Packages
+released in lockstep must share one group.
+
+#### 16. Bot-proposed majors that the framework or runtime owns
+
+**Symptom:** the first runs proposed React 19, react-router 8,
+TypeScript 7, @types/node 26, and a Node 26 build image over a Node 22
+runtime. **Lesson:** some versions are not ours to bump one at a
+time. React follows Backstage; @types/node and the build image follow
+the runtime Node major. Each got an ignore rule *with its reason in
+the file*. Closing the PR alone would only last until next Monday.
+
+#### 17. A digest-pinned base image ages silently
+
+**Symptom:** platform-hello's Trivy failed on a new HIGH OpenSSL CVE
+(CVE-2026-84782) in `libssl3` 3.0.18 inside
+`gcr.io/distroless/nodejs22-debian12:nonroot`. **Cause:** the
+digest pin, which is what makes builds reproducible, also means
+patched base rebuilds never arrive on their own. Distroless has no
+`apt`, so the only fix is a new digest, and Google hadn't published
+one yet. **Evidence it's unreachable:** `ldd /nodejs/bin/node` lists
+no libssl/libcrypto; Node statically bundles OpenSSL 3.5.4. Nothing
+else in the image could load the system library. **Fix:** an
+evidence-backed `.trivyignore` entry (re-verified by scanning
+*without* the file, which also removed 3 dead fastify entries) and
+Dependabot's `docker` ecosystem to propose the digest bump when
+Google rebuilds. **Lesson:** pinning and automated bumping are one
+control, not two. A pin without a bot is a timer.
+
+#### 18. `curl install_kustomize.sh@master | bash` in the shared workflow
+
+**Symptom:** a platform-hello deploy failed at "Install kustomize":
+"Github rate-limiter failed the request". **Cause:** the step ran
+an unpinned script from kustomize's `master` branch, in the one job
+with `contents: write`. That script called the GitHub API
+unauthenticated, and GitHub-hosted runners share egress IPs, so the
+anonymous 60/hour limit was used up. **Fix (d3e94f5):** download the
+v5.8.3 release tarball (a download, not an API call) and verify it
+against a SHA-256 committed in the workflow. Tested in ubuntu:24.04,
+including a wrong-hash rejection. Proven by `36a136c chore: deploy
+sha-38f0801`. **Lesson:** the 8W3.4 SHA-pinning sweep covered
+`uses:` lines but not `run:` lines. Downloaded tools need the same
+pin-and-verify treatment.
+
+#### 19. platform-hello has no tests
+
+**Symptom:** while verifying the OTel upgrade, `npm test` reported
+`pass 0 fail 0`. **Cause:** the test glob `dist/**/*.test.js` matches
+nothing, because no test files exist. The CI "Install + test" step
+has been green on an empty suite since Phase 6. **Interim:** runtime
+smoke tests stood in (app booted against a local collector, health
+routes 200, spans received). **Fix needed:** the golden-path template
+should ship at least one real test (health route + trace-id
+injection), and the test step should fail when it finds zero tests.
+Otherwise every scaffolded service inherits a test step that checks
+nothing.
+
+### Loose ends (aftercare)
+
+- **Template OTel upgrade:** port platform-hello's set (sdk 0.301,
+  resources/core 3.x, api 1.10) to the template; then alert #99 can
+  close.
+- **Template + platform-hello tests:** bug 19.
+- **Fastify deprecations:** `requestIdLogLabel` and
+  `disableRequestLogging` move under `logController` before Fastify 6.
+- **~30 medium/low Dependabot alerts on `portal/yarn.lock`:** below
+  the Trivy HIGH/CRITICAL gate. Most should clear with the Backstage
+  framework bump.
+- **Repo-restore runbook:** after a restore, re-enable Actions,
+  Dependabot alerts + security updates, secret scanning, and push
+  protection (bug 14).
