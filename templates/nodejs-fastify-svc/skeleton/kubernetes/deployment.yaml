@@ -71,8 +71,13 @@ spec:
             # App config synced from Vault via ExternalSecret (see
             # externalsecret.yaml). Contents defined by whoever owns
             # the Vault path secret/${{ values.owner }}/${{ values.name }}.
+            # optional: a new service usually has no secret config yet.
+            # Without this, the pod can't start until someone seeds Vault
+            # by hand (platform-hello went down for exactly this after a
+            # Vault reset). Add keys at the Vault path when you need them.
             - secretRef:
                 name: ${{ values.name }}-config
+                optional: true
             # S3 credentials + BUCKET_NAME from the ObjectBucket XRC
             # (see objectbucket.yaml). Keys populated by Crossplane:
             #   BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
