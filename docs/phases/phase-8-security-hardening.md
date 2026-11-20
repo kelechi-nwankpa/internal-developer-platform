@@ -1161,25 +1161,56 @@ sha-38f0801`. **Lesson:** the 8W3.4 SHA-pinning sweep covered
 `uses:` lines but not `run:` lines. Downloaded tools need the same
 pin-and-verify treatment.
 
-#### 19. platform-hello has no tests
+#### 19. The test gate could never fail
 
-**Symptom:** while verifying the OTel upgrade, `npm test` reported
-`pass 0 fail 0`. **Cause:** the test glob `dist/**/*.test.js` matches
-nothing, because no test files exist. The CI "Install + test" step
-has been green on an empty suite since Phase 6. **Interim:** runtime
-smoke tests stood in (app booted against a local collector, health
-routes 200, spans received). **Fix needed:** the golden-path template
-should ship at least one real test (health route + trace-id
-injection), and the test step should fail when it finds zero tests.
-Otherwise every scaffolded service inherits a test step that checks
-nothing.
+**Symptom:** `npm test` in platform-hello reported `pass 0 fail 0`.
+**Cause, three layers deep:** (a) no test files existed in
+platform-hello or the template; (b) the script globbed
+`dist/**/*.test.js`, but CI only ran `tsc --noEmit`, so `dist/` never
+existed; (c) **the reusable workflow ran `npm test || test $? -eq 1`**,
+meant to tolerate "no tests found". But `node --test` also exits 1
+when a test *fails*, so the mask turned every failure into a pass.
+**Fix:** `buildServer()` split into `src/app.ts`; 7 tests via
+Fastify `inject()` (routes) and the log↔trace contract (ADR-0030);
+tests run from TypeScript with tsx, type-checked by
+`tsconfig.test.json` (a8ae6fd; template 6527765). Mask removed
+(4a10923). **Proof the gate works:** injecting two bugs gave `not ok`
+for both and exit code 1, the exact code the old mask swallowed. CI
+now logs `# pass 7`.
+
+#### 20. The template shipped no lockfile, and images ignored it
+
+**Symptom:** platform-hello's `package-lock.json` was added by hand
+(bbd3113, "for CI reproducibility"). **Cause:** the template had no
+lockfile, so every scaffolded service's *first* CI run failed at
+`npm ci`. Separately, both Dockerfiles copied only `package.json` and
+ran `npm install`, re-resolving ranges at build time, so the shipped
+image could differ from the tree CI tested and Trivy scanned.
+**Fix:** template ships a templated lockfile; both Dockerfiles copy
+it and use `npm ci` (6527765, platform-hello f744c04). Verified by
+rendering the skeleton as `orders-api`: `npm ci` → tsc → 7/7 tests →
+image built → `/healthz` 200 as uid 65532.
+
+#### 21. Overlapping runs raced on the manifest bump
+
+**Symptom:** platform-hello's manifest job failed with a rebase
+conflict after three runs overlapped. **Cause:** every run edits the
+same `newTag:` line, so the slower run's `git pull --rebase` always
+conflicted, and the retry loop could never succeed in the one case it
+existed for. An older run finishing last could also roll the service
+back. **Fix (b6755cd):** job-level `concurrency` per repo
+(newest pending wins), checkout of latest `main` instead of the built
+sha, and a freshness step that skips a build when `main` already has
+newer non-bot commits. **Proof:** two commits pushed 20s apart; the
+older run logged "skipping stale deploy of 9693c69", the newer pushed
+on attempt 1, and exactly one deploy commit landed (`d04b07a chore:
+deploy sha-1418259`).
 
 ### Loose ends (aftercare)
 
-- **Template OTel upgrade:** port platform-hello's set (sdk 0.301,
-  resources/core 3.x, api 1.10) to the template; then alert #99 can
-  close.
-- **Template + platform-hello tests:** bug 19.
+- **Template OTel upgrade:** ✅ done in 6527765 (supersedes PR #18,
+  fixes alert #99 at its root).
+- **Template + platform-hello tests:** ✅ done (bugs 19–20).
 - **Fastify deprecations:** `requestIdLogLabel` and
   `disableRequestLogging` move under `logController` before Fastify 6.
 - **~30 medium/low Dependabot alerts on `portal/yarn.lock`:** below
