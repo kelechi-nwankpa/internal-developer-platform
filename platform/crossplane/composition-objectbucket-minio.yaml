@@ -91,9 +91,15 @@ spec:
               name: {{ $name }}
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: bucket
-                crossplane.io/external-name: {{ $bucketName }}
             spec:
               forProvider:
+                # vshn/provider-minio names the bucket from bucketName
+                # (default: metadata.name) and IGNORES crossplane.io/external-name,
+                # which this used to set — so the real bucket was
+                # "<xr-name>" while the Policy and connection Secret pointed
+                # at "<xr-name>-<suffix>" (NoSuchBucket; policy granted
+                # nothing). Immutable after creation (provider webhook).
+                bucketName: {{ $bucketName }}
                 region: {{ $spec.region }}
               providerConfigRef:
                 name: provider-config   # matches providerconfig-minio-vshn.yaml
