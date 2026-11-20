@@ -449,16 +449,45 @@ jobs:
       && inputs.manifest-path != ''
     permissions:
       contents: write    # push the manifest-bump commit back
+    # One manifest bump per repo at a time. Overlapping pushes used to run
+    # this job in parallel; every run edits the same newTag line, so the
+    # loser's rebase always conflicted (platform-hello a181cf2). While one
+    # runs, GitHub keeps only the NEWEST pending run and cancels older
+    # ones, so superseded deploys are dropped, never applied out of order.
+    concurrency:
+      group: update-manifest-${{ github.repository }}
+      cancel-in-progress: false
     steps:
       - name: Checkout service repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Fetch all refs so git push works cleanly after our commit.
+          # Latest main, not github.sha: the bump lands on top of any deploy
+          # commits already pushed, so there is nothing to rebase.
+          ref: main
+          # Full history so the freshness check can walk github.sha..main.
           fetch-depth: 0
           # Use the default GITHUB_TOKEN (sufficient for same-repo write).
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Skip if a newer source commit is already on main
+        id: freshness
+        env:
+          BUILT_SHA: ${{ github.sha }}
+        run: |
+          # Commits after ours that the bot did NOT author are newer source
+          # changes; their own run deploys them. Deploying ours now would
+          # roll the service back.
+          newer=$(git log --format='%ae' "${BUILT_SHA}..HEAD" \
+            | grep -vc 'github-actions\[bot\]' || true)
+          if [ "${newer}" -gt 0 ]; then
+            echo "main has ${newer} newer source commit(s); skipping stale deploy of ${BUILT_SHA:0:7}."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install kustomize
+        if: steps.freshness.outputs.stale != 'true'
         # Pinned release + hash-verified tarball. Replaces
         # `curl install_kustomize.sh@master | bash`, which (a) executed an
         # unpinned script from a moving branch in the one job holding
@@ -481,6 +510,7 @@ jobs:
           kustomize version
 
       - name: Bump image tag in manifest
+        if: steps.freshness.outputs.stale != 'true'
         # SHA truncation MUST happen inside `run:`, not inside `env:`.
         # YAML `env:` values are stored as literal strings — shell
         # expansion ($(...), backticks) is never applied. The previous
@@ -506,6 +536,7 @@ jobs:
           git diff "${{ inputs.manifest-path }}"
 
       - name: Commit + push manifest bump
+        if: steps.freshness.outputs.stale != 'true'
         env:
           SHA_SHORT: ${{ github.sha }}
         run: |
@@ -537,7 +568,11 @@ jobs:
               exit 0
             fi
             echo "Push rejected — rebasing and retrying (attempt ${attempt}/3)"
-            git pull --rebase origin main
+            # -X theirs: on a newTag conflict keep OUR bump (in a rebase,
+            # 'theirs' is the commit being replayed). Only reachable when a
+            # human pushes between checkout and push; the concurrency group
+            # rules out another bot bump.
+            git pull --rebase -X theirs origin main
           done
           echo "Push failed after 3 attempts"
           exit 1
