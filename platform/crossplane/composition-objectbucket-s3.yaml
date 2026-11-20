@@ -28,6 +28,8 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
   name: xobjectbuckets-s3.platform.idp.io
   labels:
     provider: aws

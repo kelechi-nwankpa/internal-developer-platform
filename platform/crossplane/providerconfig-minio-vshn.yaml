@@ -29,6 +29,11 @@
 apiVersion: minio.crossplane.io/v1
 kind: ProviderConfig
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    # CRD is installed by provider-minio (wave 0); skip the dry-run
+    # that would otherwise fail validation before the CRD exists.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
   name: provider-config
 spec:
   credentials:

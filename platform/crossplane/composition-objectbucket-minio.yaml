@@ -23,6 +23,8 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
   name: xobjectbuckets-minio.platform.idp.io
   labels:
     provider: minio

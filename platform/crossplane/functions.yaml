@@ -19,6 +19,8 @@
 apiVersion: pkg.crossplane.io/v1beta1
 kind: Function
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   name: function-go-templating
 spec:
   # Community-maintained Go-templating function. Feels like Helm templates —
@@ -30,6 +32,8 @@ spec:
 apiVersion: pkg.crossplane.io/v1beta1
 kind: Function
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   name: function-auto-ready
 spec:
   # Rolls up the Ready status of composed MRs to the parent XR/XRC. Without

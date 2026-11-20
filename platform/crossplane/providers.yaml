@@ -26,6 +26,8 @@
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   name: provider-family-aws
 spec:
   package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.0
@@ -36,6 +38,8 @@ spec:
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   name: provider-aws-s3
 spec:
   # Provider dependencies are declared in the OCI package's crossplane.yaml
@@ -48,6 +52,8 @@ spec:
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   name: provider-aws-iam
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-iam:v2.6.0
@@ -66,6 +72,8 @@ spec:
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   name: provider-minio
 spec:
   package: ghcr.io/vshn/provider-minio:v0.4.5

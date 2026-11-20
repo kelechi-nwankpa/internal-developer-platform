@@ -18,6 +18,8 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
   name: xobjectbuckets.platform.idp.io
 spec:
   # Our platform's API group — matches CLAUDE.md's mission for "platform-
