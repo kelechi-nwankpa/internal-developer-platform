@@ -171,9 +171,11 @@ jobs:
 
       - name: Run tests (npm)
         if: inputs.package-manager == 'npm'
-        # `|| test $? -eq 1` lets a 0-test suite pass (node --test exits
-        # 1 with "no tests found"). Remove once services always have tests.
-        run: npm test || test $? -eq 1
+        # No exit-code fallback: node --test exits 1 both for "no tests
+        # found" AND for failing tests, so any `|| test $? -eq 1` mask
+        # also passes real failures. The golden-path template ships a
+        # test suite, so a service with zero tests SHOULD fail here.
+        run: npm test
 
       - name: Run tests (yarn)
         if: inputs.package-manager == 'yarn'
