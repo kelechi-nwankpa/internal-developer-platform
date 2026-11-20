@@ -141,7 +141,21 @@ spec:
         # the AWS SDK's default credential chain. Chart 6.x doesn't have
         # a shared extraEnv/extraEnvFrom that propagates to all components,
         # so we declare per-component.
+        # ─────────────────────────────────────────────────────────────
+        # Anti-affinity: `affinity: null` on every deployed component
+        # (8W4.1). The chart renders REQUIRED podAntiAffinity keyed only
+        # on `app.kubernetes.io/component` (ingester, compactor, ...).
+        # Tempo uses the same component names, so on a single node
+        # whichever chart scheduled first locked the other out (Tempo
+        # Pending 37d). `null`, not `{}`: Helm deep-merges maps, so `{}`
+        # keeps the chart default; `null` deletes the key (verified with
+        # helm template). Replaces a manual `kubectl patch` + ignored
+        # drift that was silently lost when the workloads were recreated.
+        # (ruler keeps its default: not deployed.) On multi-node EKS,
+        # reintroduce spread with topologySpreadConstraints instead.
+        # ─────────────────────────────────────────────────────────────
         distributor:
+          affinity: null
           replicas: 1
           extraEnvFrom:
             - secretRef:
@@ -158,12 +172,7 @@ spec:
           # zone-b + zone-c stay Pending forever.
           zoneAwareReplication:
             enabled: false
-          # Chart also sets required podAntiAffinity even in non-zone
-          # mode — "don't be on same node as another ingester". For
-          # single-node kind that ALSO blocks (transient during rollouts
-          # when old pod is Terminating on the only node). Override to
-          # empty so single-replica ingester schedules without constraint.
-          affinity: {}
+          affinity: null
           extraEnvFrom:
             - secretRef:
                 name: observability-storage-credentials
@@ -175,6 +184,7 @@ spec:
             limits: {cpu: 1000m, memory: 1Gi}
 
         querier:
+          affinity: null
           replicas: 1
           extraEnvFrom:
             - secretRef:
@@ -184,6 +194,7 @@ spec:
             limits: {cpu: 500m, memory: 512Mi}
 
         queryFrontend:
+          affinity: null
           replicas: 1
           extraEnvFrom:
             - secretRef:
@@ -197,6 +208,7 @@ spec:
         # connected: 0" and never accept queries). Single replica for
         # kind — real prod scales based on query volume.
         queryScheduler:
+          affinity: null
           replicas: 1
           extraEnvFrom:
             - secretRef:
@@ -206,6 +218,7 @@ spec:
             limits: {cpu: 500m, memory: 256Mi}
 
         compactor:
+          affinity: null
           replicas: 1
           extraEnvFrom:
             - secretRef:
@@ -218,6 +231,7 @@ spec:
             limits: {cpu: 500m, memory: 512Mi}
 
         indexGateway:
+          affinity: null
           replicas: 1
           extraEnvFrom:
             - secretRef:
@@ -234,6 +248,7 @@ spec:
         # to this endpoint; so does Grafana's Loki datasource. Doesn't
         # need MinIO creds (it's just an nginx reverse proxy).
         gateway:
+          affinity: null
           enabled: true
           replicas: 1
           resources:
@@ -294,17 +309,6 @@ spec:
       jsonPointers:
         - /spec/persistentVolumeClaimRetentionPolicy
         - /spec/volumeClaimTemplates
-        # Anti-affinity: chart hardcodes `requiredDuringScheduling`
-        # podAntiAffinity in its template helper (values-level
-        # `affinity: {}` doesn't override). On single-node kind, this
-        # collides across charts (Loki's "no other ingester" blocks
-        # Tempo's ingester). We patch it out via kubectl post-install
-        # + ignore drift so ArgoCD doesn't re-inject.
-        - /spec/template/spec/affinity
-    - group: apps
-      kind: Deployment
-      jsonPointers:
-        - /spec/template/spec/affinity
 
   syncPolicy:
     automated:
