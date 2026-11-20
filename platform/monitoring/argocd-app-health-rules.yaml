@@ -1,0 +1,66 @@
+---
+# Alerts on ArgoCD Application state (Phase 8 Wave 4, 8W4.5).
+#
+# WHY: in Phase 8 Wave 4 three real outages (platform-hello never
+# deployed, Loki crash-looping, Tempo Pending) sat unnoticed for up to 37
+# days. ArgoCD knew the whole time — nothing turned its status into a
+# signal. These rules do, and they are only meaningful because 8W4.4 got
+# every Application to Synced/Healthy: an alert now means something real.
+#
+# Source: argocd_app_info (one series per Application, value 1), scraped
+# from argocd-application-controller via argocd-servicemonitors.yaml.
+# Prometheus' ruleSelector is {} (all namespaces), so no extra labels.
+# Routing to a human (Slack/email) comes with Phase 9 (decision D1).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argocd-app-health
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-app-health
+    app.kubernetes.io/part-of: platform-monitoring
+spec:
+  groups:
+    - name: argocd-applications
+      rules:
+        # The worst states. platform-hello sat "Missing" for weeks.
+        - alert: ArgoAppDegradedOrMissing
+          expr: argocd_app_info{health_status=~"Degraded|Missing"} == 1
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "ArgoCD Application {{ $labels.name }} is {{ $labels.health_status }}"
+            description: >-
+              {{ $labels.name }} has been {{ $labels.health_status }} for 15m.
+              Check `kubectl -n argocd get application {{ $labels.name }}` and
+              its operationState.message.
+
+        # Anything else not Healthy, or not Synced. 30m tolerates normal
+        # rollouts (Progressing) and the gap between a push and a sync.
+        - alert: ArgoAppNotHealthyOrSynced
+          expr: >-
+            argocd_app_info{health_status!~"Healthy|Degraded|Missing"} == 1
+            or argocd_app_info{sync_status!="Synced"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ArgoCD Application {{ $labels.name }} is {{ $labels.sync_status }}/{{ $labels.health_status }}"
+            description: >-
+              {{ $labels.name }} has not been Synced/Healthy for 30m. Persistent
+              OutOfSync while Healthy usually means diff noise (see 8W4.4:
+              compare-options ServerSideDiff annotation) — fix it, don't ignore it.
+
+        # If scraping breaks, every rule above goes silent, and silence
+        # looks like success. This catches the alerting itself failing.
+        - alert: ArgoAppMetricsAbsent
+          expr: absent(argocd_app_info)
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No ArgoCD Application metrics — app-health alerting is blind"
+            description: >-
+              argocd_app_info has been absent for 15m. Check the
+              argocd-application-controller pod and its ServiceMonitor.

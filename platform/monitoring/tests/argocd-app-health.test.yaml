@@ -1,0 +1,78 @@
+# promtool unit tests for argocd-app-health-rules.yaml (8W4.5).
+# Each alert is tested in BOTH directions (fires when it should, stays
+# quiet when it shouldn't), so the tests can actually fail.
+#
+# Run (repo root):
+#   kubectl create --dry-run=client -o json -f platform/monitoring/argocd-app-health-rules.yaml \
+#     | jq '{groups: .spec.groups}' > platform/monitoring/tests/rules.json
+#   docker run --rm -v "$PWD/platform/monitoring/tests:/t" -w /t \
+#     --entrypoint promtool prom/prometheus:v3.5.0 test rules argocd-app-health.test.yaml
+#
+# rules.json is generated, not committed (gitignored below this dir).
+rule_files:
+  - rules.json
+evaluation_interval: 1m
+tests:
+  # 1. Missing app: critical fires after 15m, not before.
+  - interval: 1m
+    input_series:
+      - series: 'argocd_app_info{name="svc-a",health_status="Missing",sync_status="OutOfSync"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ArgoAppDegradedOrMissing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ArgoAppDegradedOrMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, name: svc-a, health_status: Missing, sync_status: OutOfSync}
+            exp_annotations:
+              summary: "ArgoCD Application svc-a is Missing"
+              description: "svc-a has been Missing for 15m. Check `kubectl -n argocd get application svc-a` and its operationState.message."
+  # 2. Brief Progressing during a rollout (10m) must NOT alert.
+  - interval: 1m
+    input_series:
+      - series: 'argocd_app_info{name="svc-b",health_status="Progressing",sync_status="Synced"}'
+        values: '1x10'
+      - series: 'argocd_app_info{name="svc-b",health_status="Healthy",sync_status="Synced"}'
+        values: '_x10 1x30'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ArgoAppNotHealthyOrSynced
+        exp_alerts: []
+  # 3. Healthy but OutOfSync for 31m -> warning.
+  - interval: 1m
+    input_series:
+      - series: 'argocd_app_info{name="svc-c",health_status="Healthy",sync_status="OutOfSync"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: ArgoAppNotHealthyOrSynced
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ArgoAppNotHealthyOrSynced
+        exp_alerts:
+          - exp_labels: {severity: warning, name: svc-c, health_status: Healthy, sync_status: OutOfSync}
+            exp_annotations:
+              summary: "ArgoCD Application svc-c is OutOfSync/Healthy"
+              description: "svc-c has not been Synced/Healthy for 30m. Persistent OutOfSync while Healthy usually means diff noise (see 8W4.4: compare-options ServerSideDiff annotation) — fix it, don't ignore it."
+  # 4. Metrics disappear -> blind-alerting alert.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: ArgoAppMetricsAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "No ArgoCD Application metrics — app-health alerting is blind"
+              description: "argocd_app_info has been absent for 15m. Check the argocd-application-controller pod and its ServiceMonitor."
+  # 5. All healthy -> nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'argocd_app_info{name="svc-d",health_status="Healthy",sync_status="Synced"}'
+        values: '1x60'
+    alert_rule_test:
+      - {eval_time: 59m, alertname: ArgoAppDegradedOrMissing, exp_alerts: []}
+      - {eval_time: 59m, alertname: ArgoAppNotHealthyOrSynced, exp_alerts: []}
+      - {eval_time: 59m, alertname: ArgoAppMetricsAbsent, exp_alerts: []}
