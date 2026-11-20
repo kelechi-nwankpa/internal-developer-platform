@@ -11,11 +11,13 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
-# Install deps first (cached layer if package files unchanged)
-COPY package.json ./
-RUN npm install --omit=dev --ignore-scripts && \
+# Install deps first (cached layer if package files unchanged).
+# npm ci installs EXACTLY the lockfile — the same tree CI tested and
+# Trivy scans. (npm install would re-resolve ranges at build time.)
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && \
     cp -r node_modules /app/node_modules_prod && \
-    npm install --ignore-scripts
+    npm ci --ignore-scripts
 
 # Copy source + compile
 COPY tsconfig.json ./

@@ -2,30 +2,13 @@
 // works if OTel wraps modules at their initial import time.
 import './observability.js';
 
-import Fastify from 'fastify';
-import sensible from '@fastify/sensible';
 import { logger } from './logger.js';
-import { healthRoutes } from './routes/health.js';
-import { helloRoutes } from './routes/hello.js';
+import { buildServer } from './app.js';
 
 const port = Number(process.env['PORT'] ?? 3000);
 const host = process.env['HOST'] ?? '0.0.0.0';
 
-const server = Fastify({
-  loggerInstance: logger,
-  disableRequestLogging: false,
-  requestIdLogLabel: 'request_id',
-  // Trust proxy headers from the Ingress — needed for correct client IP
-  // in logs when running behind nginx-ingress / Istio.
-  trustProxy: true,
-});
-
-// Sensible: 404 → JSON error responses, httpErrors object for handlers
-await server.register(sensible);
-
-// Route registration
-await server.register(healthRoutes);
-await server.register(helloRoutes);
+const server = await buildServer();
 
 // Bootstrap
 try {
