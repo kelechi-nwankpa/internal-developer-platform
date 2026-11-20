@@ -457,9 +457,26 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install kustomize
+        # Pinned release + hash-verified tarball. Replaces
+        # `curl install_kustomize.sh@master | bash`, which (a) executed an
+        # unpinned script from a moving branch in the one job holding
+        # contents:write, and (b) called the GitHub API unauthenticated —
+        # runners share egress IPs, so the 60/h anonymous limit failed a
+        # platform-hello deploy ("Github rate-limiter failed the request").
+        # Release downloads are not API calls. To upgrade: bump the version
+        # and replace the hash with the linux_amd64 line from that
+        # release's checksums.txt.
+        env:
+          KUSTOMIZE_VERSION: v5.8.3
+          KUSTOMIZE_SHA256: cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
         run: |
-          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          tarball="kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "${tarball}" \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/${tarball}"
+          echo "${KUSTOMIZE_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}" kustomize
           sudo mv kustomize /usr/local/bin/
+          kustomize version
 
       - name: Bump image tag in manifest
         # SHA truncation MUST happen inside `run:`, not inside `env:`.
