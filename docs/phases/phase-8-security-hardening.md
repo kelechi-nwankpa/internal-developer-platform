@@ -758,8 +758,9 @@ boundary crossed).
 **Dependabot extended (8W3.5, b3c861e):** the Phase 0
 github-actions-only config gained an npm ecosystem for `/portal`
 (weekly, minor+patch grouped, `@backstage/*` ignored because the
-framework moves as one line via `backstage-cli versions:bump`). 3
-PRs opened within minutes of the push.
+framework moves as one line via `backstage-cli versions:bump`). The
+Dependabot commit-message prefix was later fixed (78cf729) and
+Dependabot itself re-enabled (bug 14).
 
 **api-docs plugin wired (be4082f):** found during the 8W3.2 smoke
 test. API entities now have a Definition tab and the nav has an
@@ -941,6 +942,26 @@ to be new. **Cause:** a Phase 0 `dependabot.yml` already existed.
 amended. **Lesson:** a "new file" commit that deletes lines is a
 signal to stop. Read the target before you write to it.
 
+#### 14. Dependabot and secret scanning were silently off after the repo restore
+
+**Symptom:** the three open Dependabot PRs were initially read as
+"Dependabot responded to the new config within minutes". In fact
+their commits dated from July 2026, from the Phase 0 config.
+`@dependabot recreate` got no response, and the new npm ecosystem
+produced nothing for ~18 hours. **Cause:** restoring the deleted repo
+(Wave 1, bug 1) reset its security features. Dependabot alerts
+returned 404, and Dependabot security updates, secret scanning, and
+push protection were all disabled. platform-hello, which was never
+deleted, still had secret scanning and push protection on, which
+pointed to the restore as the cause. **Fix:** re-enabled all four via
+the REST API ($0, public repo). Within 60s Dependabot closed the five
+stale PRs and opened five current ones, with correct
+`chore(deps):` titles and exact SHA-pin versions (`4.4.0 → 7.1.0`).
+**Lessons:** (a) check a PR's commit dates before treating it as
+evidence of a new config working; (b) a repo restore resets
+Actions, Dependabot, *and* secret scanning. The restore runbook needs
+all three, not just Actions.
+
 #### (Environment note, not a bug) kind egress flake after Mac sleep
 
 A red "Unable to read url … fetch failed" banner on catalog entities
@@ -1021,8 +1042,10 @@ and image regression were all ruled out.
 - **Plugin wiring audit:** diff installed `@backstage*/plugin-*`
   packages against `createApp` features (bug 9 has now recurred
   three times).
-- **Triage the 3 open Dependabot PRs.** Do this now as Wave 3
-  aftercare rather than deferring it.
+- **Confirm the npm ecosystem produces PRs.** The first post-re-enable
+  run opened only github-actions PRs; check `/portal` npm PRs appear
+  on the next Monday run (or the repo's Insights → Dependency graph →
+  Dependabot page for a job error).
 
 ### See also (Wave 3)
 
