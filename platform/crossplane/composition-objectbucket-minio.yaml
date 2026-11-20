@@ -1,11 +1,21 @@
 ---
 # composition-objectbucket-minio.yaml
 #
-# MINIO/KIND VARIANT of the ObjectBucket Composition. Renders ONE MR —
-# vshn/provider-minio's Bucket resource. Selected as the XRD's default
-# Composition on kind so that ObjectBucket XRCs land here by default.
+# MINIO/KIND VARIANT of the ObjectBucket Composition. Selected as the
+# XRD's default Composition on kind so ObjectBucket XRCs land here.
 #
-# WHY only one MR (vs 2-4 for the S3 variant):
+# Renders three MRs + the claim's connection Secret (8W4.2 convergence —
+# the "Phase 4 Wave 3" that platform-hello's objectbucket.yaml deferred):
+#   - Bucket  — the bucket itself
+#   - Policy  — allowBucket: all operations on THIS bucket only
+#   - User    — a per-claim MinIO user holding only that Policy
+#   - CompositeConnectionDetails — BUCKET_NAME, AWS_ACCESS_KEY_ID,
+#     AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL, AWS_REGION, which Crossplane
+#     copies into the claim's writeConnectionSecretToRef Secret
+# Each service gets least-privilege credentials for its own bucket —
+# never MinIO's root account, and no hand-made Secret.
+#
+# WHY no PublicAccessBlock/Versioning MRs (vs the S3 variant):
 #   vshn/provider-minio's Bucket resource is deliberately simple — it
 #   doesn't expose PublicAccessBlock, Versioning or ServerSideEncryption
 #   as separate MRs the way the upbound AWS provider does. Our XRD
@@ -36,6 +46,11 @@ spec:
   compositeTypeRef:
     apiVersion: platform.idp.io/v1alpha1
     kind: XObjectBucket
+
+  # Staging namespace for the XR's own connection Secret; Crossplane then
+  # copies it into the claim's namespace. Unset, the XR has no
+  # writeConnectionSecretToRef and nothing ever reaches the service.
+  writeConnectionSecretsToNamespace: crossplane-system
 
   mode: Pipeline
 
@@ -82,6 +97,52 @@ spec:
                 region: {{ $spec.region }}
               providerConfigRef:
                 name: provider-config   # matches providerconfig-minio-vshn.yaml
+            ---
+            apiVersion: minio.crossplane.io/v1
+            kind: Policy
+            metadata:
+              name: {{ $name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: policy
+            spec:
+              forProvider:
+                # All operations on this one bucket, nothing else.
+                allowBucket: {{ $bucketName }}
+              providerConfigRef:
+                name: provider-config
+            ---
+            apiVersion: minio.crossplane.io/v1
+            kind: User
+            metadata:
+              name: {{ $name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: user
+            spec:
+              forProvider:
+                policies:
+                  - {{ $name }}
+              # The provider writes AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+              # here and re-reads it on every reconcile.
+              writeConnectionSecretToRef:
+                name: {{ $name }}-minio-user
+                namespace: crossplane-system
+              providerConfigRef:
+                name: provider-config
+            {{- $user := index (.observed.resources | default dict) "user" }}
+            {{- if and $user $user.connectionDetails }}
+            ---
+            # Connection details for the claim's Secret. The user's keys are
+            # already base64 in observed state; literals are encoded here.
+            # Rendered only once the User has published credentials.
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: CompositeConnectionDetails
+            data:
+              AWS_ACCESS_KEY_ID: {{ $user.connectionDetails.AWS_ACCESS_KEY_ID }}
+              AWS_SECRET_ACCESS_KEY: {{ $user.connectionDetails.AWS_SECRET_ACCESS_KEY }}
+              BUCKET_NAME: {{ $bucketName | b64enc }}
+              AWS_ENDPOINT_URL: {{ "http://minio.minio.svc.cluster.local:9000" | b64enc }}
+              AWS_REGION: {{ $spec.region | b64enc }}
+            {{- end }}
 
             {{- /*
                 XRD params publicRead and versioning are SILENTLY IGNORED

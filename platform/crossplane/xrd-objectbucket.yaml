@@ -49,6 +49,15 @@ spec:
   # deployment).
   defaultCompositionRef:
     name: xobjectbuckets-minio.platform.idp.io
+  # The connection-Secret contract every Composition must fulfil (8W4.2).
+  # Only these keys are copied into the claim's Secret, so a service sees
+  # exactly what it needs — names match the AWS SDK's env-var chain.
+  connectionSecretKeys:
+    - BUCKET_NAME
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_ENDPOINT_URL
+    - AWS_REGION
 
   versions:
     - name: v1alpha1
