@@ -16,6 +16,11 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
+  annotations:
+    # Server-side diff is enabled by THIS annotation (or globally), NOT by a
+    # `ServerSideDiff=true` syncOption, which ArgoCD ignores (8W4.4 finding:
+    # that no-op had been copied into 8 Applications).
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
   name: crossplane-providers
   namespace: argocd
   finalizers:
@@ -43,7 +48,3 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-      # Server-side diff: compare against the API server's defaulted result.
-      # Client-side diff flagged webhook-filled defaults as drift forever
-      # (8W4.4: kubectl diff --server-side showed Git == live).
-      - ServerSideDiff=true

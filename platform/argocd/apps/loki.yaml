@@ -28,6 +28,10 @@ metadata:
   name: loki
   namespace: argocd
   annotations:
+    # Server-side diff is enabled by THIS annotation (or globally), NOT by a
+    # `ServerSideDiff=true` syncOption, which ArgoCD ignores (8W4.4 finding:
+    # that no-op had been copied into 8 Applications).
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
     argocd.argoproj.io/sync-wave: "0"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -300,7 +304,7 @@ spec:
   # Enumerating every one is fragile — so we combine two mechanisms:
   #
   # 1. ignoreDifferences on the well-known injected field
-  # 2. ServerSideDiff=true sync option — ArgoCD 2.10+ computes diffs
+  # 2. ServerSideDiff (compare-options annotation above) — ArgoCD computes diffs
   #    server-side via kubectl dry-run apply, correctly handling
   #    managed-fields and injected defaults for the rest.
   ignoreDifferences:
@@ -322,5 +326,4 @@ spec:
       # K8s-injected StatefulSet defaults that jsonPointers can't easily
       # enumerate. Requires ServerSideApply=true (above) and works with
       # RespectIgnoreDifferences.
-      - ServerSideDiff=true
       - RespectIgnoreDifferences=true

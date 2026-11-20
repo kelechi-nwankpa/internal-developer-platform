@@ -21,6 +21,11 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
+  annotations:
+    # Server-side diff is enabled by THIS annotation (or globally), NOT by a
+    # `ServerSideDiff=true` syncOption, which ArgoCD ignores (8W4.4 finding:
+    # that no-op had been copied into 8 Applications).
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
   name: ${{ values.name }}
   namespace: argocd
   finalizers:
@@ -71,7 +76,6 @@ spec:
       # ServerSideDiff + RespectIgnoreDifferences — handle K8s-injected
       # defaults on chart-rendered resources without enumerating every
       # field. Pattern established during Phase 3 Wave 2 Task 3.5.3.
-      - ServerSideDiff=true
       - RespectIgnoreDifferences=true
     # Retry with exponential backoff on sync failures (e.g. transient API
     # errors during namespace creation).

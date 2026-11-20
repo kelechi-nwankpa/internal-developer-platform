@@ -36,6 +36,10 @@ metadata:
   name: tempo
   namespace: argocd
   annotations:
+    # Server-side diff is enabled by THIS annotation (or globally), NOT by a
+    # `ServerSideDiff=true` syncOption, which ArgoCD ignores (8W4.4 finding:
+    # that no-op had been copied into 8 Applications).
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
     argocd.argoproj.io/sync-wave: "0"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -230,5 +234,4 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-      - ServerSideDiff=true
       - RespectIgnoreDifferences=true
