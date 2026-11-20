@@ -82,4 +82,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
   name: provider-minio
 spec:
+  # LOG_LEVEL=-1 (Warn): v0.4.5 logs user secret keys at Info.
+  # See runtimeconfig-provider-minio.yaml.
+  runtimeConfigRef:
+    name: provider-minio
   package: ghcr.io/vshn/provider-minio:v0.4.5

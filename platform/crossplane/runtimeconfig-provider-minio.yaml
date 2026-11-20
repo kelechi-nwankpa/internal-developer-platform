@@ -1,0 +1,34 @@
+---
+# Runtime config for provider-minio: raise its log level to Warn.
+#
+# WHY: provider-minio v0.4.5 (latest release; unfixed upstream) logs
+# every MinIO User's ACCESS KEY and SECRET KEY in plain text at INFO
+# level on every successful reconcile (operator/user/observe.go:94:
+# `log.Info("user client created, everything went fine " + key + " "
+# + secret)`). Alloy ships all pod logs to Loki, so per-service
+# credentials would be searchable in Grafana roughly once a minute.
+#
+# The provider maps LOG_LEVEL onto zap as level = -LOG_LEVEL: default 0
+# = Info (leaks), -1 = Warn (that line is suppressed; warnings + errors
+# still logged). Applied BEFORE the ObjectBucket Composition creates any
+# User MRs (8W4.2), so no credentials were ever logged.
+#
+# Remove once upstream drops the secret from that log line.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-minio
+  annotations:
+    # Before provider-minio (wave 0) so its first reconcile already uses it.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              env:
+                - name: LOG_LEVEL
+                  value: "-1"
