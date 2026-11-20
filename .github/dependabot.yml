@@ -54,6 +54,24 @@ updates:
     # stay in scope.
     ignore:
       - dependency-name: "@backstage/*"
+      # React-family MAJORS are dictated by the Backstage release line
+      # (the whole frontend is built on React 18 + react-router 6), so
+      # they move with `backstage-cli versions:bump`, not on their own.
+      # The first npm run proposed react 19, react-router 8,
+      # react-router-dom 7 and jest-dom 7; react/react-router failed
+      # install + test. Minor/patch updates for these stay in scope.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@testing-library/*"
+        update-types: ["version-update:semver-major"]
     # ~1700 transitives would otherwise mean PR-per-package noise;
     # one grouped PR per week keeps review tractable. Majors stay
     # ungrouped (and rare) so breaking changes get individual review.
