@@ -20,8 +20,8 @@ export async function buildServer() {
     loggerInstance: logger,
     disableRequestLogging: false,
     requestIdLogLabel: 'request_id',
-    // Trust proxy headers from the Ingress — needed for correct client IP
-    // in logs when running behind nginx-ingress / Istio.
+    // Trust proxy headers from the edge proxy (Gateway API, ADR-0033) —
+    // needed for correct client IP in logs once traffic arrives through it.
     trustProxy: true,
   });
 

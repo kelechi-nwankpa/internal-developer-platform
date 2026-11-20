@@ -1,8 +1,9 @@
 ---
 # service.yaml — ${{ values.name }}
 #
-# ClusterIP on port 3000. In-cluster only (Ingress in ingress.yaml exposes
-# via nginx-ingress once Phase 8 wires it). ServiceMonitor scrapes /metrics
+# ClusterIP on port 3000. In-cluster only: there is no edge routing yet
+# (ADR-0033 — Gateway API, delivered with EKS in Phase 9; on kind, use
+# kubectl port-forward). ServiceMonitor scrapes /metrics
 # via this Service's `http` port name.
 
 apiVersion: v1

@@ -11,7 +11,6 @@ Scaffolded from [nodejs-fastify-svc](https://github.com/kelechi-nwankpa/internal
 - **pino** structured JSON logger with `trace_id` injection on every line
 - **prom-client** `/metrics` endpoint scraped by Prometheus
 - **S3 bucket** provisioned by [Crossplane ObjectBucket XRD](https://github.com/kelechi-nwankpa/internal-developer-platform/blob/main/docs/adr/0027-first-xrd-objectbucket.md)
-- **cert-manager Certificate** for TLS on the Ingress
 - **ArgoCD Application** for GitOps deployment
 - **Backstage Component entity** so this service shows up in the developer portal
 
@@ -60,8 +59,7 @@ The [`kubernetes/`](kubernetes/) directory has all resources needed:
 - `servicemonitor.yaml` — Prometheus scrape config (labels match kube-prometheus-stack's selector after the ADR-0024 postscript fix)
 - `externalsecret.yaml` — ESO CR pulling app config from Vault at `secret/${{ values.owner }}/${{ values.name }}`
 - `objectbucket.yaml` — Crossplane XRC that provisions the S3 bucket + writes connection secret
-- `certificate.yaml` — cert-manager Certificate (SelfSigned issuer on kind, Let's Encrypt on EKS)
-- `ingress.yaml` — routes traffic at `https://${{ values.name }}.idp.seniormankelz.dev/`
+- No Ingress/Certificate yet: edge routing arrives via Gateway API with EKS (ADR-0033). On kind, reach the service with `kubectl port-forward svc/<name> 3000:3000`.
 
 Deploy via ArgoCD:
 
