@@ -1205,6 +1205,17 @@ newer non-bot commits. **Proof:** two commits pushed 20s apart; the
 older run logged "skipping stale deploy of 9693c69", the newer pushed
 on attempt 1, and exactly one deploy commit landed (`d04b07a chore:
 deploy sha-1418259`).
+**Known trade-off (accepted):** the freshness check assumes a newer
+non-bot commit will deploy itself. It won't if that commit's CI fails
+(e.g. a broken test pushed seconds after a good commit), carries
+`[skip ci]`, or its run is cancelled. Then *neither* build deploys.
+This fails safe: the cluster stays on the last good deploy, so the
+cost is a visible, delayed deploy, never an out-of-order one. That's
+the right side to fail on for GitOps, because a silent rollback is
+worse than a missing bump. Recovery: fix forward and push, or re-run
+the skipped job. **Refinement if it ever bites:** count a newer commit
+as superseding only if its own CI run succeeded or is still running
+(a GitHub API call in the freshness step).
 
 ### Loose ends (aftercare)
 
