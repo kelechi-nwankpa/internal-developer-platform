@@ -669,3 +669,369 @@ managing the same resource — as long as they touch orthogonal fields.
 - [platform/argocd/apps/namespaces.yaml](../../platform/argocd/apps/namespaces.yaml)
   — syncs namespace label patches
 - [platform/namespaces/](../../platform/namespaces/) — PSS label patches
+
+---
+
+## Phase 8 Wave 3 — Supply chain hardening (base image + CVE sweep + pinned CI)
+
+**Status:** ✅ Shipped 2026-11-19 → 2026-11-20 (two sessions; one
+long root-causing arc on the base image, one fast sweep).
+
+**Primary deliverable:** The Backstage image is built on a
+minimal, CVE-tracked distro, runs as a non-root user under PSS
+`restricted`, ships with every fixable dependency CVE actually
+fixed (not suppressed), and is produced by a CI pipeline whose
+third-party code is pinned to immutable commits and kept fresh by
+Dependabot.
+
+### Design decisions locked in (user-confirmed A/A/A at wave open)
+
+- **A — Chainguard/Wolfi base for the portal image.** Replaces
+  Debian `node:22-trixie-slim`. Minimal package set, rebuilt on
+  upstream CVE fixes. *Outcome deviated in a documented way:* the
+  `chainguard/node` image was abandoned for `wolfi-base` + `apk add
+  nodejs-24` (see bugs 3 and 5 for why).
+- **A — Fix transitives in place, not by suppression.** `yarn up -R`
+  where the fix is inside the requested range, scoped `resolutions`
+  only where it isn't. `.trivyignore` keeps only CVEs with no fix
+  reachable without a major-version jump or a framework upgrade.
+- **A — SHA-pin every third-party Action + Dependabot to keep pins
+  fresh.** Pinning without automated bumps would trade supply-chain
+  risk for staleness risk.
+
+### What shipped (Wave 3)
+
+**Base image: Wolfi + Node 24, non-root (8W3.2, commits b47de81 →
+a9adcf7, deployed 4d354fe):**
+
+- All three Dockerfile stages `FROM cgr.dev/chainguard/wolfi-base`;
+  Node from the free Wolfi apk index (`nodejs-24` 24.22.3-r2,
+  scanned clean).
+- Runtime stage runs as Wolfi's `nonroot` (uid/gid 65532) with
+  `--chown` on every COPY.
+- tree-sitter native builds skipped via `dependenciesMeta.built:
+  false` in [portal/package.json](../../portal/package.json); the
+  apidom parsers use their web-tree-sitter (WASM) build instead.
+- Backstage Deployment gained a PSS-restricted-compliant
+  `securityContext` (6ec11db) and explicit resources (e61fc09)
+  *before* the image roll.
+
+**Native per-arch CI runners (977d322):**
+
+- The reusable workflow builds `linux/amd64` on `ubuntu-latest` and
+  `linux/arm64` on `ubuntu-24.04-arm` natively, pushes each by
+  digest, then stitches the multi-arch manifest in a `merge` job
+  with `docker buildx imagetools create`. cosign signs the merged
+  digest. QEMU is gone.
+- Inherited automatically by every service on the golden path
+  (platform-hello's next push is the first downstream exercise).
+
+**CVE sweep (8W3.3, commits 867c454 + ae5593c):**
+
+- In-range bumps: node-forge 1.4.3, follow-redirects 1.16.3,
+  undici 7.30.2 / 8.12.4, markdown-it 14.3.3, body-parser
+  1.20.9 / 2.4.0, multer 2.5.0.
+- Scoped `resolutions`: `undici@npm:7.29.0` (exact pin in
+  `@module-federation/dts-plugin`), `@yarnpkg/core/got` (bug 10),
+  `@types/react(-dom): ^18` (bug 11).
+- `node-gyp` 10 → 13 in root + backend workspaces. That deleted the
+  vulnerable `cacache@18 → tar@6.2.1` subtree from the lockfile
+  outright (bug 12).
+
+**.trivyignore pruned 45 → 11 entries (dd5a74b):**
+
+- 34 entries removed, every one verified absent by a fresh scan.
+  (The dd5a74b commit message says "29"; it was written before the
+  second sweep pass and miscounted. The verified figure is 34.)
+- Survivors fall into exactly two buckets, documented in the file
+  header: (1) major-jump transitives under the old
+  `@backstage/backend-defaults@0.12.3` copy (undici 5.x ×5,
+  urllib@3), and (2) fixes needing the Backstage framework bump.
+- Stale mitigation text ("auth=guest") rewritten to match the
+  post-Wave-1 GitHub OAuth posture.
+
+**SHA-pinned Actions (8W3.4, 3cae025):** 12 third-party actions
+pinned as `@<sha> # vX.Y.Z` across both workflow files. Same-repo
+reusable-workflow references deliberately left on refs (no trust
+boundary crossed).
+
+**Dependabot extended (8W3.5, b3c861e):** the Phase 0
+github-actions-only config gained an npm ecosystem for `/portal`
+(weekly, minor+patch grouped, `@backstage/*` ignored because the
+framework moves as one line via `backstage-cli versions:bump`). 3
+PRs opened within minutes of the push.
+
+**api-docs plugin wired (be4082f):** found during the 8W3.2 smoke
+test. API entities now have a Definition tab and the nav has an
+"APIs" entry.
+
+### End-to-end verified
+
+- Pod `backstage-85cd79498-52tpb` on `sha-ae5593c`: uid 65532
+  (`nonroot`), Node v24.22.3, admitted under PSS `restricted`, zero
+  error-level logs.
+- CI run 44572677753: both native arch builds, Trivy (image scan
+  against the pruned ignore file), merge, cosign all green.
+- `object-bucket-xrd` → Definition tab renders the OpenAPI spec.
+  That page exercises the api-docs wiring and the apidom WASM
+  parser path together.
+- platform-hello Deployment tab still renders live ArgoCD state
+  through the scoped `backstage` account.
+
+### Bugs banked (Wave 3)
+
+Numbered so future sessions can grep. The base-image arc (bugs 1–6)
+took six CI iterations. Most of that cost came from fixing symptoms
+before reproducing locally. Iteration 5 onward reproduced first,
+and each of those iterations found its cause.
+
+#### 1. `chainguard/node:latest-dev` defaults to a non-root user
+
+**Symptom:** iteration 2 failed `yarn install` with EACCES on
+`mkdir node_modules`. Iteration 3 failed `apk add` with "Permission
+denied". **Cause:** unlike Debian `node` images (root by default),
+Chainguard's node image sets `USER node` (65532). COPY always
+writes `root:root` regardless of USER, so the non-root user couldn't
+write into its own build dir, and also couldn't install packages.
+The second failure came from "fixing" the first by removing an
+explicit USER line, on the assumption that the default was root.
+**Fix:** at the time, `--chown` + explicit `USER root` for apk
+(9f4715e, 2abb6c7); superseded by `wolfi-base`, which defaults to
+root. **Lesson:** check the image's default USER (`docker inspect
+--format '{{.Config.User}}'`) before writing a Dockerfile against
+it. Don't infer it from another distro's convention.
+
+#### 2. `g++` is not a Wolfi package
+
+**Symptom:** iteration 1 `apk add g++` → package not found.
+**Fix:** `build-base` (Wolfi's gcc/g++/make meta-package, 9a03924).
+**Lesson:** package names are distro vocabulary, not universal.
+
+#### 3. Chainguard's free tier publishes only `latest`, which is Node 26
+
+**Symptom:** iteration 4: permissions fixed, but native modules
+(tree-sitter, cpu-features, tree-sitter-json) failed to compile.
+**Cause (found by local repro, not CI log reading):** `latest-dev`
+shipped **Node v26.13.1**, outside Backstage's `engines` range
+("22 || 24"). Version-pinned tags (`node:22-dev`) return
+`MANIFEST_UNKNOWN` on free pulls, because they are a paid-tier
+feature. **Fix:** `wolfi-base` + `apk add nodejs-22` (bd4b342),
+which gets versioned Node from the free package index rather than
+from a versioned image. **Lesson:** "free distroless image" and
+"pinnable distroless image" can be different products. Check
+whether you can pin before you adopt.
+
+#### 4. QEMU user-mode emulation breaks heavy node-gyp compiles
+
+**Symptom:** iteration 5: amd64 build green end-to-end; arm64
+failed on the same native modules. **Cause:** a local native arm64
+build (Apple Silicon) succeeded, which isolated the failure to the
+CI runner's QEMU emulation rather than to the code or the arch.
+**Fix:** native `ubuntu-24.04-arm` runners + push-by-digest + manifest
+merge (977d322). Also cut build time, since emulated compiles are
+5–10× slower. **Lesson:** when only the emulated arch fails, test the
+same arch natively before touching the code.
+
+#### 5. Wolfi's free index doesn't carry CVE patches for older Node streams
+
+**Symptom:** Trivy: 3 HIGH on `nodejs-22` 22.23.2-r1. **First
+hypothesis, wrong:** stale apk cache. `apk upgrade` was added
+(e801b9a) and a clean rebuild still installed 22.23.2-r1.
+**Actual cause:** the patched 22.23.4+ builds exist only in the paid
+catalog. The free index receives CVE rebuilds only for current
+streams. `nodejs-24` (24.22.3-r2) scanned with zero findings.
+**Fix:** `nodejs-24` (a9adcf7), which is still inside Backstage's
+engines range. **Lesson:** a clean rebuild that reproduces the same
+version falsifies the stale-cache theory. Stop there and look at
+what the index actually contains.
+
+#### 6. tree-sitter@0.21.1 doesn't compile against Node 24's V8
+
+**Symptom:** after the Node 24 switch, tree-sitter's native build
+failed (`ConditionalStackAllocatedBase`). cpu-features and
+better-sqlite3 compiled fine (verified locally). **Cause:**
+apidom's parser adapters exact-pin tree-sitter 0.21.1, whose C++
+predates Node 24's V8 API. **Fix:** `dependenciesMeta.<pkg>.built:
+false` for tree-sitter, tree-sitter-json, and tree-sitter-yaml
+(a9adcf7). **Why it's safe (proven later):** `yarn why -R
+tree-sitter` shows the *only* path is `app → plugin-api-docs →
+swagger-ui-react → swagger-client → apidom`. That is frontend code
+running in the browser, where native Node bindings can never load
+and web-tree-sitter (WASM) is always used. The Definition tab
+rendering confirms it. **Lesson:** before skipping a native build,
+trace who imports it. If no Node code path reaches it, the skip has
+no effect at runtime.
+
+#### 7. PSS `restricted` label landed before the pod was re-admitted
+
+**Symptom:** none, because it was predicted and defused. **Cause that
+would have surfaced:** Wave 2 labelled `backstage` as `restricted`,
+but PSS evaluates only at admission. The running pod predated the
+label, and its empty securityContext would have been *rejected* on
+the next roll, which was this wave's image bump. **Fix:** shipped a
+compliant securityContext (6ec11db) *before* the image bump. A
+transient CrashLoop (old uid-1000 image forced to 65532) healed when
+the Wolfi image arrived, as predicted. **Lesson:** admission-time
+policies leave latent violations in running pods. Every label
+change needs a "what happens on next roll?" check.
+
+#### 8. Our own Kyverno audit flagged the Backstage Deployment
+
+**Symptom:** `require-resources` PolicyReport failure on backstage
+during the roll. **Fix:** explicit requests/limits (e61fc09).
+**Lesson:** the Wave 2 audit policies earned their keep the first
+time the platform team itself shipped a workload.
+
+#### 9. api-docs plugin installed but never wired
+
+**Symptom:** API entities had no Definition tab, on any image.
+**Cause:** `@backstage/plugin-api-docs` was in `packages/app/package.json`
+since the initial scaffold but absent from `createApp({ features })`.
+**Fix:** import from `/alpha` + add to features (be4082f). **Lesson:**
+this is the third instance of the same bug class (Wave 1 had
+kubernetes + scaffolder). A useful audit: diff the plugin packages
+in `package.json` against the `features` array.
+
+#### 10. `yarn up` broke on `@yarnpkg/core`'s got patch
+
+**Symptom:** `yarn up -R undici ...` → `ENOENT .yarn/patches/got-npm-11.8.2-*.patch`.
+**Cause:** `@yarnpkg/core` (pulled in by `@backstage/cli`) publishes a
+`patch:` descriptor that points at a file inside *Yarn's own*
+monorepo, so it can't exist in a consumer repo. Any full
+re-resolution trips it. **Fix:** `resolutions: "@yarnpkg/core/got":
+"npm:^11.8.5"` (867c454). Dev tooling only, never in the runtime
+image.
+
+#### 11. `yarn up` re-resolved React types to 19
+
+**Symptom:** `yarn tsc` failed in `node_modules/react-markdown`
+(`Cannot find namespace 'JSX'`). **Bisect:** reverting the App.tsx
+change didn't help, so the cause was the lockfile diff, which showed
+`@types/react@*` jumping 18 → 19. **Cause:** an unpinned `*`
+descriptor floated to React 19 types, splitting the tree into two
+copies. **Fix:** `resolutions: @types/react(-dom): ^18`, the guard
+that Backstage's own create-app scaffold ships and our app was
+missing. **Lesson:** bisect before fixing; the obvious suspect (the
+new import) was innocent.
+
+#### 12. The lockfile scan is NOT a superset of the image scan
+
+**Symptom:** a local `trivy fs` scan of yarn.lock showed 0 tar
+findings. On that basis the 9 tar entries were pruned, and CI's
+image scan then failed on those 9 CVEs at
+`node_modules/{cacache,node-gyp}/node_modules/tar`. **Cause:**
+Trivy's fs scanner excludes **devDependency subtrees** when
+package.json sits beside the lockfile. node-gyp is a root devDep, so
+its subtree was invisible locally. node-gyp is *also* a production
+dependency of `packages/backend` (from the create-app scaffold), so
+the subtree physically ships in the image, and the image scan walks
+the disk without that exclusion. **Fix:** node-gyp 10 → 13 (ae5593c),
+which removed the tar@6 subtree from the lockfile entirely instead
+of re-ignoring 9 CVEs. **Lessons:** (a) the claim "my local scan is a
+superset of CI's" had not been tested, and CI falsified it within
+the hour; (b) the CI gate did its job, because a suppression was
+caught before it reached a deployed image.
+
+#### 13. Dependabot config overwritten without reading it
+
+**Symptom:** the commit diff showed `16 deletions` on a file assumed
+to be new. **Cause:** a Phase 0 `dependabot.yml` already existed.
+**Fix:** caught from the diff stat before pushing; its
+`commit-message: chore(deps)` convention was restored and the commit
+amended. **Lesson:** a "new file" commit that deletes lines is a
+signal to stop. Read the target before you write to it.
+
+#### (Environment note, not a bug) kind egress flake after Mac sleep
+
+A red "Unable to read url … fetch failed" banner on catalog entities
+after the laptop woke from sleep. A 30× fetch probe from inside the
+pod returned 100% success: the banner is the last failed attempt,
+and it clears on the next refresh cycle. NetworkPolicy, UrlReader,
+and image regression were all ruled out.
+
+### Business value delivered (Wave 3)
+
+- **CVE suppressions cut by three-quarters.** 45 → 11 ignored CVEs,
+  with every survivor justified by "no fix without a major jump"
+  rather than "we haven't got to it."
+- **Smaller attack surface at runtime.** Wolfi minimal base, non-root
+  65532, PSS `restricted`, no Debian package tail.
+- **The CI supply chain can't be repointed by a third party.** Every
+  third-party action runs a pinned commit. A compromised upstream
+  tag (the tj-actions/changed-files class of incident, March 2025)
+  can't inject code into our pipeline.
+- **The pipeline stays current without manual work.** Dependabot
+  opens grouped, reviewable PRs weekly, so pins and lockfiles don't
+  drift for a month again.
+- **Faster, more reliable multi-arch builds** for every service on the
+  golden path, through the inherited native-runner workflow.
+
+### Interview talking points (Wave 3)
+
+1. *"I moved our developer portal to a Wolfi base and the first image
+    choice turned out to be wrong for a reason I could only find by
+    reproducing locally. Chainguard's free tier only publishes
+    `latest`, which was Node 26, outside Backstage's supported range,
+    and the pinnable tags are paid. I switched to `wolfi-base` and
+    installed versioned Node from the package index, which keeps the
+    minimal-distro benefits and lets us pin the major."*
+2. *"Our arm64 build failed and amd64 passed. Rather than patch code,
+    I built arm64 natively on my Mac and it passed, which pointed at
+    QEMU emulation in CI. I moved the reusable workflow to native
+    per-arch runners with digest-push and a manifest merge, and every
+    service on the golden path inherited the fix."*
+3. *"I treat `.trivyignore` as debt with an interest rate, not as a
+    mute button. In this sweep I took it from 45 entries to 11, and
+    the remaining 11 each have a written reason. I also learned the
+    limits of my own tooling: a local lockfile scan hides devDependency
+    subtrees, and CI's image scan caught a suppression I'd made on
+    that basis within the hour. I fixed it by deleting the vulnerable
+    subtree instead of re-ignoring it."*
+4. *"Every third-party GitHub Action is SHA-pinned, and Dependabot
+    bumps the SHA and its version comment together. Pinning alone
+    would have frozen us out of the actions' own security fixes."*
+
+### Recruiter Q&A (Wave 3)
+
+- *"How do you handle vulnerabilities in open-source dependencies?"*
+  Fix first and suppress last. Most CVEs are fixed by re-resolving
+  within the version range the library already allows. When the fix
+  sits outside that range, a scoped override works. Only CVEs with no
+  reachable fix get suppressed, each with a written reason and a
+  review date.
+- *"Why pin GitHub Actions to commit hashes?"* A tag like `v4` can be
+  moved by whoever controls the repo, including an attacker who
+  compromises it. A commit hash can't be changed, so the code that
+  runs in our pipeline is exactly the code we reviewed.
+- *"What did you do when the fix kept failing?"* I stopped changing
+  the Dockerfile and reproduced the build locally. The real cause,
+  an unexpected Node major version in the base image, showed up in
+  the first local run. CI logs had shown only the downstream symptom.
+
+### Loose ends for Phase 10 polish
+
+- **Backstage framework bump** (`backstage-cli versions:bump`). It
+  retires the `backend-defaults@0.12.3` copy and with it 7 of the 11
+  remaining ignored CVEs (undici 5.x ×5, urllib@3,
+  backend-defaults itself).
+- **Digest-pin `wolfi-base`** and add a Dependabot `docker` ecosystem
+  entry for it. It currently floats on `latest`, the only free tag.
+- **Full-distroless runtime stage.** Drop yarn from the runtime image
+  by doing the production install in the builder.
+- **Plugin wiring audit:** diff installed `@backstage*/plugin-*`
+  packages against `createApp` features (bug 9 has now recurred
+  three times).
+- **Triage the 3 open Dependabot PRs.** Do this now as Wave 3
+  aftercare rather than deferring it.
+
+### See also (Wave 3)
+
+- [portal/Dockerfile](../../portal/Dockerfile): the header carries
+  the full base-image decision trail
+- [portal/package.json](../../portal/package.json):
+  `resolutions` + `dependenciesMeta`
+- [portal/.trivyignore](../../portal/.trivyignore): the 11
+  survivors and their two-bucket justification
+- [.github/workflows/reusable-service-ci.yml](../../.github/workflows/reusable-service-ci.yml):
+  native runners, digest merge, SHA pins
+- [.github/dependabot.yml](../../.github/dependabot.yml)
