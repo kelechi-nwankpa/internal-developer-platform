@@ -1,0 +1,25 @@
+---
+# Name and port are a contract: Loki, Tempo and the Crossplane MinIO
+# ProviderConfig all address http://minio.minio.svc.cluster.local:9000.
+# Console (9001) is ClusterIP only — reach it with kubectl port-forward.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: observability-storage
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: server
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    - name: console
+      port: 9001
+      targetPort: console

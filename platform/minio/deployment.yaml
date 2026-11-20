@@ -1,0 +1,117 @@
+---
+# MinIO server — owned manifests replacing the upstream chart (8W4.1).
+#
+# WHY not the chart: MinIO stopped publishing community images
+# (quay.io/minio/minio → 401, docker.io/minio/minio gone), and chart
+# 5.3.0 hardcodes `/bin/sh -ce docker-entrypoint.sh ...`, which no
+# shell-less image can run. Owning ~100 lines beats pinning an
+# abandoned chart.
+#
+# WHY Chainguard: same MinIO server (drop-in for Loki, Tempo and the
+# Crossplane MinIO provider, which uses MinIO's admin API), rebuilt on
+# CVE fixes. Free tier publishes only `latest`, so the multi-arch index
+# is pinned by digest — same trade-off as wolfi-base (Phase 8 Wave 3).
+# To upgrade: `docker buildx imagetools inspect cgr.dev/chainguard/minio:latest`
+# and replace the digest.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: observability-storage
+spec:
+  replicas: 1
+  # RWO volume: the old pod must release it before the new one mounts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: observability-storage
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Makes the fresh volume writable by 65532 (verified locally:
+        # without it MinIO exits "file access denied" on /export).
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: minio
+          image: cgr.dev/chainguard/minio@sha256:e9cf6b99c226e9539ed0f14b6f00e37b07da153c7ba1f4f8709c807574b471ec
+          # Image entrypoint is /usr/bin/minio; no shell in the image.
+          args:
+            - server
+            - /export
+            - --address
+            - :9000
+            - --console-address
+            - :9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root-credentials
+                  key: rootUser
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root-credentials
+                  key: rootPassword
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /export
+            # MinIO writes ~/.minio (HOME falls back to /home/nonroot) and
+            # temp files; with a read-only root these need emptyDirs.
+            - name: home
+              mountPath: /home/nonroot
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

@@ -4,19 +4,35 @@ S3-compatible object storage for Phase 3 Wave 2's Loki (chunks) and Tempo (block
 
 ## What's in here
 
+Since 8W4.1 (2026-11-20) this directory is the **whole** MinIO install,
+synced by the `minio-config` Application. The upstream `minio/minio`
+chart was removed: MinIO stopped publishing community images (quay.io
+returns 401, Docker Hub repo gone) and the chart hardcodes a
+`/bin/sh -ce docker-entrypoint.sh` command that shell-less images can't
+run.
+
 | Path | Purpose |
 |---|---|
-| [`externalsecret.yaml`](externalsecret.yaml) | ExternalSecret CR pulling MinIO root credentials from Vault (`kv/minio/root`) into a k8s Secret (`minio-root-credentials`). The MinIO chart references that Secret via `existingSecret`. |
+| [`externalsecret.yaml`](externalsecret.yaml) | Pulls MinIO root credentials from Vault (`minio/root`) into the `minio-root-credentials` Secret. |
+| [`pvc.yaml`](pvc.yaml) | 10Gi RWO data volume. |
+| [`deployment.yaml`](deployment.yaml) | MinIO server, `cgr.dev/chainguard/minio` pinned by digest, nonroot 65532, read-only root filesystem. |
+| [`service.yaml`](service.yaml) | `minio:9000` (S3) + `9001` (console). The name/port is a contract with Loki, Tempo and Crossplane. |
+| [`bucket-job.yaml`](bucket-job.yaml) | PostSync hook creating `loki-chunks` + `tempo-blocks` with `mc mb --ignore-existing` (idempotent). |
+
+**Upgrading MinIO:** Chainguard's free tier only publishes `latest`, so
+resolve the new index digest with
+`docker buildx imagetools inspect cgr.dev/chainguard/minio:latest` and
+replace it in `deployment.yaml` (same for `minio-client` in
+`bucket-job.yaml`).
 
 ## What's NOT in here
 
-- **The MinIO chart install itself.** That's [`platform/argocd/apps/minio.yaml`](../argocd/apps/minio.yaml) — Helm Application pointing at the official `minio/minio` chart.
-- **Bucket definitions.** Buckets (`loki-chunks`, `tempo-blocks`) are declared in the chart values via `buckets:`; a Helm hook Job pre-creates them on first install.
-- **The Vault secret itself.** That's an out-of-band manual seed (see below) — must exist BEFORE the ExternalSecret can sync, or the chart Application will crash-loop.
+- **The Vault secret itself.** An out-of-band manual seed (see below);
+  it must exist before the ExternalSecret can sync, or MinIO can't start.
 
 ## First-install order (one-time)
 
-Vault must have the root credential BEFORE ArgoCD syncs this. Sync waves order the Kubernetes resources correctly (ExternalSecret at wave -1, chart at wave 0), but neither can succeed if Vault has nothing to pull.
+Vault must have the root credential BEFORE ArgoCD syncs this, or the ExternalSecret has nothing to pull and the MinIO pod can't start.
 
 **Step 1 (manual, one-time) — seed Vault:**
 
@@ -38,16 +54,7 @@ Note: keep the password in your password manager. Losing it means re-seeding Vau
 
 **Step 2 (GitOps) — sync ArgoCD:**
 
-After seeding, `root` app-of-apps will pick up `minio-config` and `minio` on next reconcile. Sync waves ensure the ExternalSecret + resulting k8s Secret exist before the MinIO chart tries to read them.
-
-## Why split into two Applications
-
-Same split-by-lifecycle pattern as `vault-config` / `vault` (Phase 2), `cert-manager-issuers` / `cert-manager` (Phase 2), and `backstage-rbac` / `backstage` (Phase 5):
-
-- **`minio-config`** lifecycle = credential rotation cadence + Vault path changes. Rare.
-- **`minio`** lifecycle = chart version bumps. More frequent.
-
-Coupling them would mean touching credentials on every chart bump. Split, they iterate independently.
+After seeding, `root` app-of-apps picks up `minio-config` on its next reconcile.
 
 ## Credential rotation
 
@@ -56,14 +63,14 @@ To rotate the MinIO root password:
 1. Generate a new password
 2. `vault kv put kv/minio/root rootPassword=<new>` (rootUser unchanged)
 3. ESO detects the change on its next refresh (~1h; kick with `kubectl -n external-secrets rollout restart deployment/external-secrets` to force immediately)
-4. MinIO pod picks up the new Secret on its next restart — trigger with `kubectl -n minio rollout restart statefulset/minio`
+4. MinIO pod picks up the new Secret on its next restart — trigger with `kubectl -n minio rollout restart deployment/minio`
 5. Existing MinIO service accounts (used by Loki/Tempo — Phase 8 hardening) continue to work; only the root user credential changes
 
 ## EKS migration (Phase 9)
 
 Per [ADR-0029](../../docs/adr/0029-object-storage-strategy.md):
 
-1. Delete this Application's `minio-config` + `minio` from ArgoCD
+1. Delete the `minio-config` Application from ArgoCD
 2. Create `ObjectBucket` XRCs for `loki-chunks` + `tempo-blocks` (using our Phase 4 XRD)
 3. Update Loki + Tempo endpoint values to `https://s3.eu-west-1.amazonaws.com`
 4. Auth swaps from static access-key to IRSA (established pattern from ADR-0009)

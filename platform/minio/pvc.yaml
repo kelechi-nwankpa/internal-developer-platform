@@ -1,0 +1,19 @@
+---
+# MinIO data volume. RWO is enough: single-replica standalone server.
+# Fresh volume as of 8W4.1 (2026-11-20): the upstream chart's PVC was
+# deleted with the chart; its Loki/Tempo data was 37+ days stale.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: observability-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
