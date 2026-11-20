@@ -47,7 +47,7 @@
     "@terasky/backstage-plugin-crossplane-resources-frontend": "^2.19.1",
     "react": "^18.0.2",
     "react-dom": "^18.0.2",
-    "react-router": "^6.30.2",
+    "react-router": "^8.5.1",
     "react-router-dom": "^6.30.2"
   },
   "devDependencies": {
