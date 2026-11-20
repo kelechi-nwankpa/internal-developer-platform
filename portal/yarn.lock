@@ -11579,7 +11579,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@testing-library/dom@npm:^10.0.0":
+"@testing-library/dom@npm:^10.0.0, @testing-library/dom@npm:^10.4.2":
   version: 10.4.2
   resolution: "@testing-library/dom@npm:10.4.2"
   dependencies:
@@ -14546,7 +14546,7 @@ __metadata:
     "@playwright/test": "npm:^1.32.3"
     "@terasky/backstage-plugin-crossplane-common": "npm:^1.4.6"
     "@terasky/backstage-plugin-crossplane-resources-frontend": "npm:^2.19.1"
-    "@testing-library/dom": "npm:^9.0.0"
+    "@testing-library/dom": "npm:^10.4.2"
     "@testing-library/jest-dom": "npm:^6.0.0"
     "@testing-library/react": "npm:^14.0.0"
     "@testing-library/user-event": "npm:^14.0.0"
