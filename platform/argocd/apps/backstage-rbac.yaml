@@ -49,3 +49,7 @@ spec:
       - CreateNamespace=true
       # SSA is our established defensive default per ADR-0014.
       - ServerSideApply=true
+      # Server-side diff: compare against the API server's defaulted result.
+      # Client-side diff flagged webhook-filled defaults as drift forever
+      # (8W4.4: kubectl diff --server-side showed Git == live).
+      - ServerSideDiff=true

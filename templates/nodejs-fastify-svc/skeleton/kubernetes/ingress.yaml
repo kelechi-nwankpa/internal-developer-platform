@@ -20,7 +20,11 @@ metadata:
     # cert-manager watches Ingress annotations for the referenced ClusterIssuer
     # and auto-provisions the Certificate. We ALSO have certificate.yaml as
     # a separate resource for clarity; either mechanism works.
-    cert-manager.io/cluster-issuer: selfsigned
+    # No cert-manager.io/cluster-issuer here: certificate.yaml declares the
+    # Certificate explicitly. The annotation made cert-manager's ingress-shim
+    # manage a second Certificate with the same name, and the two writers
+    # fought (ingress-shim kept stripping duration/renewBefore/commonName,
+    # so ArgoCD showed it OutOfSync forever).
 
     # nginx-ingress rate limiting — 100 req/s per client IP. Adjust when
     # real traffic patterns are known.
