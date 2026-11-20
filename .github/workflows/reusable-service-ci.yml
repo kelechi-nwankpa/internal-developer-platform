@@ -227,7 +227,7 @@ jobs:
       # by-digest pushes are deliberately untagged.
       - name: Compute OCI labels
         id: docker-meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
 
@@ -358,7 +358,7 @@ jobs:
 
       - name: Compute tags
         id: docker-meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ inputs.image-registry }}/${{ inputs.image-repo }}
           tags: |
