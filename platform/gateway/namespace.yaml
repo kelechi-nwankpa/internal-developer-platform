@@ -13,6 +13,10 @@
 # beyond that one exception still shows up in the API server audit log and
 # as a kubectl warning.
 #
+# `privileged` checks nothing, so the exception is narrowed back by a
+# Kyverno policy: platform/kyverno/policies/restrict-gateway-namespace.yaml
+# enforces every baseline check here and allows host ports 80/443 only.
+#
 # KIND-ONLY: on EKS the proxy sits behind an NLB, needs no hostPort, and
 # this namespace should enforce `restricted`.
 apiVersion: v1

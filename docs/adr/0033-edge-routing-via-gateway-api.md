@@ -122,6 +122,10 @@ The Gateway API edge now exists (`platform/gateway/`, Applications
 - **kind exposure: hostPort 80/443** on the proxy pod. This needs Pod
   Security `privileged` on the `gateway` namespace only; on EKS the proxy
   sits behind an NLB and the namespace returns to `restricted`.
+  `privileged` checks nothing, so a Kyverno policy
+  (`platform/kyverno/policies/restrict-gateway-namespace.yaml`, Enforce)
+  re-applies every `baseline` check there and allows host ports 80 and
+  443 only.
 
 **Correction to Option B above.** It says kind "would likely be
 recreated" to add host port mappings. That was wrong:

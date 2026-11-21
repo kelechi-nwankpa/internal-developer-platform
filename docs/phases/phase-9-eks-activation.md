@@ -62,7 +62,9 @@ On EKS only the first hop changes: an NLB replaces the kind host ports.
 - **One wildcard key**, kept in the `gateway` namespace, rotated at every
   renewal, 90-day lifetime.
 - **One Pod Security exception:** `gateway` enforces `privileged` on kind
-  for hostPort 80/443. Audit and warn stay at `baseline`.
+  for hostPort 80/443. Audit and warn stay at `baseline`. A Kyverno
+  policy (`restrict-gateway-namespace`, Enforce) narrows that back to
+  baseline plus host ports 80 and 443 (section 6).
 
 ## Operations
 
@@ -208,6 +210,29 @@ exist" and was reverted (`5488e5e`) before anything consumed it.
 then write the same value to Vault and restart Backstage. Postgres never
 re-reads the Secret.
 
+### 6. The `gateway` namespace exception, narrowed
+
+Pod Security has no per-field exemption, so allowing two host ports meant
+setting the namespace to `privileged`, which checks nothing. A Kyverno
+policy, `restrict-gateway-namespace` (Enforce), gives the rest back:
+
+- **Rule 1:** every `baseline` check, with the Host Ports control switched
+  off.
+- **Rule 2:** a hostPort must be 80 or 443 (containers, init containers,
+  ephemeral containers).
+
+Verified three ways: offline against 8 example pods (`make policy-test`);
+offline against the live proxy pod and Deployment (both pass); and by
+server dry-run against the cluster, where the five forbidden pods were
+each denied by this policy and the real proxy was still admitted.
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-13 | **`kyverno test` reported "10 tests passed" for a broken policy.** A copy edited to allow port 8080, and one pointed at the wrong namespace, both passed. The CLI prints "Want fail, got pass" and still counts the row as passed; a rule that matched nothing is "Excluded" and also passes. Same on CLI v1.14.4 to v1.16.1. Found only because I broke the policy on purpose to check the tests. | `scripts/policy-test.sh` runs `kyverno apply` and compares its report line for line with an expected table. All four deliberate breakages now fail it. |
+
+**Lesson.** A test that has never been seen to fail proves nothing. Break
+the thing under test before trusting a green result.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
@@ -247,7 +272,6 @@ Four older faults then surfaced.
 ## Still to do (all $0 on kind)
 
 - An off-node backup of Vault's data (or accept re-issuing the secrets).
-- Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
 - Decide whether external-dns should publish the wildcard record that the
   redirect route produces (`*.idp.seniormankelz.dev`).
 - S3/IRSA Composition meeting the five-key bucket contract, tested
