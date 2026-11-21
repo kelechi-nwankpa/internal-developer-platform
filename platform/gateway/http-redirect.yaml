@@ -16,6 +16,22 @@ metadata:
     app.kubernetes.io/part-of: platform-edge
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+    # Keep external-dns away from this route (Phase 9, deny-by-default).
+    #
+    # WHY: with no hostname, external-dns reads this route as "publish
+    # *.idp.seniormankelz.dev". On EKS that wildcard would make every
+    # name under the zone resolve to the load balancer, including typos
+    # and names nobody created. Each service's own HTTPRoute already
+    # gets its own record, so the wildcard adds nothing but exposure.
+    #
+    # HOW: external-dns only processes a resource whose `controller`
+    # annotation is absent or equals "dns-controller". Any other value
+    # means "not mine". The redirect itself is unaffected.
+    #
+    # Alternative rejected: publish the wildcard so a new service's DNS
+    # exists before its route does. Saves about a minute, costs
+    # name-enumeration cover for anything pointed at the edge.
+    external-dns.alpha.kubernetes.io/controller: none
 spec:
   parentRefs:
     - name: edge
