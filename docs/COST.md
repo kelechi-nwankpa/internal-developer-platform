@@ -80,6 +80,13 @@ This is the approximate monthly cost of the **always-on** version of the platfor
 - **gitleaks** pre-commit + CI — prevents leaked keys leading to crypto-miner bills (the fastest way anyone ever loses $10k+ on AWS).
 - **Root MFA + IAM Identity Center** in place before any workload account access.
 - **Daily cost pull** via `aws ce get-cost-and-usage`; the [`make cost`](../Makefile) target will surface this locally starting in Phase 1.
+- **Deploy preflight** (Phase 9): `make aws-up` runs
+  [`scripts/aws-preflight.sh`](../scripts/aws-preflight.sh) first and
+  refuses to deploy unless the Kubernetes version in the synthesized
+  template is in EKS standard support **and** lifetime spend plus the
+  session estimate fits under the cap (`BUDGET_CAP_USD` in the Makefile).
+  It fails closed: a check that cannot run is a refusal. Budgets alarms
+  only warn after the money is spent; this stops the deploy before it.
 
 ---
 

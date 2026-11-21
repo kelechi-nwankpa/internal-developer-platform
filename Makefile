@@ -29,6 +29,15 @@ CDK_DIR    := infra
 # CostStack should go.
 WORKLOAD_STACKS := VpcStack KmsStack IamStack ClusterStack RegistryStack DnsStack
 
+# Budget guard, enforced by scripts/aws-preflight.sh before every deploy.
+# Raising the cap is the owner's decision: change BUDGET_CAP_USD here AND
+# the cap in docs/COST.md in the same commit, so it is reviewed and recorded.
+BUDGET_CAP_USD       := 30
+# One planned ~3h session (~$2.30) plus one failed retry, incl. VAT (docs/COST.md).
+SESSION_ESTIMATE_USD := 4
+# First month with AWS charges; lifetime spend is summed from here.
+PROJECT_START        := 2026-07-01
+
 # ANSI colours for readability in `make help`.
 BLUE   := \033[1;34m
 GREEN  := \033[1;32m
@@ -99,11 +108,18 @@ clean: ## remove generated artefacts (cdk.out, dist, build, node_modules)
 # ─────────────────────────────────────────────────────────────
 # AWS lifecycle (implemented in Phase 1)
 # ─────────────────────────────────────────────────────────────
+.PHONY: aws-preflight
+aws-preflight: ## check K8s version support + budget headroom before deploying (costs $$0.01)
+	@AWS_REGION=$(AWS_REGION) CDK_DIR=$(CDK_DIR) BUDGET_CAP_USD=$(BUDGET_CAP_USD) \
+		SESSION_ESTIMATE_USD=$(SESSION_ESTIMATE_USD) PROJECT_START=$(PROJECT_START) \
+		scripts/aws-preflight.sh
+
+.PHONY: preflight-test
+preflight-test: ## unit-test the preflight decision logic (no AWS calls)
+	@bash scripts/tests/aws-preflight.test.sh
+
 .PHONY: aws-up
-aws-up: ## deploy every CDK stack to $(AWS_REGION) in dependency order
-	@printf "$(BLUE)==> Verifying AWS credentials$(RESET)\n"
-	@aws sts get-caller-identity >/dev/null 2>&1 \
-		|| { printf "$(RED)AWS credentials not set. Run 'aws configure' or 'aws sso login'.$(RESET)\n"; exit 1; }
+aws-up: aws-preflight ## deploy every CDK stack to $(AWS_REGION) in dependency order (runs aws-preflight first)
 	@printf "$(BLUE)==> Bootstrapping CDK in $(AWS_REGION) (idempotent)$(RESET)\n"
 	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk bootstrap
 	@printf "$(BLUE)==> Deploying all stacks to $(AWS_REGION)$(RESET)\n"
