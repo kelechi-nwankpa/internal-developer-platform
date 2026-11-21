@@ -20,8 +20,12 @@
 # hostname "*.idp.seniormankelz.dev": routes for any other domain are
 # rejected at attach time.
 #
-# HTTP only for now; the HTTPS listener, certificate and HTTP->HTTPS
-# redirect are added in the next step.
+# Two listeners:
+#   https (443)  terminates TLS with the platform wildcard certificate
+#                (certificate.yaml). Team routes attach HERE, with
+#                `sectionName: https`.
+#   http  (80)   accepts routes from this namespace only; its single route
+#                is the redirect to HTTPS (http-redirect.yaml).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -34,13 +38,25 @@ metadata:
 spec:
   gatewayClassName: envoy
   listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
+    - name: https
+      port: 443
+      protocol: HTTPS
       hostname: "*.idp.seniormankelz.dev"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: edge-wildcard-tls
       allowedRoutes:
         namespaces:
           from: Selector
           selector:
             matchLabels:
               edge.idp.seniormankelz.dev/allow-routes: "true"
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: "*.idp.seniormankelz.dev"
+      allowedRoutes:
+        namespaces:
+          from: Same

@@ -1,0 +1,28 @@
+---
+# Redirect every plain-HTTP request to HTTPS (301).
+#
+# This is the ONLY route on the http listener: the listener accepts routes
+# from this namespace alone (gateway.yaml, `from: Same`), so no team can
+# serve content over plain HTTP even by mistake.
+#
+# No `hostnames`: it inherits the listener's wildcard, so every name under
+# *.idp.seniormankelz.dev is redirected, including ones with no service.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+  namespace: gateway
+  labels:
+    app.kubernetes.io/part-of: platform-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  parentRefs:
+    - name: edge
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

@@ -1,0 +1,50 @@
+---
+# The one TLS certificate for the edge: *.idp.seniormankelz.dev
+# (Phase 9, ADR-0033).
+#
+# WHY one platform-owned wildcard instead of a certificate per service:
+#   - TLS terminates at the shared Gateway, so the key must live in the
+#     Gateway's namespace anyway. Per-service certs would mean every team
+#     copying a Secret here or a ReferenceGrant per namespace.
+#   - A new service needs no certificate work at all: its HTTPRoute is
+#     served over HTTPS the moment it attaches (the 10-minute goal).
+#   - With Let's Encrypt on EKS, one cert = one issuance, no rate-limit
+#     exposure as services multiply.
+# The cost: one key covers every hostname. If it leaks, every service can
+# be impersonated until the cert is rotated. Mitigations: the Secret lives
+# only in this namespace, the key is regenerated at every renewal
+# (rotationPolicy: Always), and the lifetime is short (90 days).
+# Per-service certs are the right call when services need separate trust
+# boundaries (e.g. a regulated workload) or end-to-end TLS to the pod.
+#
+# WHY an explicit Certificate instead of the cert-manager.io/cluster-issuer
+# annotation on the Gateway: the object is visible and reviewable in Git,
+# has its own ArgoCD health, and does not depend on cert-manager's
+# gateway-shim being enabled.
+#
+# Issuer `selfsigned` is the kind value (browsers and curl need -k). On EKS
+# this becomes the Let's Encrypt DNS-01 issuer; a wildcard cannot be issued
+# with HTTP-01.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: edge-wildcard
+  namespace: gateway
+  labels:
+    app.kubernetes.io/part-of: platform-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  secretName: edge-wildcard-tls
+  dnsNames:
+    - "*.idp.seniormankelz.dev"
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: selfsigned
