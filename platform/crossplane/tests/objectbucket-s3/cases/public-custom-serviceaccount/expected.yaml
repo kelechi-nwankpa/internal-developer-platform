@@ -1,0 +1,210 @@
+---
+apiVersion: platform.idp.io/v1alpha1
+kind: XObjectBucket
+metadata:
+  name: platform-hello-x7k2p
+spec:
+  crossplane:
+    resourceRefs:
+    - apiVersion: iam.aws.upbound.io/v1beta1
+      kind: Policy
+      name: platform-hello-x7k2p
+    - apiVersion: iam.aws.upbound.io/v1beta1
+      kind: RolePolicyAttachment
+      name: platform-hello-x7k2p
+    - apiVersion: iam.aws.upbound.io/v1beta1
+      kind: Role
+      name: platform-hello-x7k2p
+    - apiVersion: s3.aws.upbound.io/v1beta1
+      kind: BucketServerSideEncryptionConfiguration
+      name: platform-hello-x7k2p-sse
+    - apiVersion: s3.aws.upbound.io/v1beta1
+      kind: Bucket
+      name: platform-hello-x7k2p
+status:
+  bucketArn: arn:aws:s3:::platform-hello-x7k2p-3f9a1c
+  bucketName: platform-hello-x7k2p-3f9a1c
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: WatchCircuitClosed
+    status: "True"
+    type: Responsive
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: ReconcileSuccess
+    status: "True"
+    type: Synced
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: access-policy, bucket, role, and 2 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: access-policy
+    crossplane.io/external-name: idp-platform-hello-x7k2p-3f9a1c
+  labels:
+    crossplane.io/claim-name: platform-hello
+    crossplane.io/claim-namespace: platform-hello
+    crossplane.io/composite: platform-hello-x7k2p
+  name: platform-hello-x7k2p
+  ownerReferences:
+  - apiVersion: platform.idp.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XObjectBucket
+    name: platform-hello-x7k2p
+    uid: 3f9a1c2e-7b4d-4e8a-9c1f-5d6e7f8a9b0c
+spec:
+  forProvider:
+    description: Read/write on bucket platform-hello-x7k2p-3f9a1c for platform-hello/hello-worker
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "ListThisBucket",
+            "Effect": "Allow",
+            "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+            "Resource": "arn:aws:s3:::platform-hello-x7k2p-3f9a1c"
+          },
+          {
+            "Sid": "ReadWriteObjects",
+            "Effect": "Allow",
+            "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+            "Resource": "arn:aws:s3:::platform-hello-x7k2p-3f9a1c/*"
+          }
+        ]
+      }
+    tags:
+      Project: idp
+      idp/claim: platform-hello/platform-hello
+  providerConfigRef:
+    name: default
+---
+apiVersion: s3.aws.upbound.io/v1beta1
+kind: Bucket
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: bucket
+    crossplane.io/external-name: platform-hello-x7k2p-3f9a1c
+  labels:
+    crossplane.io/claim-name: platform-hello
+    crossplane.io/claim-namespace: platform-hello
+    crossplane.io/composite: platform-hello-x7k2p
+  name: platform-hello-x7k2p
+  ownerReferences:
+  - apiVersion: platform.idp.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XObjectBucket
+    name: platform-hello-x7k2p
+    uid: 3f9a1c2e-7b4d-4e8a-9c1f-5d6e7f8a9b0c
+spec:
+  forProvider:
+    region: eu-west-1
+    tags:
+      Project: idp
+      idp/claim: platform-hello/platform-hello
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: role
+    crossplane.io/external-name: idp-platform-hello-x7k2p-3f9a1c
+  labels:
+    crossplane.io/claim-name: platform-hello
+    crossplane.io/claim-namespace: platform-hello
+    crossplane.io/composite: platform-hello-x7k2p
+  name: platform-hello-x7k2p
+  ownerReferences:
+  - apiVersion: platform.idp.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XObjectBucket
+    name: platform-hello-x7k2p
+    uid: 3f9a1c2e-7b4d-4e8a-9c1f-5d6e7f8a9b0c
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {"Federated": "arn:aws:iam::111122223333:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"},
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+              "StringEquals": {
+                "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:platform-hello:hello-worker",
+                "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+              }
+            }
+          }
+        ]
+      }
+    description: IRSA role for platform-hello/hello-worker on bucket platform-hello-x7k2p-3f9a1c
+    tags:
+      Project: idp
+      idp/claim: platform-hello/platform-hello
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: role-policy-attachment
+  labels:
+    crossplane.io/claim-name: platform-hello
+    crossplane.io/claim-namespace: platform-hello
+    crossplane.io/composite: platform-hello-x7k2p
+  name: platform-hello-x7k2p
+  ownerReferences:
+  - apiVersion: platform.idp.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XObjectBucket
+    name: platform-hello-x7k2p
+    uid: 3f9a1c2e-7b4d-4e8a-9c1f-5d6e7f8a9b0c
+spec:
+  forProvider:
+    policyArnRef:
+      name: platform-hello-x7k2p
+    roleRef:
+      name: platform-hello-x7k2p
+  providerConfigRef:
+    name: default
+---
+apiVersion: s3.aws.upbound.io/v1beta1
+kind: BucketServerSideEncryptionConfiguration
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: sse
+  labels:
+    crossplane.io/claim-name: platform-hello
+    crossplane.io/claim-namespace: platform-hello
+    crossplane.io/composite: platform-hello-x7k2p
+  name: platform-hello-x7k2p-sse
+  ownerReferences:
+  - apiVersion: platform.idp.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XObjectBucket
+    name: platform-hello-x7k2p
+    uid: 3f9a1c2e-7b4d-4e8a-9c1f-5d6e7f8a9b0c
+spec:
+  forProvider:
+    bucketRef:
+      name: platform-hello-x7k2p
+    region: eu-west-1
+    rule:
+    - applyServerSideEncryptionByDefault:
+      - sseAlgorithm: AES256
+  providerConfigRef:
+    name: default

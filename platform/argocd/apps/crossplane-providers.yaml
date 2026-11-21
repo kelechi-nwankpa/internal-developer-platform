@@ -32,6 +32,12 @@ spec:
     repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
     targetRevision: HEAD
     path: platform/crossplane
+    # Top-level files only. platform/crossplane/tests/ holds example
+    # bucket requests and expected AWS resources for `make
+    # composition-test`; they must never be applied to a cluster. This is
+    # ArgoCD's default, written down so nobody turns recursion on.
+    directory:
+      recurse: false
 
   destination:
     server: https://kubernetes.default.svc

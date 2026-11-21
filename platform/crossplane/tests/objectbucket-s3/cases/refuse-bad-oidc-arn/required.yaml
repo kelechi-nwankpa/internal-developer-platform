@@ -1,0 +1,6 @@
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: idp-cluster
+data:
+  oidcProviderArn: arn:aws:iam::111122223333:role/not-an-oidc-provider

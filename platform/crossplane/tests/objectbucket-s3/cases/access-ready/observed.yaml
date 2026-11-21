@@ -1,0 +1,25 @@
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: platform-hello-x7k2p
+  annotations:
+    crossplane.io/composition-resource-name: role
+status:
+  atProvider:
+    arn: arn:aws:iam::111122223333:role/idp-platform-hello-x7k2p-3f9a1c
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Available
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: platform-hello-x7k2p
+  annotations:
+    crossplane.io/composition-resource-name: role-policy-attachment
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Available

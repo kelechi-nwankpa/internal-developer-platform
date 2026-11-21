@@ -1,0 +1,19 @@
+apiVersion: platform.idp.io/v1alpha1
+kind: XObjectBucket
+metadata:
+  name: platform-hello-x7k2p
+  uid: 3f9a1c2e-7b4d-4e8a-9c1f-5d6e7f8a9b0c
+  labels:
+    crossplane.io/claim-name: platform-hello
+    crossplane.io/claim-namespace: platform-hello
+spec:
+  claimRef:
+    apiVersion: platform.idp.io/v1alpha1
+    kind: ObjectBucket
+    name: platform-hello
+    namespace: platform-hello
+  parameters:
+    region: eu-west-1
+    publicRead: true
+    versioning: false
+    serviceAccountName: hello-worker

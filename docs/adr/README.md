@@ -67,6 +67,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0031](0031-golden-path-template-nodejs-fastify.md) | Golden path template: Node.js + Fastify + standalone repo + Backstage entity | Accepted | 2026-09-15 |
 | [0032](0032-cicd-pipeline-reusable-workflow-oidc-cosign.md) | CI/CD pipeline: reusable workflow + OIDC + semver/SHA tags + CI-commits-manifest + Trivy/cosign | Accepted | 2026-10-10 |
 | [0033](0033-edge-routing-via-gateway-api.md) | Route edge traffic through the Gateway API; ship no Ingress until then | Accepted | 2026-11-20 |
+| [0034](0034-bucket-access-on-aws-via-irsa.md) | Bucket access on AWS through IRSA, not a stored key | Accepted | 2026-11-21 |
 
 ## References
 

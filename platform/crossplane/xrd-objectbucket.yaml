@@ -58,6 +58,11 @@ spec:
     - AWS_SECRET_ACCESS_KEY
     - AWS_ENDPOINT_URL
     - AWS_REGION
+    # S3 variant only (Phase 9, ADR-0034): the IAM role the pod assumes
+    # with its own short-lived token. The S3 variant sets this and leaves
+    # the two key fields and the endpoint out; the MinIO variant does the
+    # opposite. A service reads whichever its cluster provides.
+    - AWS_ROLE_ARN
 
   versions:
     - name: v1alpha1
@@ -100,6 +105,16 @@ spec:
                         Whether object versioning is enabled. Default false.
                         When true, deleted/overwritten objects retain
                         previous versions (with associated storage cost).
+                    serviceAccountName:
+                      type: string
+                      maxLength: 63
+                      pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                      description: >
+                        ServiceAccount (in the claim's namespace) allowed
+                        to use the bucket on AWS. Defaults to the claim's
+                        own name, which is what the golden-path template
+                        creates. Ignored by the MinIO variant, which hands
+                        out a key instead.
                   required:
                     - region
               required:
@@ -116,6 +131,12 @@ spec:
                   description: >
                     The generated S3 bucket name (claim-name + random suffix).
                     Populated once the Bucket MR reports Ready.
+                roleArn:
+                  type: string
+                  description: >
+                    S3 variant only. ARN of the IAM role the service
+                    assumes. Set once the role exists and its policy is
+                    attached, i.e. when the connection Secret is complete.
                 bucketArn:
                   type: string
                   description: >

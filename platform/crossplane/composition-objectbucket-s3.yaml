@@ -17,11 +17,42 @@
 #
 # Uses fn-go-templating for rendering + fn-auto-ready for status rollup.
 #
-# Renders 2-4 MRs depending on XR field values:
+# Renders 5-7 MRs depending on XR field values:
 #   - Bucket                                          (always)
 #   - BucketPublicAccessBlock                         (unless publicRead:true)
 #   - BucketVersioning                                (if versioning:true)
 #   - BucketServerSideEncryptionConfiguration         (always — AES256 default)
+#   - IAM Policy + Role + RolePolicyAttachment        (always — see below)
+#
+# HOW A SERVICE GETS ACCESS (Phase 9, ADR-0034): IRSA, no stored key.
+#   The MinIO variant hands out a static access key. On AWS that would be
+#   a long-lived credential in a Secret, so this variant creates an IAM
+#   Role instead. The Role can be assumed by exactly one ServiceAccount
+#   (the claim's namespace + the service's ServiceAccount) through the
+#   cluster's OIDC provider, and may touch exactly one bucket.
+#   The claim's Secret then carries BUCKET_NAME, AWS_REGION and
+#   AWS_ROLE_ARN. There is no AWS_ACCESS_KEY_ID, no AWS_SECRET_ACCESS_KEY
+#   and no AWS_ENDPOINT_URL: with those absent the AWS SDK falls through
+#   to the pod's short-lived token and the real S3 endpoint.
+#
+# WHAT IT NEEDS FROM THE CLUSTER: one EnvironmentConfig named
+#   `idp-cluster` with data.oidcProviderArn (the CDK stack's
+#   OidcProviderArn output). It is created during the EKS session, not
+#   committed: it contains the AWS account id. Without it the Composition
+#   fails with a clear message and creates NOTHING (fail closed) — a
+#   bucket nobody can reach is not a useful half-result.
+#
+# Alternatives rejected:
+#   - IAM User + AccessKey (same five keys as MinIO): a key that never
+#     expires, stored in a Secret, rotated by hand.
+#   - EKS Pod Identity: no OIDC plumbing at all, but needs
+#     provider-aws-eks on a kind VM already short of memory, plus an EKS
+#     add-on. Right choice for an EKS-only platform.
+#   - An inline RolePolicy instead of Policy + Attachment (one resource
+#     fewer): its external-name format could not be verified offline.
+#
+# Tested offline: `make composition-test` (platform/crossplane/tests/).
+# NOT yet tested against real AWS — that waits for the EKS session.
 #
 # See: docs/adr/0027-first-xrd-objectbucket.md
 
@@ -48,6 +79,10 @@ spec:
   # and returns desired state (updated MRs).
   mode: Pipeline
 
+  # Where Crossplane keeps the XR-level connection Secret before copying
+  # it to the claim's namespace. Required for connection details to flow.
+  writeConnectionSecretsToNamespace: crossplane-system
+
   pipeline:
     # ─────────────────────────────────────────────────────────────
     # Step 1 — render the MRs from XR field values via Go templates
@@ -66,16 +101,55 @@ spec:
             {{- $spec := $xr.spec.parameters -}}
             {{- $name := $xr.metadata.name -}}
             {{- /*
-                S3 bucket names are globally unique. Generate a stable
-                6-char suffix from the XR's UID (so re-reconciles don't
-                flip names) — first 6 hex chars, lowercased. If UID
-                is unavailable during first render, fall back to
-                randAlphaNum (a run-time random string).
+                S3 bucket names are globally unique. A stable 6-char
+                suffix comes from the XR's UID, so re-reconciles never
+                flip the name. No UID means no stable name: stop, rather
+                than invent a random one (a new random name on every
+                reconcile would create a new bucket every time).
             */ -}}
             {{- $uid := $xr.metadata.uid | default "" -}}
-            {{- $suffix := (substr 0 6 ($uid | replace "-" "")) | default (randAlphaNum 6 | lower) -}}
-            {{- $bucketName := printf "%s-%s" $name $suffix -}}
+            {{- if lt (len $uid) 6 }}{{ fail "XObjectBucket has no metadata.uid; cannot derive a stable bucket name" }}{{ end -}}
+            {{- $suffix := substr 0 6 ($uid | replace "-" "") | lower -}}
+            {{- /* 52 + 1 + 6 = 59 <= 63 (S3 limit); "idp-" + 59 = 63 <= 64 (IAM limit). */ -}}
+            {{- $bucketName := printf "%s-%s" ($name | trunc 52 | trimSuffix "-") $suffix -}}
+            {{- /* The "idp-" prefix lets the provider's own IAM permissions be
+                scoped to role/idp-* and policy/idp-* instead of "*". */ -}}
+            {{- $iamName := printf "idp-%s" $bucketName -}}
 
+            {{- /*
+                WHO may assume the role: one ServiceAccount in the claim's
+                namespace. Defaults to the claim's name, which is the
+                golden-path convention (service = claim = ServiceAccount).
+            */ -}}
+            {{- $labels := $xr.metadata.labels | default dict -}}
+            {{- $claimNs := index $labels "crossplane.io/claim-namespace" | default "" -}}
+            {{- $claimName := index $labels "crossplane.io/claim-name" | default "" -}}
+            {{- if or (not $claimNs) (not $claimName) }}{{ fail "XObjectBucket was not created from an ObjectBucket claim; there is no namespace to grant access to" }}{{ end -}}
+            {{- $sa := $spec.serviceAccountName | default $claimName -}}
+
+            {{- /*
+                Cluster facts, fetched by Crossplane (see the ExtraResources
+                request below). The OIDC issuer is the tail of the provider
+                ARN, so one input is enough and the two cannot disagree.
+            */ -}}
+            {{- $extra := .extraResources | default dict -}}
+            {{- $fetched := hasKey $extra "cluster" -}}
+            {{- $oidcArn := "" -}}
+            {{- if $fetched -}}
+              {{- $items := (index $extra "cluster").items | default list -}}
+              {{- if eq (len $items) 0 }}{{ fail "EnvironmentConfig idp-cluster not found; the S3 Composition needs data.oidcProviderArn (EKS only)" }}{{ end -}}
+              {{- $oidcArn = dig "resource" "data" "oidcProviderArn" "" (index $items 0) -}}
+              {{- if not (regexMatch "^arn:aws:iam::[0-9]{12}:oidc-provider/[a-zA-Z0-9./_-]+$" $oidcArn) }}{{ fail "EnvironmentConfig idp-cluster: data.oidcProviderArn is missing or not an IAM OIDC provider ARN" }}{{ end -}}
+            {{- end -}}
+            {{- $issuer := regexReplaceAll "^.*:oidc-provider/" $oidcArn "" }}
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ExtraResources
+            requirements:
+              cluster:
+                apiVersion: apiextensions.crossplane.io/v1beta1
+                kind: EnvironmentConfig
+                matchName: idp-cluster
+            ---
             # ─────────────────────────────────────────────
             # S3 Bucket — the actual bucket
             # ─────────────────────────────────────────────
@@ -94,6 +168,11 @@ spec:
             spec:
               forProvider:
                 region: {{ $spec.region }}
+                # Cost guardrail (CLAUDE.md §3): every AWS resource is
+                # tagged so spend can be traced to this project.
+                tags:
+                  Project: idp
+                  idp/claim: {{ $claimNs }}/{{ $claimName }}
               providerConfigRef:
                 name: default   # No ProviderConfig on kind by design — Phase 9 EKS
 
@@ -165,6 +244,144 @@ spec:
                       - sseAlgorithm: AES256
               providerConfigRef:
                 name: default
+
+            {{- if $fetched }}
+            ---
+            # ─────────────────────────────────────────────
+            # IAM Policy — what the service may do: this one bucket only.
+            # Bucket-level and object-level actions need different
+            # resource ARNs, hence two statements. No wildcard resource.
+            # ─────────────────────────────────────────────
+            apiVersion: iam.aws.upbound.io/v1beta1
+            kind: Policy
+            metadata:
+              name: {{ $name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: access-policy
+                crossplane.io/external-name: {{ $iamName }}
+            spec:
+              forProvider:
+                description: Read/write on bucket {{ $bucketName }} for {{ $claimNs }}/{{ $sa }}
+                policy: |
+                  {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Sid": "ListThisBucket",
+                        "Effect": "Allow",
+                        "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+                        "Resource": "arn:aws:s3:::{{ $bucketName }}"
+                      },
+                      {
+                        "Sid": "ReadWriteObjects",
+                        "Effect": "Allow",
+                        "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+                        "Resource": "arn:aws:s3:::{{ $bucketName }}/*"
+                      }
+                    ]
+                  }
+                tags:
+                  Project: idp
+                  idp/claim: {{ $claimNs }}/{{ $claimName }}
+              providerConfigRef:
+                name: default
+            ---
+            # ─────────────────────────────────────────────
+            # IAM Role — who may act: one ServiceAccount, via the cluster's
+            # OIDC provider. BOTH conditions matter:
+            #   :sub  pins the namespace AND the ServiceAccount. Without it
+            #         every pod in the cluster could assume this role.
+            #   :aud  pins the token's audience to STS, so a token minted
+            #         for some other audience cannot be replayed here.
+            # StringEquals (not StringLike): no wildcards to get wrong.
+            # ─────────────────────────────────────────────
+            apiVersion: iam.aws.upbound.io/v1beta1
+            kind: Role
+            metadata:
+              name: {{ $name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: role
+                crossplane.io/external-name: {{ $iamName }}
+            spec:
+              forProvider:
+                description: IRSA role for {{ $claimNs }}/{{ $sa }} on bucket {{ $bucketName }}
+                assumeRolePolicy: |
+                  {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Principal": {"Federated": "{{ $oidcArn }}"},
+                        "Action": "sts:AssumeRoleWithWebIdentity",
+                        "Condition": {
+                          "StringEquals": {
+                            "{{ $issuer }}:sub": "system:serviceaccount:{{ $claimNs }}:{{ $sa }}",
+                            "{{ $issuer }}:aud": "sts.amazonaws.com"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                tags:
+                  Project: idp
+                  idp/claim: {{ $claimNs }}/{{ $claimName }}
+              providerConfigRef:
+                name: default
+            ---
+            # ─────────────────────────────────────────────
+            # Attachment — joins the Policy to the Role.
+            # ─────────────────────────────────────────────
+            apiVersion: iam.aws.upbound.io/v1beta1
+            kind: RolePolicyAttachment
+            metadata:
+              name: {{ $name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: role-policy-attachment
+            spec:
+              forProvider:
+                roleRef:
+                  name: {{ $name }}
+                policyArnRef:
+                  name: {{ $name }}
+              providerConfigRef:
+                name: default
+
+            {{- /*
+                Connection details for the claim's Secret. Published all at
+                once, and only when the role exists AND the policy is
+                attached: a pod that starts earlier would hold a role that
+                cannot read its bucket yet.
+            */ -}}
+            {{- $observed := .observed.resources | default dict }}
+            {{- $roleArn := dig "resource" "status" "atProvider" "arn" "" (index $observed "role" | default dict) }}
+            {{- $attached := eq (getResourceCondition "Ready" (index $observed "role-policy-attachment" | default dict)).Status "True" }}
+            {{- /* ONE condition, used for the Secret and for status.roleArn
+                below, so the two cannot drift apart. */ -}}
+            {{- $accessReady := and $roleArn $attached }}
+            {{- if $accessReady }}
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: CompositeConnectionDetails
+            data:
+              BUCKET_NAME: {{ $bucketName | b64enc }}
+              AWS_REGION: {{ $spec.region | b64enc }}
+              AWS_ROLE_ARN: {{ $roleArn | b64enc }}
+            {{- end }}
+            ---
+            # Status on the bucket request itself (`kubectl get objectbucket`).
+            # roleArn appears under the same condition as the connection
+            # details above, so "roleArn is set" means "the Secret is
+            # complete". It is also what the offline test asserts on:
+            # `crossplane render` does not print connection details.
+            apiVersion: platform.idp.io/v1alpha1
+            kind: XObjectBucket
+            status:
+              bucketName: {{ $bucketName }}
+              bucketArn: arn:aws:s3:::{{ $bucketName }}
+              {{- if $accessReady }}
+              roleArn: {{ $roleArn }}
+              {{- end }}
+            {{- end }}
 
     # ─────────────────────────────────────────────────────────────
     # Step 2 — roll up composed MRs' Ready status to the XR

@@ -250,6 +250,38 @@ the thing under test before trusting a green result.
   reported initialised, sealed, 5 shares, threshold 3. Unsealing a
   restored copy is not tested yet; it needs the owner's keys.
 
+### 8. S3 bucket access on AWS through IRSA (offline, $0)
+
+The S3 Composition already existed but only created the bucket: no IAM,
+no connection details, never rendered once. A service on EKS would have
+had a bucket it could not reach. It now also creates an IAM policy (that
+bucket only), an IAM role (assumable by one ServiceAccount through the
+cluster's OIDC provider) and the attachment, and publishes
+`BUCKET_NAME`, `AWS_REGION` and `AWS_ROLE_ARN`. Decision and rejected
+options: [ADR-0034](../adr/0034-bucket-access-on-aws-via-irsa.md).
+
+Also fixed on the way: bucket and IAM names are capped to fit AWS limits;
+a missing UID is refused where a random name used to be invented; every
+AWS resource is tagged `Project=idp`; the kind default is unchanged.
+
+Tested with `make composition-test` (8 cases): exact output, the
+provider's real schemas, and IAM rules (one named bucket, one
+ServiceAccount, `StringEquals` only). Ten deliberate breakages, all
+caught.
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-14 | **`crossplane render` uses a floating `stable` engine image, which resolved to a release candidate (v2.5.0-rc.1).** The same test could give different results next month. | The script pins the engine to v2.4.1. |
+| P9-15 | **The first version of the test missed a loosened Secret condition.** The Secret and `status.roleArn` each had their own copy of the condition, and `render` shows only the status. | Both now use one shared condition. |
+
+Not proven yet, by design: that AWS accepts these resources (needs the
+EKS session), and the Secret's key names (render does not print
+connection details; the v1.20 CLI that might was not installed).
+Still to build: the template must mount a token for
+`sts.amazonaws.com` and set `AWS_WEB_IDENTITY_TOKEN_FILE`; the EKS
+session must create the `idp-cluster` EnvironmentConfig and give the
+Crossplane provider IAM rights limited to `role/idp-*` and `policy/idp-*`.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
@@ -290,8 +322,9 @@ Four older faults then surfaced.
 
 - Unseal a restored Vault backup once, on a throwaway Vault, and read a
   secret from it (needs the owner's unseal keys).
-- S3/IRSA Composition meeting the five-key bucket contract, tested
-  offline with `crossplane render`.
+- Template: mount a ServiceAccount token for `sts.amazonaws.com` and set
+  `AWS_WEB_IDENTITY_TOKEN_FILE`, so a service can use the role from
+  section 8 (harmless on kind, where the static key wins).
 - Teardown ordering, audit script, auto-teardown timer.
 
 ## Deferred until the cap is raised
