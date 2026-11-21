@@ -288,3 +288,31 @@ spec:
       ports:
         - port: 5432
           protocol: TCP
+---
+# Prometheus -> Postgres metrics exporter (Phase 9).
+#
+# The exporter sidecar listens on 9187 in the Postgres pod. deny-default
+# blocks it like everything else, so Prometheus needs an explicit allow.
+# Scoped to the Prometheus pods in `monitoring` and to that one port: the
+# database port 5432 stays reachable from Backstage only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-postgresql-metrics
+  namespace: backstage
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9187
+          protocol: TCP

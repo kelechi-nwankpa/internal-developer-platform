@@ -520,6 +520,39 @@ spec:
             password: ""
             database: backstage
             username: backstage
+          # Metrics exporter sidecar (Phase 9, alert routing).
+          #
+          # WHY: from Phase 5 until 2026-11-21 Backstage ran on in-memory
+          # SQLite while this database sat empty, and nothing could tell:
+          # readiness was 200 and ArgoCD said Healthy. The exporter turns
+          # "how many connections does each database have" into a metric,
+          # which the BackstageNotUsingPostgres alert watches
+          # (platform/monitoring/platform-health-rules.yaml).
+          #
+          # WHY the upstream prometheus-community image, not the chart's
+          # default bitnami one: Bitnami's free images are frozen in the
+          # unpatched `bitnamilegacy` repo. Upstream is maintained, speaks
+          # the same DATA_SOURCE_* env vars the chart sets, and is pinned
+          # by digest (multi-arch: amd64 + arm64).
+          #
+          # It logs in as the `backstage` user with the existing Secret —
+          # no new credential. Cost: one ~20 MB container.
+          metrics:
+            enabled: true
+            image:
+              registry: quay.io
+              repository: prometheuscommunity/postgres-exporter
+              tag: v0.17.1
+              digest: sha256:38606faa38c54787525fb0ff2fd6b41b4cfb75d455c1df294927c5f611699b17
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                cpu: 100m
+                memory: 64Mi
+            serviceMonitor:
+              enabled: true
           primary:
             persistence:
               enabled: true
