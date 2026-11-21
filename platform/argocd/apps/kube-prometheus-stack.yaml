@@ -220,6 +220,13 @@ spec:
         alertmanager:
           enabled: true
           alertmanagerSpec:
+            # Use the config rendered from Vault by External Secrets
+            # (platform/monitoring/alertmanager-config-externalsecret.yaml)
+            # instead of the chart's built-in config: it carries the SMTP
+            # password and email address, which must not be in Git.
+            # Routing: severity=critical -> email; everything else -> UI.
+            useExistingSecret: true
+            configSecret: alertmanager-email-config
             storage:
               volumeClaimTemplate:
                 spec:
@@ -227,9 +234,6 @@ spec:
                   resources:
                     requests:
                       storage: 1Gi
-          # No routing destinations configured yet. Phase 8 wires Slack /
-          # PagerDuty. Right now Alertmanager runs but has no outbound
-          # webhook targets — alerts land in its UI, don't leave the cluster.
 
         # ─────────────────────────────────────────────────────────────
         # SUPPORTING COMPONENTS — chart defaults, all enabled
