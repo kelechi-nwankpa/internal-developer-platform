@@ -15,7 +15,7 @@ Each phase of this project ships a discrete slice of the platform, with a writte
 | 6 | Golden path template (Node.js + Fastify) — template + first real service (`platform-hello`) end-to-end | ✅ shipped | [phase-6-golden-path.md](phase-6-golden-path.md) |
 | 7 | CI/CD golden pipeline — reusable workflow + OIDC + Trivy + cosign + CI-commits-manifest, first real service through it | ✅ shipped | [phase-7-cicd-golden-pipeline.md](phase-7-cicd-golden-pipeline.md) |
 | 8 | Security hardening — Wave 1 (Backstage OAuth + scoped ArgoCD account) + Wave 2 (Kyverno + NetworkPolicy + PSS) + Wave 3 (supply chain: Wolfi image, CVE sweep, SHA-pinned CI, Dependabot) + Wave 4 (drift/outage cleanup, golden-path bucket credentials, app-health alerting) | ✅ shipped (all 4 waves) | [phase-8-security-hardening.md](phase-8-security-hardening.md) |
-| 9 | EKS activation + cost, DR, ops — Gateway API edge routing (ADR-0033), IRSA for Crossplane/S3 (S3 Composition fulfils the connection-Secret contract), alert routing to a human, budget guardrails, DR | ⏳ pending | — |
+| 9 | EKS activation + cost, DR, ops — Gateway API edge routing (ADR-0033), IRSA for Crossplane/S3 (S3 Composition fulfils the connection-Secret contract), alert routing to a human, budget guardrails, DR | 🚧 in progress (guardrails + Gateway API edge shipped on kind) | [phase-9-eks-activation.md](phase-9-eks-activation.md) |
 | 10 | Polish for showcase | ⏳ pending | — |
 
 ## What each phase log contains

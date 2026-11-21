@@ -1,0 +1,166 @@
+# Phase 9 — EKS activation + cost, DR, ops
+
+**Status:** 🚧 In progress. Everything that costs $0 is built and tested on
+kind first. The live EKS session waits until the budget cap is raised
+(owner's decision, see `docs/COST.md`).
+
+## Business problem
+
+The platform has only ever run on a laptop. Three things stand between it
+and a credible "runs in the cloud" claim:
+
+1. **Cost is not under control.** Phase 1 cost $27.17 against a $5–15 projection, and nothing stopped it.
+2. **There is no front door.** Every service is reached with `kubectl port-forward`. A developer cannot open a URL.
+3. **Operations are untested.** Alerts reach nobody, there are no recovery runbooks, and no restore has ever been rehearsed.
+
+## Target users
+
+- **Service developers:** want a working HTTPS URL for a new service with
+  no certificate, DNS or load-balancer work.
+- **The platform owner:** wants to run an EKS session knowing the bill in
+  advance, and to be told when something breaks.
+
+## Business value
+
+- A new service is reachable over HTTPS as part of the golden path.
+- An AWS session cannot start if it would breach the cap or land on a
+  surcharged Kubernetes version.
+- Failures become signals to a person instead of surprises found later.
+
+## Architecture
+
+```text
+Mac ──80/443──▶ kind node ──hostPort──▶ Envoy proxy (ns gateway)
+                                            │  TLS: *.idp.seniormankelz.dev
+                                            ▼
+                              HTTPRoute (team namespace) ──▶ Service ──▶ Pod
+```
+
+On EKS only the first hop changes: an NLB replaces the kind host ports.
+
+## Components
+
+| Component | Where | Role |
+|---|---|---|
+| Envoy Gateway 1.9.4 | `platform/argocd/apps/envoy-gateway.yaml` | Gateway API controller + CRDs |
+| Shared edge | `platform/gateway/` | Namespace, GatewayClass, proxy settings, Gateway, wildcard certificate, HTTP redirect |
+| Preflight guard | `scripts/aws-preflight.sh`, `make aws-up` | Refuses costly deploys |
+| Cost record | `docs/COST.md` | Actual spend and session estimate |
+
+## Data flow (a request)
+
+1. The client resolves `<svc>.idp.seniormankelz.dev` (on kind: `--resolve …:443:127.0.0.1`).
+2. Envoy terminates TLS with the platform wildcard certificate.
+3. Envoy matches the hostname to the team's `HTTPRoute` and forwards to the Service over plain HTTP inside the cluster.
+4. A plain-HTTP request never reaches a service: it gets a 301 to HTTPS.
+
+## Security
+
+- **Deny-by-default attachment.** Only namespaces labelled
+  `edge.idp.seniormankelz.dev/allow-routes: "true"` may attach routes, and
+  only to the HTTPS listener. The label is set in the platform repo.
+- **One wildcard key**, kept in the `gateway` namespace, rotated at every
+  renewal, 90-day lifetime.
+- **One Pod Security exception:** `gateway` enforces `privileged` on kind
+  for hostPort 80/443. Audit and warn stay at `baseline`.
+
+## Operations
+
+- ArgoCD marks an app `Degraded` when the Gateway refuses its route, so
+  the Phase 8 app-health alert covers the edge.
+- Not yet covered: alert delivery to a person, certificate-expiry alert,
+  runbooks. See "Still to do".
+
+## What shipped so far
+
+### 1. Cost facts and guardrails ($0.01 spent on Cost Explorer)
+
+- `docs/COST.md`: actual spend **$27.19**; the largest line was the EKS
+  extended-support surcharge ($11.65). Session estimate: about $2.30 for
+  3 hours, about $12 if forgotten for 24 hours (`7e7ce4b`).
+- EKS pinned to Kubernetes 1.36, in standard support and matching kind
+  (`955f9f2`).
+- `make aws-up` runs a preflight that fails closed on: tools,
+  credentials, Kubernetes support status, and spend + estimate vs cap.
+  17 unit tests. It currently refuses, by design (`e51b914`).
+
+### 2. Edge routing through the Gateway API (ADR-0033)
+
+| Step | Commit | Result |
+|---|---|---|
+| Controller + CRDs | `5350892` | Envoy Gateway Synced/Healthy |
+| Namespace, GatewayClass, kind proxy settings | `0d0c713` | GatewayClass `Accepted` |
+| Shared Gateway, HTTP listener | `4b09631`, `9af3ebe` | `curl` to port 80 reaches Envoy |
+| Wildcard certificate, HTTPS listener, redirect | `ab48631` | HTTPS served, HTTP returns 301 |
+| First service attached | `7fef4f6`, platform-hello `048b74c` | `/hello` returns 200 over HTTPS |
+| Template, external-dns, ADR | `0987ec7`, `9cf79f1`, `2e5deee` | New services get a route by default |
+
+**End-to-end check:**
+
+```bash
+curl -k --resolve platform-hello.idp.seniormankelz.dev:443:127.0.0.1 \
+  https://platform-hello.idp.seniormankelz.dev/hello
+```
+
+Returns 200 with the S3 write and read-back. Before the namespace label
+was granted, the same route was refused (`NotAllowedByListeners`).
+
+## Incident 2026-11-21 — node restart exposed four latent faults
+
+The Mac's Docker VM disk filled up; recovering it restarted the kind node.
+Four older faults then surfaced.
+
+| # | Fault | Since | Fix |
+|---|---|---|---|
+| P9-1 | **Docker VM disk full.** kind has no kubelet image garbage collection; cached images filled 32 GB. ArgoCD failed with "No space left on device". | Gradual | Pruned unused images in the node (`crictl rmi --prune`). No alert reached anyone. |
+| P9-2 | **Vault sealed after restart**, so every ExternalSecret went stale. | By design (Phase 2) | Owner unsealed; ClusterSecretStore re-validated. Needs a runbook. |
+| P9-3 | **Postgres had no NetworkPolicy ingress allow** under deny-default. Wave 2's check only covered a connection that was already open. | Phase 8 Wave 2 | `allow-ingress-postgresql` (`0780dcf`), verified with a new connection. |
+| P9-4 | **Backstage ran on in-memory SQLite, not Postgres.** The chart set `POSTGRES_*` env vars but app-config had no `backend.database`, so Backstage fell back silently. Scaffolder history and sessions were lost on every restart while readiness stayed 200. | Phase 5 | `backend.database` with `client: pg` (`bb8ed9d`). Verified: 15 plugin databases, 29 entities, data survives a restart. |
+| P9-5 | **ArgoCD rewrote the Postgres password Secret.** The bitnami chart generates a random password on each fresh render; hard-refreshing every Application forced fresh renders. | Caused during this incident | `ignoreDifferences` on the Secret + `RespectIgnoreDifferences` (`0780dcf`); owner re-aligned the database passwords to the Secret. |
+
+### What I got wrong (kept honest)
+
+- **Wrong diagnosis.** I reported "Backstage cannot log in to its
+  database, so the catalog won't load". I inferred it from the mismatched
+  Secret and never checked Backstage's own connections. Backstage was not
+  using Postgres at all (P9-4). The catalog was loading the whole time.
+- **I caused P9-5** by hard-refreshing all Applications at once.
+- **Three broken command blocks** handed to the owner for the password
+  fix: zsh does not word-split `$P`; the pod has `PGDATA`, not
+  `POSTGRESQL_DATA_DIR`; `psql -c` does not substitute `:'var'`. Each
+  failure left the database unchanged, but each cost a round trip.
+- **ADR-0033 claimed kind needed recreating** for port mappings. It
+  already mapped 80/443. Corrected in the ADR.
+
+### Lessons
+
+- "Synced/Healthy" and a 200 readiness probe say the process is up, not
+  that it is using the right dependencies. Check the dependency itself.
+- Test a NetworkPolicy with a **new** connection, from the real client.
+- Never hard-refresh every ArgoCD Application; charts with random values
+  re-roll them.
+- Before diagnosing "X cannot reach Y", confirm X is trying to.
+
+## Still to do (all $0 on kind)
+
+- Route alerts to a person; add alerts for disk usage, certificate expiry
+  and "Backstage has no Postgres connections".
+- Runbooks: disk full, Vault unseal, repo restore; one rehearsed restore.
+- Move the Backstage Postgres password to Vault + ExternalSecret.
+- Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
+- Decide whether external-dns should publish the wildcard record that the
+  redirect route produces (`*.idp.seniormankelz.dev`).
+- S3/IRSA Composition meeting the five-key bucket contract, tested
+  offline with `crossplane render`.
+- Teardown ordering, audit script, auto-teardown timer.
+
+## Deferred until the cap is raised
+
+- The live EKS session: NLB in place of host ports, Let's Encrypt DNS-01
+  for the wildcard, Route53 provider for external-dns.
+
+## See also
+
+- [ADR-0033](../adr/0033-edge-routing-via-gateway-api.md) — edge routing via the Gateway API
+- [COST.md](../COST.md) — spend, estimates, guardrails
+- [Phase 8 log](phase-8-security-hardening.md) — the outages that led to the app-health alerts
