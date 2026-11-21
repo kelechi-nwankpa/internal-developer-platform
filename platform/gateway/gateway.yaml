@@ -1,0 +1,46 @@
+---
+# The shared edge Gateway — the one front door for every service
+# (Phase 9, ADR-0033).
+#
+# WHY one shared Gateway instead of one per team: one proxy, one wildcard
+# certificate, one DNS target, one place to enforce TLS. Teams own only an
+# HTTPRoute in their own namespace. Per-team Gateways would be right when
+# teams need isolated proxies (noisy neighbours, separate compliance
+# scope) — not at this scale.
+#
+# WHO MAY ATTACH (allowedRoutes): only namespaces carrying the label
+#   edge.idp.seniormankelz.dev/allow-routes: "true"
+# Deny-by-default. `from: All` would let any namespace publish any
+# hostname under the wildcard, including one that shadows another team's
+# service. `from: Same` would force every route into this namespace and
+# take route ownership away from teams. The label is set in Git by the
+# platform (namespace manifests / the golden-path template), so exposure
+# to the edge is a reviewed decision.
+#
+# hostname "*.idp.seniormankelz.dev": routes for any other domain are
+# rejected at attach time.
+#
+# HTTP only for now; the HTTPS listener, certificate and HTTP->HTTPS
+# redirect are added in the next step.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gateway
+  labels:
+    app.kubernetes.io/part-of: platform-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: "*.idp.seniormankelz.dev"
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              edge.idp.seniormankelz.dev/allow-routes: "true"
