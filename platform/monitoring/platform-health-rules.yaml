@@ -1,0 +1,107 @@
+---
+# Platform health alerts added after the 2026-11-21 incident (Phase 9).
+#
+# Every alert here answers "what failed silently that day?":
+#   - the node disk filled to 100% over weeks and nobody was told
+#   - a certificate could stall on renewal the same way
+#   - Backstage ran on in-memory SQLite for months while Postgres sat idle
+#
+# severity=critical is emailed (alertmanager-config-externalsecret.yaml);
+# severity=warning is visible in the Alertmanager UI only.
+#
+# Unit tests: platform/monitoring/tests/platform-health.test.yaml
+# (`make rules-test`). Each alert is tested in both directions.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-health
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: platform-health
+    app.kubernetes.io/part-of: platform-monitoring
+spec:
+  groups:
+    # ── Node disk ─────────────────────────────────────────────────────
+    # WHY our own rule when the chart ships NodeFilesystemAlmostOutOfSpace:
+    # that one goes critical at 3% free — on a 32 GB Docker VM that is
+    # under 1 GB, minutes from failure. kind also turns off the kubelet's
+    # image garbage collection and eviction, so nothing frees space on its
+    # own; a person has to prune. These thresholds leave time to do it.
+    #
+    # max by (instance, device): one device is mounted at several paths
+    # (/var, /etc/hosts, ...); without this each alert would fire 4 times.
+    - name: platform-node-disk
+      rules:
+        - alert: NodeDiskUsageHigh
+          expr: |-
+            100 * (1 -
+              max by (instance, device) (node_filesystem_avail_bytes{fstype=~"ext4|xfs"})
+              /
+              max by (instance, device) (node_filesystem_size_bytes{fstype=~"ext4|xfs"})
+            ) > 80
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Node disk {{ $labels.device }} is {{ $value | printf \"%.0f\" }}% full"
+            description: >-
+              {{ $labels.device }} on {{ $labels.instance }} has been above 80%
+              for 15m. On kind nothing reclaims space automatically. Prune
+              unused images: `docker exec idp-control-plane crictl rmi --prune`.
+        - alert: NodeDiskUsageCritical
+          expr: |-
+            100 * (1 -
+              max by (instance, device) (node_filesystem_avail_bytes{fstype=~"ext4|xfs"})
+              /
+              max by (instance, device) (node_filesystem_size_bytes{fstype=~"ext4|xfs"})
+            ) > 90
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node disk {{ $labels.device }} is {{ $value | printf \"%.0f\" }}% full — act now"
+            description: >-
+              {{ $labels.device }} on {{ $labels.instance }} is above 90%. At
+              100% ArgoCD, Prometheus and Tempo fail and their write-ahead
+              logs corrupt (2026-11-21 incident). Prune now:
+              `docker exec idp-control-plane crictl rmi --prune`.
+
+    # ── Certificates ──────────────────────────────────────────────────
+    # cert-manager renews 30 days before expiry (certificate.yaml). Being
+    # inside 14 days therefore means renewal has been failing for 16 days.
+    - name: platform-certificates
+      rules:
+        - alert: CertificateExpiringSoon
+          expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: "Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} expires in {{ $value | humanizeDuration }}"
+            description: >-
+              Renewal should have happened 30 days before expiry and has not.
+              Check `kubectl -n {{ $labels.exported_namespace }} describe
+              certificate {{ $labels.name }}` and the cert-manager logs.
+        - alert: CertificateNotReady
+          expr: certmanager_certificate_ready_status{condition="True"} == 0
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready"
+            description: >-
+              cert-manager has not been able to issue or renew this
+              certificate for 30m. If it is the edge wildcard, HTTPS for every
+              service is affected once the current one expires.
+        # Silence must not look like health: if cert-manager stops being
+        # scraped, both rules above go quiet.
+        - alert: CertManagerMetricsAbsent
+          expr: absent(certmanager_certificate_ready_status)
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No cert-manager certificate metrics — expiry alerting is blind"
+            description: >-
+              certmanager_certificate_ready_status has been absent for 30m.
+              Check the cert-manager pod and its ServiceMonitor.

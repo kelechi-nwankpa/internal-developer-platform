@@ -2,13 +2,7 @@
 # Each alert is tested in BOTH directions (fires when it should, stays
 # quiet when it shouldn't), so the tests can actually fail.
 #
-# Run (repo root):
-#   kubectl create --dry-run=client -o json -f platform/monitoring/argocd-app-health-rules.yaml \
-#     | jq '{groups: .spec.groups}' > platform/monitoring/tests/rules.json
-#   docker run --rm -v "$PWD/platform/monitoring/tests:/t" -w /t \
-#     --entrypoint promtool prom/prometheus:v3.5.0 test rules argocd-app-health.test.yaml
-#
-# rules.json is generated, not committed (gitignored below this dir).
+# Run from the repo root: make rules-test
 rule_files:
   - rules.json
 evaluation_interval: 1m
