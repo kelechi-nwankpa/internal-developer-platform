@@ -118,6 +118,14 @@ aws-preflight: ## check K8s version support + budget headroom before deploying (
 preflight-test: ## unit-test the preflight decision logic (no AWS calls)
 	@bash scripts/tests/aws-preflight.test.sh
 
+.PHONY: aws-audit
+aws-audit: ## list what still exists in AWS after a teardown; fails if anything bills (read-only, $$0)
+	@AWS_REGION=$(AWS_REGION) scripts/aws-audit.sh
+
+.PHONY: audit-test
+audit-test: ## unit-test the audit's rules and exit codes (no AWS calls)
+	@bash scripts/tests/aws-audit.test.sh
+
 .PHONY: rules-test
 rules-test: ## unit-test every Prometheus alert rule with promtool (needs docker)
 	@scripts/rules-test.sh

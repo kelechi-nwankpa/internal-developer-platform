@@ -292,6 +292,23 @@ Left for the EKS session: create the `idp-cluster` EnvironmentConfig,
 give the Crossplane provider IAM rights limited to `role/idp-*` and
 `policy/idp-*`, switch the XRD's default Composition to S3.
 
+### 9. Post-teardown audit (`make aws-audit`)
+
+"cdk destroy finished" is not proof that billing stopped: CloudFormation
+only knows what it created. The audit lists resources directly. Anything
+that bills is a failure (exit 1); free leftovers are warnings; a check
+that cannot run is a failure; missing budget alarms are a failure.
+Read-only, $0. Unit-tested without AWS (`make audit-test`, 29 cases, ten
+deliberate breakages all caught).
+
+First real run, 2026-11-21: nothing billing, budget alarms armed, and
+one leftover from Phase 1.
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-16 | **Phase 1's teardown left the log group `/aws/eks/idp/cluster`** (134 MB, no expiry, about $0.004/month). CloudFormation did not create it (EKS did), so `cdk destroy` never removed it. | Found by the audit. Deleting it is the owner's call; the teardown order (next) removes it in future. |
+| P9-17 | **The first audit reported seven S3 buckets from other projects.** The account is shared, and S3 cannot be listed by tag. | Each bucket's `Project` tag is read; only `Project=idp` buckets count. |
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
