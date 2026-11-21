@@ -1,0 +1,74 @@
+---
+# Envoy Gateway — the Gateway API controller (Phase 9, ADR-0033).
+#
+# WHY Envoy Gateway: the Envoy project's own Gateway API implementation
+# (CNCF), identical on kind and EKS. The AWS load-balancer controller's
+# Gateway support only works on AWS (nothing to test on kind); Istio and
+# Cilium bring a mesh / a CNI swap we don't need.
+#
+# WHY 1.9.4 and not 1.10.0: a patched release line over a two-week-old
+# `.0`. Image verified pullable for amd64 + arm64 before adoption (the
+# MinIO lesson, Phase 8 bug W4-1).
+#
+# This Application installs ONLY the controller and the CRDs (Gateway API
+# v1.6.1 + Envoy Gateway's own). The Gateway itself, its certificate and
+# the kind-only host-port wiring live in platform/gateway/ (app: gateway).
+#
+# deploy.type: GatewayNamespace — Envoy proxy pods run next to their
+# Gateway (namespace `gateway`), not in this namespace. That keeps this
+# namespace at Pod Security `restricted`; the kind-only hostPort exception
+# is confined to the `gateway` namespace.
+#
+# sync-wave -1: CRDs must exist before the `gateway` app (wave 0) applies
+# Gateway/HTTPRoute/EnvoyProxy objects.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: envoy-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    # OCI Helm chart: registry path as repoURL, chart name separately.
+    repoURL: docker.io/envoyproxy
+    chart: gateway-helm
+    targetRevision: 1.9.4
+    helm:
+      valuesObject:
+        commonLabels:
+          app.kubernetes.io/part-of: platform-edge
+        config:
+          envoyGateway:
+            gateway:
+              controllerName: gateway.envoyproxy.io/gatewayclass-controller
+            provider:
+              type: Kubernetes
+              kubernetes:
+                deploy:
+                  type: GatewayNamespace
+            logging:
+              level:
+                default: info
+        deployment:
+          replicas: 1  # kind-local; raise for HA on EKS
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: envoy-gateway-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/warn: restricted
+    syncOptions:
+      - CreateNamespace=true
+      # The Gateway API CRDs exceed the client-side apply annotation limit.
+      - ServerSideApply=true
