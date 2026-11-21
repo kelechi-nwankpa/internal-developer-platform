@@ -43,12 +43,19 @@ spec:
         # seconds of downtime on a dev cluster instead.
         strategy:
           type: Recreate
+        # Labels + full requests/limits on both containers: the platform's
+        # own Kyverno policies (require-labels, require-resources) apply to
+        # platform components too.
+        pod:
+          labels:
+            app.kubernetes.io/part-of: platform-edge
         container:
           resources:
             requests:
               cpu: 50m
               memory: 128Mi
             limits:
+              cpu: 500m
               memory: 512Mi
         # Envoy Gateway shifts privileged listener ports by +10000 inside
         # the container (80 -> 10080, 443 -> 10443) so Envoy needs no
@@ -69,3 +76,13 @@ spec:
                         - containerPort: 10443
                           hostPort: 443
                           protocol: TCP
+                    # The sidecar that drains connections on shutdown has
+                    # no resources field in the EnvoyProxy API.
+                    - name: shutdown-manager
+                      resources:
+                        requests:
+                          cpu: 10m
+                          memory: 32Mi
+                        limits:
+                          cpu: 50m
+                          memory: 64Mi
