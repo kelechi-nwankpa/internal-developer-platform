@@ -7,6 +7,7 @@ import { Code, Function as LambdaFn, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
+import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
 
 /** Where `make aws-extend` writes a later deadline. Not created here. */
@@ -151,6 +152,31 @@ export class TeardownTimer extends Construct {
       }),
     );
     this.topic.grantPublish(role);
+
+    // -----------------------------------------------------------------
+    // cdk-nag exceptions — approved by the project owner on 2026-11-21.
+    //
+    // AwsSolutions-IAM5 flags any `*` in a resource. A CloudFormation
+    // stack's ARN ends in a unique id that changes on every deploy
+    // (stack/<name>/<uuid>), so "this named stack" can only be written as
+    // stack/<name>/*. The name before the wildcard is exact.
+    //
+    // One exception per stack name, each matching only that stack's ARN.
+    // A wildcard anywhere else in this role (another service, another
+    // stack, a bare `*`) is still an error, and the unit tests assert the
+    // exact list of ARNs and actions.
+    // -----------------------------------------------------------------
+    NagSuppressions.addResourceSuppressions(
+      role,
+      names.map((n) => ({
+        id: 'AwsSolutions-IAM5',
+        reason:
+          `The teardown timer may describe/delete the stack named ${n}. The trailing wildcard is the ` +
+          'stack id, which changes on every deploy; the stack name is exact. Approved 2026-11-21.',
+        appliesTo: [{ regex: `/^Resource::arn:(aws[a-z-]*|<AWS::Partition>):cloudformation:[^:]+:[^:]+:stack\\/${n}\\/\\*$/g` }],
+      })),
+      true,
+    );
     logGroup.grantWrite(role);
 
     new Rule(this, 'Every15Minutes', {

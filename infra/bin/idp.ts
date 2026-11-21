@@ -37,6 +37,14 @@ new CostStack(app, 'CostStack', {
   env,
   notificationEmail: 'nwankpakelechisamuel@gmail.com',
   projectTag: 'idp',
+  // The session's stacks, deleted by the teardown timer if a session is
+  // left running. Must match WORKLOAD_STACKS in the Makefile. Second
+  // group: stacks the first group depends on (the cluster lives in the
+  // VPC and uses the KMS keys), so they go once the first group is gone.
+  teardownStackGroups: [
+    ['ClusterStack', 'RegistryStack', 'DnsStack', 'IamStack'],
+    ['VpcStack', 'KmsStack'],
+  ],
 });
 
 // Network foundation — VPC with no NAT, VPC endpoints only (ADR-0007).
