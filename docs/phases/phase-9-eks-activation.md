@@ -277,10 +277,20 @@ caught.
 Not proven yet, by design: that AWS accepts these resources (needs the
 EKS session), and the Secret's key names (render does not print
 connection details; the v1.20 CLI that might was not installed).
-Still to build: the template must mount a token for
-`sts.amazonaws.com` and set `AWS_WEB_IDENTITY_TOKEN_FILE`; the EKS
-session must create the `idp-cluster` EnvironmentConfig and give the
-Crossplane provider IAM rights limited to `role/idp-*` and `policy/idp-*`.
+**The service side.** The template and platform-hello now mount a
+ServiceAccount token for `sts.amazonaws.com` and set
+`AWS_WEB_IDENTITY_TOKEN_FILE`. Checked two ways:
+
+- With the real AWS SDK, offline: key + token file resolves to the key
+  (kind is unchanged); role + token file with no key goes to STS.
+- On kind, in the running pod: the token's audience is
+  `sts.amazonaws.com` and its subject is
+  `system:serviceaccount:platform-hello:platform-hello`, exactly the
+  value the role's trust policy pins. `/hello` through the edge: 200.
+
+Left for the EKS session: create the `idp-cluster` EnvironmentConfig,
+give the Crossplane provider IAM rights limited to `role/idp-*` and
+`policy/idp-*`, switch the XRD's default Composition to S3.
 
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
@@ -322,9 +332,6 @@ Four older faults then surfaced.
 
 - Unseal a restored Vault backup once, on a throwaway Vault, and read a
   secret from it (needs the owner's unseal keys).
-- Template: mount a ServiceAccount token for `sts.amazonaws.com` and set
-  `AWS_WEB_IDENTITY_TOKEN_FILE`, so a service can use the role from
-  section 8 (harmless on kind, where the static key wins).
 - Teardown ordering, audit script, auto-teardown timer.
 
 ## Deferred until the cap is raised

@@ -80,11 +80,22 @@ spec:
                 optional: true
             # S3 credentials + BUCKET_NAME from the ObjectBucket XRC
             # (see objectbucket.yaml). Keys populated by Crossplane:
-            #   BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-            #   AWS_ENDPOINT_URL, AWS_REGION
+            #   on kind (MinIO): BUCKET_NAME, AWS_REGION, AWS_ACCESS_KEY_ID,
+            #                    AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL
+            #   on EKS (S3):     BUCKET_NAME, AWS_REGION, AWS_ROLE_ARN
+            # The app never reads the credential variables itself; the
+            # AWS SDK picks whichever set is present (platform ADR-0034).
             - secretRef:
                 name: ${{ values.name }}-bucket-conn
           env:
+            # Where the AWS SDK finds this pod's identity token (mounted
+            # below). Used only when there is no access key, i.e. on EKS:
+            # the SDK trades the token plus AWS_ROLE_ARN for one-hour
+            # credentials. On kind the MinIO key is present and wins, so
+            # this is inert there. Kept here, next to the mount it points
+            # at, so the path cannot drift from the volume.
+            - name: AWS_WEB_IDENTITY_TOKEN_FILE
+              value: /var/run/secrets/idp/aws/token
             # OTel exporter → Wave 2 OTel Collector in observability ns.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://otel-collector-opentelemetry-collector.observability.svc.cluster.local:4318
@@ -96,6 +107,10 @@ spec:
               value: production
             - name: LOG_LEVEL
               value: info
+          volumeMounts:
+            - name: aws-token
+              mountPath: /var/run/secrets/idp/aws
+              readOnly: true
           # ─────────────────────────────────────────────────────────
           # Probes
           # ─────────────────────────────────────────────────────────
@@ -143,6 +158,22 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+      volumes:
+        # A ServiceAccount token meant for AWS only. `audience` is what
+        # the IAM role's trust policy checks; the default API-server
+        # token has a different audience and AWS would refuse it. The
+        # kubelet replaces it before it expires (1 hour).
+        # WHY mounted explicitly and not injected by the EKS webhook
+        # (the usual `eks.amazonaws.com/role-arn` annotation): the same
+        # pod spec then works on kind and EKS, and no AWS account id
+        # lives in this repo.
+        - name: aws-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: sts.amazonaws.com
+                  expirationSeconds: 3600
+                  path: token
       terminationGracePeriodSeconds: 30
       # ServiceAccount pinned so RBAC (Phase 8 hardening) can grant
       # namespace-scoped permissions.

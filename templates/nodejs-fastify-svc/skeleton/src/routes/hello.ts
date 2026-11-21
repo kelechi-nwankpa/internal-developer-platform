@@ -13,8 +13,11 @@
  *
  * Environment (mounted via envFrom from ObjectBucket connection secret):
  *   BUCKET_NAME           — S3 bucket name (materialised from XRC)
- *   AWS_ACCESS_KEY_ID     — from MinIO on kind, IRSA on EKS
+ *   AWS_ACCESS_KEY_ID     — kind only (MinIO). Read by the AWS SDK, not here.
  *   AWS_SECRET_ACCESS_KEY — same
+ *   AWS_ROLE_ARN          — EKS only. With AWS_WEB_IDENTITY_TOKEN_FILE (set
+ *                           in deployment.yaml) the SDK gets short-lived
+ *                           credentials for this role. No key is stored.
  *   AWS_ENDPOINT_URL      — MinIO service on kind; unset on EKS
  *   AWS_REGION            — required by AWS SDK
  */
