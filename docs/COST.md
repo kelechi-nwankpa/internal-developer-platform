@@ -11,8 +11,31 @@
 | Date | Description | AWS charges (USD) | Cumulative |
 |---|---|---:|---:|
 | 2026-07-02 | Project started; no AWS resources yet | $0.00 | $0.00 |
+| 2026-07 | Phase 1: EKS baseline up for 23.3 hours across deploy/validate cycles (breakdown below) | $27.17 | $27.17 |
+| 2026-08 → 2026-11 | Idle: CostStack + Cost Explorer requests only (~$0.004/month) | $0.01 | $27.19 |
 
-Updated after every session that touches AWS.
+Updated after every session that touches AWS. Figures are from Cost
+Explorer (`aws ce get-cost-and-usage`, $0.01 per request), not estimates.
+
+**Status (2026-11-21): $27.19 of the $30 cap spent; about $2.80 left.**
+Per the "$25 alarm" runbook below, AWS work is paused: Phase 9 is being
+completed at $0 on kind (offline EKS-readiness proofs). A live EKS
+session needs the owner to raise the cap first.
+
+### Where Phase 1's $27.17 went (Cost Explorer, July 2026)
+
+| Line item | Usage | USD | Share | Avoidable? |
+|---|---|---:|---:|---|
+| EKS **extended-support** surcharge | 23.3 h × $0.50 | 11.65 | 43% | **Yes** — pin a Kubernetes version in standard support |
+| VPC Interface endpoints | 636 endpoint-hours × $0.011 (9 endpoints × 3 AZs) | 7.00 | 26% | Mostly — fewer endpoints/AZs, or NAT for a short session |
+| Tax (20% VAT) | on all of the above | 4.53 | 17% | No — **every estimate must include it** |
+| EKS control plane (standard) | 23.3 h × $0.10 | 2.33 | 9% | No |
+| Fargate (vCPU + memory) | 10.9 vCPU-h + 21.8 GB-h | 0.54 | 2% | No |
+| Route 53 hosted zone | 1 zone | 0.50 | 2% | Only if deleted within 12 h |
+| KMS keys | 3 keys, prorated | 0.44 | 2% | No |
+| Cost Explorer API | 19 requests × $0.01 | 0.19 | 1% | Yes — batch queries |
+
+Effective run rate in Phase 1: **about $1.14 per hour including tax.**
 
 ---
 
@@ -60,7 +83,50 @@ This is the approximate monthly cost of the **always-on** version of the platfor
 
 ---
 
+## Projected cost of one live EKS session (Phase 9, evidence-based)
+
+Built from the Phase 1 unit prices above (same account, same region),
+for the Phase 9 design: Fargate-only golden-path slice, NAT Gateway for
+the session instead of interface endpoints, Gateway API load balancer.
+NAT and load-balancer prices are list prices not yet seen on our own
+bill — re-check them on the AWS pricing page before approving a deploy.
+
+| Item | Per hour (USD, before tax) | Source |
+|---|---:|---|
+| EKS control plane, **standard support** | 0.10 | our bill |
+| Fargate, ~15 small pods (0.25 vCPU / 0.5 GB) | ~0.19 | our bill's unit prices |
+| NAT Gateway | ~0.05 | list price |
+| Network Load Balancer (Gateway) | ~0.03 | list price |
+| Public IPv4 addresses (NAT + LB) | ~0.02 | list price |
+| **Hourly subtotal** | **~0.39** | |
+| **Hourly including 20% VAT** | **~0.47** | |
+
+Fixed costs per session: Route 53 zone $0.50, KMS ~$0.10, NAT data
+(~2 GB of image pulls) ~$0.10, Cost Explorer checks ~$0.05; about
+**$0.90 including VAT**.
+
+| Scenario | Estimated total (incl. VAT) |
+|---|---:|
+| Planned: one 3-hour session | **~$2.30** |
+| One failed attempt + retry (6 h) | ~$3.70 |
+| Session forgotten for 24 h | ~$12 |
+| Same 24 h on an extended-support version | ~$27 |
+| If interface endpoints are kept as well (18 ENIs) | add ~$0.24/h |
+
+What this means for the cap: the planned session fits in roughly $3, but
+a safe margin for one retry plus a mistake is **about $10–12 of
+headroom** (i.e. a cap of roughly $40). The two controls that keep it at
+the low end are (1) a Kubernetes version in standard support, verified
+before deploy, and (2) the automatic teardown timer.
+
+---
+
 ## Expected AWS spend per phase
+
+_Original Phase 0 projection, kept for the record. Phase 1 actually cost
+$27.17 (see above), so the phases after it must be re-planned: Phase 9
+runs at $0 unless the cap is raised, and the Phase 10 recorded demo
+(~$10 here) needs the cap raised as well._
 
 | Phase | AWS spend expected | Reasoning |
 |---|---:|---|
@@ -114,7 +180,21 @@ Shut everything down. Write a short postmortem to `docs/runbooks/cost-overrun.md
 
 ## Cost incidents log
 
-_None yet._ Add entries here as they happen.
+### 2026-07 — Phase 1 cost $27.17 against a $5–15 projection
+
+- **What happened:** the EKS cluster ran 23.3 hours on a Kubernetes
+  version that was already in **extended support**, which adds $0.50/h on
+  top of the $0.10/h control plane ($11.65, 43% of the bill). Interface
+  endpoints in 3 AZs added $7.00, and 20% VAT was not in the estimate.
+- **Why nobody noticed:** the spend noted mid-phase (~$14) was read
+  before the month's charges had all landed, and this file was never
+  updated with the final figure. The gap was found on 2026-11-21 by a
+  Cost Explorer query during Phase 9 planning.
+- **Guardrail changes:** (1) verify the Kubernetes version's support
+  status before every deploy; (2) include VAT in every estimate;
+  (3) read final spend from Cost Explorer a few days after a session and
+  record it here; (4) Phase 9 adds an automatic teardown timer and a
+  post-teardown audit.
 
 ---
 
