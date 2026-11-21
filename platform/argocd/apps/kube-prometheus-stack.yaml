@@ -215,7 +215,7 @@ spec:
                   search: true
 
         # ─────────────────────────────────────────────────────────────
-        # ALERTMANAGER — alert routing (destinations wired in Phase 8)
+        # ALERTMANAGER — alert routing (email destination: Phase 9)
         # ─────────────────────────────────────────────────────────────
         alertmanager:
           enabled: true
@@ -242,6 +242,36 @@ spec:
         # kube-state-metrics: exports Kubernetes object state as metrics
         # (kube_pod_status_phase, kube_deployment_status_replicas, etc.).
         # Most dashboards depend on it — required.
+        # ─────────────────────────────────────────────────────────────
+        # CONTROL-PLANE SCRAPES — disabled (Phase 9, alert routing)
+        # ─────────────────────────────────────────────────────────────
+        # WHY: these four targets can never be scraped here. kubeadm (kind)
+        # binds scheduler, controller-manager, etcd metrics and kube-proxy
+        # metrics to 127.0.0.1 inside the node, so Prometheus saw them as
+        # permanently down and fired 9 alerts around the clock — including
+        # a CRITICAL `etcdInsufficientMembers` while etcd was healthy.
+        # Alerts that are always firing train people to ignore alerts, and
+        # they had to go before alerts are emailed to a person.
+        #
+        # Alternative rejected: rebinding the components to 0.0.0.0 via
+        # kubeadm patches. That needs the cluster recreated and exposes
+        # control-plane ports for a dev cluster's dashboards.
+        #
+        # On EKS the scheduler, controller-manager and etcd are run by AWS
+        # and are not scrapeable either, so `false` is right there too.
+        # kube-proxy IS scrapeable on EKS — re-enable it in that session.
+        #
+        # Each flag removes the ServiceMonitor AND that component's alert
+        # rules. The API server and kubelet stay scraped.
+        kubeEtcd:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeProxy:
+          enabled: false
+
         kubeStateMetrics:
           enabled: true
 
