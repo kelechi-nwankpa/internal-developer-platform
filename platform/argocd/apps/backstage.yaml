@@ -564,6 +564,21 @@ spec:
             serviceMonitor:
               enabled: true
           primary:
+            # Label + full requests/limits so the database passes the
+            # platform's own Kyverno policies (require-labels,
+            # require-resources). Usage on kind is ~10m CPU / ~70Mi, so
+            # these limits leave wide headroom. podLabels (not
+            # commonLabels) touches only the pod template — the
+            # StatefulSet's selector and volume claim are immutable.
+            podLabels:
+              app.kubernetes.io/part-of: backstage
+            resources:
+              requests:
+                cpu: 250m
+                memory: 256Mi
+              limits:
+                cpu: "1"
+                memory: 512Mi
             persistence:
               enabled: true
               # Small — catalog + template runs won't fill this on kind.
