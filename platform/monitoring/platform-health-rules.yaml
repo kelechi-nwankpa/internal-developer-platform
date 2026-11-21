@@ -105,3 +105,42 @@ spec:
             description: >-
               certmanager_certificate_ready_status has been absent for 30m.
               Check the cert-manager pod and its ServiceMonitor.
+
+    # ── Backstage database ────────────────────────────────────────────
+    # Needs the Postgres exporter sidecar (backstage.yaml, postgresql.metrics).
+    - name: platform-backstage-db
+      rules:
+        # Backstage is up, Postgres is up, and yet no Backstage plugin
+        # database has a single connection: Backstage is storing its data
+        # somewhere else (in-memory SQLite, as it did for months).
+        #
+        # Built from three facts so each failure has its own alert:
+        # Backstage down -> ArgoAppDegradedOrMissing; Postgres down ->
+        # BackstagePostgresDown below; both up but not talking -> this.
+        - alert: BackstageNotUsingPostgres
+          expr: |-
+            (kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"} > 0)
+            and on() (pg_up{namespace="backstage"} == 1)
+            unless on() (sum(pg_stat_database_numbackends{namespace="backstage",datname=~"backstage_plugin_.*"}) > 0)
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Backstage is running but has no connections to Postgres"
+            description: >-
+              No backstage_plugin_* database has had a connection for 15m while
+              Backstage and Postgres are both up. Backstage is probably on
+              in-memory SQLite: check `backend.database` in its app-config
+              (platform/argocd/apps/backstage.yaml). Data written now is lost
+              on restart.
+        - alert: BackstagePostgresDown
+          expr: pg_up{namespace="backstage"} == 0 or absent(pg_up{namespace="backstage"})
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Backstage's Postgres is down or its metrics are missing"
+            description: >-
+              pg_up has been 0 or absent for 15m. Check pod
+              backstage-postgresql-0 (both containers) and the
+              allow-ingress-postgresql-metrics NetworkPolicy.

@@ -150,3 +150,117 @@ tests:
             exp_annotations:
               summary: "No cert-manager certificate metrics — expiry alerting is blind"
               description: "certmanager_certificate_ready_status has been absent for 30m. Check the cert-manager pod and its ServiceMonitor."
+
+  # ── Backstage database ────────────────────────────────────────────
+  # 8. The 2026-11-21 case: Backstage up, Postgres up, zero connections to
+  #    any plugin database (the exporter's own connection is to `backstage`
+  #    and must not count). Fires after 15m.
+  - interval: 1m
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"}'
+        values: '1x40'
+      - series: 'pg_up{namespace="backstage"}'
+        values: '1x40'
+      - series: 'pg_stat_database_numbackends{namespace="backstage",datname="backstage"}'
+        values: '1x40'
+      - series: 'pg_stat_database_numbackends{namespace="backstage",datname="backstage_plugin_catalog"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: BackstageNotUsingPostgres
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: BackstageNotUsingPostgres
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: backstage, deployment: backstage}
+            exp_annotations:
+              summary: "Backstage is running but has no connections to Postgres"
+              description: "No backstage_plugin_* database has had a connection for 15m while Backstage and Postgres are both up. Backstage is probably on in-memory SQLite: check `backend.database` in its app-config (platform/argocd/apps/backstage.yaml). Data written now is lost on restart."
+      - eval_time: 16m
+        alertname: BackstagePostgresDown
+        exp_alerts: []
+
+  # 9. Same, but the plugin databases do not exist at all (day-one SQLite).
+  - interval: 1m
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"}'
+        values: '1x40'
+      - series: 'pg_up{namespace="backstage"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: BackstageNotUsingPostgres
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: backstage, deployment: backstage}
+            exp_annotations:
+              summary: "Backstage is running but has no connections to Postgres"
+              description: "No backstage_plugin_* database has had a connection for 15m while Backstage and Postgres are both up. Backstage is probably on in-memory SQLite: check `backend.database` in its app-config (platform/argocd/apps/backstage.yaml). Data written now is lost on restart."
+
+  # 10. Healthy: plugin databases have connections. Nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"}'
+        values: '1x40'
+      - series: 'pg_up{namespace="backstage"}'
+        values: '1x40'
+      - series: 'pg_stat_database_numbackends{namespace="backstage",datname="backstage_plugin_catalog"}'
+        values: '2x40'
+      - series: 'pg_stat_database_numbackends{namespace="backstage",datname="backstage_plugin_auth"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BackstageNotUsingPostgres
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: BackstagePostgresDown
+        exp_alerts: []
+
+  # 11. Backstage scaled to zero (a deploy, a restart): not this alert.
+  - interval: 1m
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"}'
+        values: '0x40'
+      - series: 'pg_up{namespace="backstage"}'
+        values: '1x40'
+      - series: 'pg_stat_database_numbackends{namespace="backstage",datname="backstage_plugin_catalog"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BackstageNotUsingPostgres
+        exp_alerts: []
+
+  # 12. Postgres down: BackstagePostgresDown fires, the other stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"}'
+        values: '1x40'
+      - series: 'pg_up{namespace="backstage"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: BackstagePostgresDown
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: BackstagePostgresDown
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: backstage}
+            exp_annotations:
+              summary: "Backstage's Postgres is down or its metrics are missing"
+              description: "pg_up has been 0 or absent for 15m. Check pod backstage-postgresql-0 (both containers) and the allow-ingress-postgresql-metrics NetworkPolicy."
+      - eval_time: 16m
+        alertname: BackstageNotUsingPostgres
+        exp_alerts: []
+
+  # 13. Exporter metrics missing entirely: BackstagePostgresDown fires.
+  - interval: 1m
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{namespace="backstage",deployment="backstage"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: BackstagePostgresDown
+        exp_alerts:
+          - exp_labels: {severity: critical, namespace: backstage}
+            exp_annotations:
+              summary: "Backstage's Postgres is down or its metrics are missing"
+              description: "pg_up has been 0 or absent for 15m. Check pod backstage-postgresql-0 (both containers) and the allow-ingress-postgresql-metrics NetworkPolicy."
