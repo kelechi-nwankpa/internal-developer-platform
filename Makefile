@@ -28,6 +28,10 @@ CDK_DIR    := infra
 # stand between us and a surprise $200 bill. Use `make aws-nuke` when even
 # CostStack should go.
 WORKLOAD_STACKS := VpcStack KmsStack IamStack ClusterStack RegistryStack DnsStack
+# Used by scripts/aws-down.sh to recognise what the cluster's controllers
+# created. Must match infra/bin/idp.ts (zoneName) and cluster-stack.ts.
+ZONE_NAME       := idp.seniormankelz.dev
+CLUSTER_NAME    := idp
 
 # Budget guard, enforced by scripts/aws-preflight.sh before every deploy.
 # Raising the cap is the owner's decision: change BUDGET_CAP_USD here AND
@@ -148,7 +152,7 @@ aws-up: aws-preflight ## deploy every CDK stack to $(AWS_REGION) in dependency o
 	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk bootstrap
 	@printf "$(BLUE)==> Deploying all stacks to $(AWS_REGION)$(RESET)\n"
 	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk deploy --all --require-approval broadening
-	@printf "$(GREEN)==> aws-up complete. Run 'make aws-down' at session end to stop billing.$(RESET)\n"
+	@printf "$(GREEN)==> aws-up complete. Run 'make aws-down' at session end: it tears down in order and audits.$(RESET)\n"
 
 .PHONY: aws-diff
 aws-diff: ## show what CDK would change without deploying
@@ -162,16 +166,20 @@ aws-status: ## list every CloudFormation stack in $(AWS_REGION) and its state
 		--query 'StackSummaries[*].[StackName,StackStatus,LastUpdatedTime||CreationTime]' \
 		--output table
 
+AWS_DOWN_ENV = AWS_REGION=$(AWS_REGION) CDK_DIR=$(CDK_DIR) WORKLOAD_STACKS="$(WORKLOAD_STACKS)" \
+	ZONE_NAME=$(ZONE_NAME) CLUSTER_NAME=$(CLUSTER_NAME)
+
 .PHONY: aws-down
-aws-down: ## destroy every workload stack (KEEPS CostStack — Budgets stay armed)
-	@printf "$(YELLOW)==> This will destroy: $(WORKLOAD_STACKS)$(RESET)\n"
-	@printf "$(YELLOW)    CostStack is preserved (free; keeps Budgets armed).$(RESET)\n"
-	@printf "$(YELLOW)    KMS keys enter a 7-day pending-deletion window.$(RESET)\n"
-	@printf "$(YELLOW)    Route53 zone will be replaced with new NS on next deploy.$(RESET)\n"
-	@printf "$(YELLOW)    Continue? [y/N] $(RESET)"
-	@read confirm && [ "$$confirm" = "y" ] || { printf "$(RED)==> Aborted.$(RESET)\n"; exit 1; }
-	@cd $(CDK_DIR) && AWS_REGION=$(AWS_REGION) npx cdk destroy $(WORKLOAD_STACKS) --force
-	@printf "$(GREEN)==> aws-down complete. CostStack still up; billing dropping.$(RESET)\n"
+aws-down: ## tear down in order (cluster, leftovers, the rest), then audit. KEEPS CostStack
+	@$(AWS_DOWN_ENV) scripts/aws-down.sh
+
+.PHONY: aws-down-plan
+aws-down-plan: ## show what the teardown sweep would delete right now (changes nothing)
+	@$(AWS_DOWN_ENV) scripts/aws-down.sh --plan
+
+.PHONY: down-test
+down-test: ## unit-test the teardown order and its safety rules (no AWS calls)
+	@bash scripts/tests/aws-down.test.sh
 
 .PHONY: aws-nuke
 aws-nuke: ## destroy EVERYTHING including CostStack. Use only when tearing down for good

@@ -309,6 +309,43 @@ one leftover from Phase 1.
 | P9-16 | **Phase 1's teardown left the log group `/aws/eks/idp/cluster`** (134 MB, no expiry, about $0.004/month). CloudFormation did not create it (EKS did), so `cdk destroy` never removed it. | Found by the audit. Deleting it is the owner's call; the teardown order (next) removes it in future. |
 | P9-17 | **The first audit reported seven S3 buckets from other projects.** The account is shared, and S3 cannot be listed by tag. | Each bucket's `Project` tag is read; only `Project=idp` buckets count. |
 
+### 10. Teardown in an order that works (`make aws-down`)
+
+The old `aws-down` ran `cdk destroy` and printed "complete". That
+removes only what CloudFormation created. A session also leaves a load
+balancer, buckets, IAM roles and DNS records made by the cluster's
+controllers; they keep billing, and a VPC or hosted zone that still
+contains them cannot be deleted.
+
+Order: (1) destroy ClusterStack, so no controller can recreate anything;
+(2) sweep the leftovers straight from AWS, repeating until none remain;
+(3) destroy the other stacks, with one sweep-and-retry if that fails;
+(4) run the audit, which decides the exit code.
+
+Two decisions worth remembering:
+
+- **No kubectl in teardown.** "Delete the claims and let Crossplane
+  clean up" is the textbook order, but if kubectl pointed at kind it
+  would wipe the local platform, and it cannot work on a broken cluster,
+  which is when teardown is hardest.
+- **The account is shared, so every delete must prove ownership.**
+  Network resources must be in a VPC tagged `Project=idp`; DNS records in
+  the project zone; buckets, roles and policies tagged `Project=idp`,
+  re-checked just before the delete; log groups under the cluster's
+  prefix. `make aws-down-plan` shows the list and changes nothing.
+
+Tested with `make down-test` (28 cases): the planners against mixed
+"ours and another project's" data, refusals, and the whole teardown
+against a fake AWS that records every changing call; the record must
+match exactly, in order. Sixteen deliberate breakages, all caught.
+`make aws-down-plan` on the real account lists one item: the Phase 1
+log group (P9-16).
+
+Not proven: a teardown of a real session. In particular the names and
+tags of what the load-balancer controller creates on EKS are assumed
+from documentation, so the first real teardown must be watched, and the
+audit is the backstop.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.

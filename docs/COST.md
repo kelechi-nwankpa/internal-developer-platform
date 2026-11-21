@@ -64,7 +64,7 @@ This is the approximate monthly cost of the **always-on** version of the platfor
 
 1. **Local `kind` cluster for Phases 2–9.** Everything in-cluster (ArgoCD, Crossplane, cert-manager, ESO, observability, Backstage) develops against a local kind cluster. Zero AWS cost.
 2. **`cdk synth` + unit tests, not `cdk deploy`.** Phase 1's CDK code is developed and tested locally. AWS resources exist only for validation runs.
-3. **Teardown discipline.** Every session that touches AWS ends with `make aws-down`. Every one.
+3. **Teardown discipline.** Every session that touches AWS ends with `make aws-down`, which tears down in order and then runs `make aws-audit`. Every one.
 4. **No NAT Gateway in the demo cluster.** Public subnets for demo nodes, VPC endpoints where needed — saves ~$32/mo of silent bleed. Trade-off documented in an ADR when we build the CDK stack.
 5. **Fargate spot or a single small node** for the recorded demo — pay per second.
 6. **RDS on-demand, destroyed at end of test.** A single day of `db.t4g.micro` costs ~$0.80.
