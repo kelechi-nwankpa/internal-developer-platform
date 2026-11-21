@@ -68,8 +68,9 @@ On EKS only the first hop changes: an NLB replaces the kind host ports.
 
 - ArgoCD marks an app `Degraded` when the Gateway refuses its route, so
   the Phase 8 app-health alert covers the edge.
-- Critical alerts are emailed (section 3). Not yet covered: runbooks and
-  a rehearsed restore. See "Still to do".
+- Critical alerts are emailed (section 3). Runbooks: `docs/runbooks/`
+  (disk full, repo restore, kind recovery). Not yet done: a rehearsed
+  restore. See "Still to do".
 
 ## What shipped so far
 
@@ -194,8 +195,14 @@ Four older faults then surfaced.
 
 ## Still to do (all $0 on kind)
 
-- Runbooks: disk full (including the Tempo and Prometheus log repairs),
-  Vault unseal, repo restore; one rehearsed restore.
+- **OPEN, data at risk (P9-10):** Vault's volume claim `data-vault-0` has
+  been `Terminating` since 2026-10-29 (a delete that raced with the pod
+  during the Phase 5 Vault reset). Only the running pod's protection
+  finalizer keeps it alive: deleting the pod would have deleted every
+  secret. Mitigated on 2026-11-21 (volume set to `Retain`, encrypted
+  in-node copy taken). The repair needs a planned Vault restart and an
+  unseal; it doubles as the rehearsed restore.
+- Runbook for the Vault volume repair, once it has been carried out.
 - Move the Backstage Postgres password to Vault + ExternalSecret.
 - Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
 - Decide whether external-dns should publish the wildcard record that the
