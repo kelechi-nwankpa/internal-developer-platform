@@ -346,7 +346,7 @@ tags of what the load-balancer controller creates on EKS are assumed
 from documentation, so the first real teardown must be watched, and the
 audit is the backstop.
 
-### 11. Teardown timer (built and tested; NOT switched on, NOT deployed)
+### 11. Teardown timer (built, tested, switched on in code; NOT deployed)
 
 The one guard that needs nobody at the keyboard. A rule runs a small
 Lambda every 15 minutes. With no workload stacks it does nothing. Once
@@ -386,17 +386,22 @@ breakages all caught) and 12 CDK tests on the permissions.
 |---|---|---|
 | P9-18 | **First version: one stuck stack held back all the others.** A DNS stack that could not be deleted would have kept the VPC stack, and so the NAT gateway, alive. Found in review before any test existed. | A group with only stuck stacks left no longer blocks the next group; stuck stacks are retried every run. |
 
-Open, for the owner:
+**Switched on in code (owner approved 2026-11-21).** The right "delete
+stack X" must end in a wildcard, because a stack's unique id changes on
+every deploy, and cdk-nag requires a written exception per wildcard.
+Six exceptions were added, one per stack name, each matching only that
+stack's ARN. Checked that they are narrow: `stack/*`, another stack's
+name, `stack/ClusterStack*` and `parameter/*` all still fail the linter.
+`infra/bin/idp.ts` now passes the stack groups; `cdk synth --all` is
+clean; 73 CDK tests pass.
 
-- **Switching it on needs six linter exceptions.** The right "delete
-  stack X" must end in a wildcard, because a stack's unique id changes
-  on every deploy. cdk-nag requires a written exception per wildcard.
-  Until that is approved, `infra/bin/idp.ts` does not pass
-  `teardownStackGroups`, so nothing changes in the deployed app.
-- **Deploying it** is an update to CostStack: $0, but an AWS write.
-- **Not proven:** that CloudFormation accepts a delete from this role
-  without `iam:PassRole` (it should: the stack keeps the role it was
-  deployed with), and the email confirmation click.
+Still open:
+
+- **Deploying it** is an update to CostStack: $0, but an AWS write, so
+  it waits for the owner's go-ahead.
+- **Not proven until then:** that CloudFormation accepts a delete from
+  this role without `iam:PassRole` (it should: the stack keeps the role
+  it was deployed with), and the email confirmation click.
 
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
@@ -434,18 +439,159 @@ Four older faults then surfaced.
   re-roll them.
 - Before diagnosing "X cannot reach Y", confirm X is trying to.
 
-## Still to do (all $0 on kind)
+## Wave 1 close-out — everything that costs $0
 
+**Status:** Wave 1 complete, 2026-11-21. Phase 9 stays open: the live
+EKS session (Wave 2) waits for the owner to raise the budget cap.
+
+### Summary
+
+Phase 9 set out to run the platform on EKS. Planning found that Phase 1
+had cost $27.17 of a $30 cap, so the phase was split: do everything that
+costs nothing first, on kind and offline, and spend money only on a
+session that is short, guarded and already rehearsed. Wave 1 delivered
+the edge (Gateway API), alerts that reach a person, runbooks with a real
+restore behind them, the EKS version of bucket access (IRSA), and four
+layers of cost control: a preflight that refuses to deploy, a teardown
+that works in order, an audit that checks AWS directly, and a timer that
+needs nobody.
+
+### What I got wrong along the way (kept honest)
+
+- Diagnosed "Backstage is locked out of its database" when Backstage had
+  never used that database (P9-4).
+- Pushed a change on an ambiguous "go on" before the owner's step was
+  done; reverted it.
+- Three of my own first versions were wrong and were caught by breaking
+  them on purpose or by review: the Kyverno test tool (P9-13), the
+  Composition test (P9-15), the timer's ordering (P9-18).
+- Told the owner the timer would run the full teardown from CodeBuild,
+  then recommended the smaller design once the permissions it needed
+  were clear.
+
+### Business value delivered (Wave 1)
+
+- A forgotten session now costs about $3 (4 hours), not $12 to $27.
+- "Is anything still billing?" has a one-command, read-only answer.
+- A service's bucket on AWS needs no stored key, and its permissions are
+  tested before any money is spent.
+- Services are reachable by HTTPS hostname through one shared edge.
+- A critical alert reaches an inbox; recovery steps were exercised on a
+  real failure, not written from imagination.
+
+### Key concepts
+
+Gateway API (GatewayClass, Gateway, HTTPRoute) · Pod Security levels and
+why `privileged` checks nothing · startup vs liveness vs readiness
+probes · IRSA: OIDC trust, `sub` and `aud` conditions, the SDK
+credential chain · Crossplane function pipelines, required resources,
+fail-closed Compositions · golden-file tests plus independent invariants
+· mutation-testing a test harness · plan/execute separation for
+destructive scripts · ownership proofs on a shared account · dead-man's
+switch vs arm/disarm · scoped linter exceptions.
+
+### Tech touched
+
+Envoy Gateway, cert-manager, external-dns, Kyverno, Alertmanager,
+Prometheus (promtool), Vault + External Secrets, Crossplane
+(function-go-templating, provider-aws-s3/iam), AWS IAM/STS, AWS CDK
+(Lambda, EventBridge, SNS, SSM), CloudFormation, bash + jq, Python.
+
+### Interview talking points
+
+- "My first cloud phase cost twice its estimate. I found out four months
+  late, from Cost Explorer. So I built the controls in the order the
+  failure happened: refuse to deploy an expensive version, tear down in
+  an order that works, audit AWS directly, and a timer for when I'm not
+  there."
+- "`cdk destroy` succeeding is not evidence. CloudFormation only knows
+  what it created; the cluster's controllers create load balancers,
+  buckets and DNS records behind its back. My audit lists resources, it
+  doesn't ask CloudFormation's opinion. Its first run found a log group
+  Phase 1 had left behind."
+- "The teardown uses no kubectl. The textbook order is 'delete the
+  claims, let the controllers clean up', but that fails exactly when the
+  cluster is broken, and pointed at the wrong context it deletes the
+  wrong cluster's data."
+- "I break my tests on purpose. `kyverno test` reported 10 passes for a
+  policy I had deliberately broken. Three of my own harnesses had the
+  same kind of hole. A test you have never seen fail is a guess."
+- "For the timer I chose the design with fewer rights over the one that
+  cleans up more: delete six named stacks, versus a standing role with
+  broad delete rights on a shared account. The cost of that choice is
+  known: about $0.04 an hour for a leftover load balancer."
+
+### Recruiter Q&A
+
+- **Why not just leave EKS running for the demo?** The control plane
+  alone is $72 a month. The platform is cluster-agnostic; kind is the
+  daily driver and EKS is a rehearsed, timed session.
+- **How do you know the AWS parts work if you haven't run them?** I
+  don't, fully, and the log says which parts: the IRSA role is rendered
+  and schema-checked but AWS has not accepted it; the teardown and timer
+  ran only against fakes. Each has a named first-run check.
+- **What would you do differently?** Record actual spend the week after
+  every session. Every later control exists because that one habit was
+  missing.
+
+### Loose ends
+
+- Deploy the teardown timer (update CostStack, $0) and confirm its email
+  subscription. Needs the owner's go-ahead.
 - Unseal a restored Vault backup once, on a throwaway Vault, and read a
-  secret from it (needs the owner's unseal keys).
-- Teardown timer: approve the six linter exceptions, switch it on in
-  `infra/bin/idp.ts`, deploy CostStack ($0), confirm the email
-  subscription.
+  secret from it. Needs the owner's unseal keys.
+- The Phase 1 log group `/aws/eks/idp/cluster` (P9-16): delete it, or
+  let the next `make aws-down` do so.
+- Scaffolding a brand-new service from the template end to end is still
+  untested since the Gateway and IRSA changes.
 
-## Deferred until the cap is raised
+### Suggested commit
 
-- The live EKS session: NLB in place of host ports, Let's Encrypt DNS-01
-  for the wildcard, Route53 provider for external-dns.
+`docs(phase-9): close out Wave 1 ($0 work)`
+
+### Diagram updates needed
+
+- Edge: Gateway (shared, namespace `gateway`) → HTTPRoute per service;
+  remove any remaining Ingress.
+- ObjectBucket flow, two variants: MinIO user + key (kind) and S3 +
+  IAM role via OIDC (EKS), meeting at the same Secret name.
+- New "cost controls" diagram: preflight → session → timer / aws-down →
+  audit, with what each one stops.
+
+### LinkedIn post idea
+
+"My side project's cloud bill was 2x the estimate and I found out four
+months later. I didn't add a budget alert; I already had four, and they
+all fired after the money was gone. What I added instead: a deploy that
+refuses, a teardown that proves itself, and a timer that doesn't need
+me. Total cost of building all of it: one cent."
+
+### YouTube video idea
+
+"cdk destroy said 'complete'. It wasn't." A walk through why
+CloudFormation cannot see what Kubernetes controllers create, a
+read-only audit that can, and the ordered teardown tested against a fake
+AWS that records every delete, including the tests failing when the
+safety checks are removed.
+
+## Wave 2 — deferred until the cap is raised
+
+The live EKS session. Before it:
+
+- Raise `BUDGET_CAP_USD` in the Makefile and the cap in docs/COST.md in
+  one commit (owner's decision; `make aws-preflight` refuses until then).
+- Deploy CostStack with the timer and confirm the email subscription.
+
+During it:
+
+- NLB in place of host ports, Let's Encrypt DNS-01 for the wildcard,
+  Route53 provider for external-dns.
+- Create the `idp-cluster` EnvironmentConfig, limit the Crossplane
+  provider's IAM rights to `role/idp-*` and `policy/idp-*`, switch the
+  XRD's default Composition to S3.
+- First-run checks: a pod reads its bucket with no stored key; the
+  load-balancer controller's names and tags match what the teardown
+  sweep expects; `make aws-down` ends "complete and verified".
 
 ## See also
 
