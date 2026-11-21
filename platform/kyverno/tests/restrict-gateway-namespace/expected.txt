@@ -1,0 +1,19 @@
+# Expected result of applying policies/restrict-gateway-namespace.yaml to
+# resources.yaml. One line per result: <rule> <namespace>/<pod> <result>
+# The comparison is EXACT: an extra, missing or different line fails.
+# platform-hello/other-namespace is deliberately absent: the policy must
+# produce no result at all outside the gateway namespace.
+baseline-except-host-ports gateway/host-port-443-and-22 pass
+baseline-except-host-ports gateway/host-port-8080 pass
+baseline-except-host-ports gateway/init-host-port-9000 pass
+baseline-except-host-ports gateway/net-admin-capability fail
+baseline-except-host-ports gateway/no-host-port pass
+baseline-except-host-ports gateway/privileged-container fail
+baseline-except-host-ports gateway/proxy-like pass
+host-ports-80-443-only gateway/host-port-443-and-22 fail
+host-ports-80-443-only gateway/host-port-8080 fail
+host-ports-80-443-only gateway/init-host-port-9000 fail
+host-ports-80-443-only gateway/net-admin-capability pass
+host-ports-80-443-only gateway/no-host-port pass
+host-ports-80-443-only gateway/privileged-container pass
+host-ports-80-443-only gateway/proxy-like pass

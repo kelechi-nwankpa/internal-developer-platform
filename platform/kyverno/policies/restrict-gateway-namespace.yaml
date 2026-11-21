@@ -1,0 +1,94 @@
+---
+# restrict-gateway-namespace.yaml — close the hole that host ports opened
+# in the `gateway` namespace (Phase 9, ADR-0033).
+#
+# WHY this exists:
+#   On kind the Envoy proxy binds host ports 80 and 443. Pod Security
+#   `baseline` forbids every hostPort and has no per-pod or per-field
+#   exemption, so platform/gateway/namespace.yaml had to set
+#   enforce=privileged. `privileged` means NO checks at all: privileged
+#   containers, added capabilities, unconfined seccomp and any host port
+#   are all admitted. The exception we needed was two ports; the one we
+#   got was everything.
+#
+#   This policy gives back what was lost, in two rules:
+#     1. baseline-except-host-ports — every `baseline` check, enforced by
+#        Kyverno instead of Pod Security, with one control switched off
+#        (Host Ports).
+#     2. host-ports-80-443-only — that one control, replaced by a
+#        narrower rule: a hostPort must be 80 or 443.
+#
+#   Net effect: `gateway` = baseline + host ports 80/443, nothing more.
+#   (hostNetwork/hostPID/hostIPC/hostPath were already blocked here by
+#   disallow-host-namespaces, which does not exempt this namespace.)
+#
+# WHY Enforce from day one (the other policies started in Audit):
+#   it matches one namespace with one workload, and the test suite
+#   (platform/kyverno/tests/gateway-namespace/) runs the real proxy pod
+#   shape through it. There is no unknown fleet to survey first.
+#
+# Alternatives rejected:
+#   - One rule using the podSecurity exclusion's restrictedField/values
+#     to allow only 80/443: shorter, but harder to read and its failure
+#     message does not say which ports ARE allowed.
+#   - Leave it to audit/warn=baseline on the namespace: that records a
+#     violation, it does not stop one.
+#   - A NodePort Service instead of hostPort (no exception needed): kind
+#     maps host 80/443 to the node's 80/443, outside the NodePort range.
+#
+# KIND-ONLY, like the exception it guards: on EKS the proxy sits behind a
+# load balancer, the namespace enforces `restricted`, and this policy
+# becomes redundant.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-gateway-namespace
+  annotations:
+    policies.kyverno.io/title: Restrict the gateway namespace to baseline + host ports 80/443
+    policies.kyverno.io/category: Pod Security Standards, Phase 9
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      The gateway namespace runs at Pod Security `privileged` so the edge
+      proxy can bind host ports on kind. This policy re-applies every
+      baseline check there and limits host ports to 80 and 443.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: baseline-except-host-ports
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [gateway]
+      validate:
+        podSecurity:
+          level: baseline
+          version: latest
+          exclude:
+            # The single control handed to the next rule.
+            - controlName: Host Ports
+              images: ["*"]
+
+    - name: host-ports-80-443-only
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [gateway]
+      validate:
+        message: >-
+          In the gateway namespace a hostPort must be 80 or 443 (the edge
+          proxy). No other host port is allowed.
+        pattern:
+          spec:
+            =(ephemeralContainers):
+              - =(ports):
+                  - =(hostPort): "0 | 80 | 443"
+            =(initContainers):
+              - =(ports):
+                  - =(hostPort): "0 | 80 | 443"
+            containers:
+              - =(ports):
+                  - =(hostPort): "0 | 80 | 443"

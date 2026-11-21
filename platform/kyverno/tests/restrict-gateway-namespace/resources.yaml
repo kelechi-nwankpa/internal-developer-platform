@@ -1,0 +1,117 @@
+---
+# The real proxy shape: host ports 80/443 mapped to unprivileged container
+# ports, plus ports with no hostPort. Must pass both rules.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: proxy-like
+  namespace: gateway
+spec:
+  containers:
+    - name: envoy
+      image: docker.io/envoyproxy/envoy:distroless-v1.37.0
+      ports:
+        - {containerPort: 10080, hostPort: 80}
+        - {containerPort: 10443, hostPort: 443}
+        - {containerPort: 19001}
+    - name: shutdown-manager
+      image: docker.io/envoyproxy/gateway:v1.9.4
+---
+# No host port at all. Must pass.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-host-port
+  namespace: gateway
+spec:
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+      ports:
+        - {containerPort: 8080}
+---
+# A host port other than 80/443. Must fail.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-port-8080
+  namespace: gateway
+spec:
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+      ports:
+        - {containerPort: 8080, hostPort: 8080}
+---
+# One allowed and one forbidden host port in the same container. Must fail.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-port-443-and-22
+  namespace: gateway
+spec:
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+      ports:
+        - {containerPort: 10443, hostPort: 443}
+        - {containerPort: 2222, hostPort: 22}
+---
+# Forbidden host port hidden in an init container. Must fail.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-host-port-9000
+  namespace: gateway
+spec:
+  initContainers:
+    - name: init
+      image: example.com/init:1.0.0
+      ports:
+        - {containerPort: 9000, hostPort: 9000}
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+---
+# Allowed host port, but a privileged container. Baseline must reject it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privileged-container
+  namespace: gateway
+spec:
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+      securityContext:
+        privileged: true
+      ports:
+        - {containerPort: 10080, hostPort: 80}
+---
+# A capability beyond the baseline set. Baseline must reject it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: net-admin-capability
+  namespace: gateway
+spec:
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+      securityContext:
+        capabilities:
+          add: [NET_ADMIN]
+---
+# Same forbidden host port, different namespace: this policy must not
+# apply (other namespaces are covered by Pod Security itself).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: other-namespace
+  namespace: platform-hello
+spec:
+  containers:
+    - name: app
+      image: example.com/app:1.0.0
+      ports:
+        - {containerPort: 8080, hostPort: 8080}

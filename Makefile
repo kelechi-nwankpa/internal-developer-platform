@@ -122,6 +122,10 @@ preflight-test: ## unit-test the preflight decision logic (no AWS calls)
 rules-test: ## unit-test every Prometheus alert rule with promtool (needs docker)
 	@scripts/rules-test.sh
 
+.PHONY: policy-test
+policy-test: ## test Kyverno policies offline against example pods (needs docker)
+	@scripts/policy-test.sh
+
 .PHONY: aws-up
 aws-up: aws-preflight ## deploy every CDK stack to $(AWS_REGION) in dependency order (runs aws-preflight first)
 	@printf "$(BLUE)==> Bootstrapping CDK in $(AWS_REGION) (idempotent)$(RESET)\n"
