@@ -1,0 +1,26 @@
+---
+# Namespace for the shared edge Gateway and its Envoy proxy pods
+# (Phase 9, ADR-0033).
+#
+# WHY a separate namespace from envoy-gateway-system: the controller needs
+# no special privileges and stays at Pod Security `restricted`. Only the
+# proxy needs an exception, so the exception lives here and nowhere else.
+#
+# WHY enforce=privileged: on kind the proxy binds host ports 80/443 (see
+# envoyproxy-kind.yaml). Pod Security `baseline` forbids every hostPort,
+# and Pod Security has no per-pod exemption, so the namespace has to be
+# `privileged` for enforcement. audit/warn stay at `baseline` so anything
+# beyond that one exception still shows up in the API server audit log and
+# as a kubectl warning.
+#
+# KIND-ONLY: on EKS the proxy sits behind an NLB, needs no hostPort, and
+# this namespace should enforce `restricted`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/part-of: platform-edge
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline

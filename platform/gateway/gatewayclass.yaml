@@ -1,0 +1,26 @@
+---
+# GatewayClass — "which controller implements Gateways of this class, and
+# with what settings". Cluster-scoped; the Gateway (next step) refers to it
+# by name, the same way an Ingress referred to an IngressClass.
+#
+# controllerName must match config.envoyGateway.gateway.controllerName in
+# platform/argocd/apps/envoy-gateway.yaml.
+#
+# parametersRef points at the EnvoyProxy that says how proxies are run.
+# That is the only environment-specific object, so kind and EKS share this
+# file unchanged.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+  labels:
+    app.kubernetes.io/part-of: platform-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: edge-proxy
+    namespace: gateway

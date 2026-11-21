@@ -1,0 +1,71 @@
+---
+# How the Envoy proxy pods are run — the KIND-ONLY part of the edge.
+#
+# The problem: kind has no cloud load balancer. The kind node container
+# already publishes ports 80 and 443 to the Mac (platform/kind/
+# kind-config.yaml, extraPortMappings), but nothing inside the node listens
+# on them. This file makes the proxy pod claim those two node ports with
+# hostPort, so `curl https://<name>.idp.seniormankelz.dev` resolved to
+# 127.0.0.1 lands in Envoy.
+#
+# Alternatives rejected:
+#   - Service type LoadBalancer + cloud-provider-kind / MetalLB: another
+#     component to run, and on macOS the Docker network is not routable
+#     from the host, so it still would not be reachable.
+#   - NodePort: the node-port range is 30000-32767; the kind mapping is
+#     80/443. Changing either means recreating the cluster.
+#   - hostNetwork: exposes every port of the pod and is blocked by the
+#     Kyverno policy disallow-host-namespaces. hostPort exposes exactly two.
+#
+# On EKS this object is replaced by one with envoyService.type:
+# LoadBalancer (NLB) and no patch. Same name, so GatewayClass is unchanged.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: edge-proxy
+  namespace: gateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      # ClusterIP, not the default LoadBalancer: on kind a LoadBalancer
+      # Service never gets an address, so the Gateway would never report
+      # Programmed and ArgoCD would show it Progressing forever (the noise
+      # ADR-0033 was written to avoid).
+      envoyService:
+        type: ClusterIP
+      envoyDeployment:
+        replicas: 1
+        # Two pods cannot hold the same host port on a one-node cluster,
+        # so a rolling update would deadlock. Recreate accepts a few
+        # seconds of downtime on a dev cluster instead.
+        strategy:
+          type: Recreate
+        container:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+        # Envoy Gateway shifts privileged listener ports by +10000 inside
+        # the container (80 -> 10080, 443 -> 10443) so Envoy needs no
+        # NET_BIND_SERVICE capability. The patch maps the node's real
+        # 80/443 onto those. Strategic merge matches ports by containerPort.
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: envoy
+                      ports:
+                        - containerPort: 10080
+                          hostPort: 80
+                          protocol: TCP
+                        - containerPort: 10443
+                          hostPort: 443
+                          protocol: TCP

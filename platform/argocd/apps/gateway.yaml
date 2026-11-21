@@ -1,0 +1,35 @@
+---
+# gateway — the shared edge: namespace, GatewayClass, proxy settings, and
+# (next steps) the Gateway, its wildcard certificate and the HTTP->HTTPS
+# redirect. Phase 9, ADR-0033.
+#
+# Separate from the envoy-gateway Application on purpose: that one is a
+# third-party Helm chart (controller + CRDs, wave -1); this one is our own
+# configuration (wave 0) and can only apply once those CRDs exist.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+    targetRevision: HEAD
+    path: platform/gateway
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # No CreateNamespace: the Namespace is a manifest in the path, so its
+      # Pod Security labels are owned by Git, not by ArgoCD defaults.
+      - ServerSideApply=true
