@@ -68,8 +68,8 @@ On EKS only the first hop changes: an NLB replaces the kind host ports.
 
 - ArgoCD marks an app `Degraded` when the Gateway refuses its route, so
   the Phase 8 app-health alert covers the edge.
-- Not yet covered: alert delivery to a person, certificate-expiry alert,
-  runbooks. See "Still to do".
+- Critical alerts are emailed (section 3). Not yet covered: runbooks and
+  a rehearsed restore. See "Still to do".
 
 ## What shipped so far
 
@@ -104,6 +104,57 @@ curl -k --resolve platform-hello.idp.seniormankelz.dev:443:127.0.0.1 \
 
 Returns 200 with the S3 write and read-back. Before the namespace label
 was granted, the same route was refused (`NotAllowedByListeners`).
+
+### 3. Alerts that reach a person
+
+**Decisions:** email through Gmail SMTP ($0, no new account); only
+`severity=critical` is emailed, warnings stay in the Alertmanager UI; the
+SMTP password and the email address live in Vault, never in Git.
+
+| Step | Commit | Result |
+|---|---|---|
+| Remove 9 permanent false alarms (control-plane targets kubeadm binds to 127.0.0.1) | `0d7511a` | Includes a critical `etcdInsufficientMembers` that fired while etcd was healthy |
+| Alertmanager config rendered from Vault by External Secrets | `a61d4e9`, `e9570b7`, `55f8d7d`, `25e4b91` | Test alert emailed and confirmed in the inbox |
+| Disk and certificate alerts, `make rules-test` | `4473358` | 5 rules |
+| Postgres metrics exporter (upstream image, digest-pinned) + NetworkPolicy | `ab9c24f`, `19f2818`, `5a9c6a0` | `pg_up` and per-database connection counts |
+| Backstage database alerts | `3e36118` | 2 rules |
+
+**New alerts** (`platform/monitoring/platform-health-rules.yaml`):
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `NodeDiskUsageHigh` | Disk above 80% for 15m | warning |
+| `NodeDiskUsageCritical` | Disk above 90% for 5m | critical |
+| `CertificateExpiringSoon` | Under 14 days left (renewal is due at 30) | critical |
+| `CertificateNotReady` | Not Ready for 30m | critical |
+| `CertManagerMetricsAbsent` | No certificate metrics for 30m | critical |
+| `BackstageNotUsingPostgres` | Backstage and Postgres up, zero connections to any plugin database for 15m | critical |
+| `BackstagePostgresDown` | `pg_up` is 0 or absent for 15m | critical |
+
+**Tests:** 13 promtool cases, each alert in both directions. Eleven
+deliberate mutations of the rules (wrong thresholds, dropped guards,
+inverted conditions) were all caught. `make rules-test` fails if a test
+file is not registered.
+
+**Faults found while building it:**
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-6 | **Prometheus write-ahead log corrupt** since the disk-full event; 152 failed compactions, memory at 733 MB and growing. | Moved `wal` and `chunks_head` aside on the node and restarted. Lost about 80 minutes of metrics; memory fell to 181 MB. |
+| P9-7 | **ExternalSecret showed as drift** because the API server adds default fields. | Wrote the defaults into Git. |
+| P9-8 | **Exporter logged a permission error on every scrape** (WAL collector). The chart cannot pass `--no-collector.wal`. | One-off `GRANT pg_monitor TO backstage`, recorded in `backstage.yaml`. Not in Git: re-run if the volume is recreated. |
+| P9-9 | **Postgres pod failed the platform's own Kyverno policies** (no `part-of` label, no limits). | `primary.podLabels` and `primary.resources`. |
+
+**Known gaps:**
+
+- Nothing watches the watcher. If Prometheus, Alertmanager or the laptop
+  is down, no email is sent. An external dead-man's switch on the
+  `Watchdog` alert is the fix; it suits EKS, not a laptop that sleeps.
+- A restart of Postgres makes `BackstageNotUsingPostgres` go pending for a
+  minute or two. The 15-minute `for` absorbs it; it never fired.
+- The Docker VM is short of memory (77% used, heavy paging on `vda`). The
+  warnings `NodeMemoryMajorPagesFaults` and `NodeClockNotSynchronising`
+  are true and are not emailed.
 
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
@@ -143,9 +194,8 @@ Four older faults then surfaced.
 
 ## Still to do (all $0 on kind)
 
-- Route alerts to a person; add alerts for disk usage, certificate expiry
-  and "Backstage has no Postgres connections".
-- Runbooks: disk full, Vault unseal, repo restore; one rehearsed restore.
+- Runbooks: disk full (including the Tempo and Prometheus log repairs),
+  Vault unseal, repo restore; one rehearsed restore.
 - Move the Backstage Postgres password to Vault + ExternalSecret.
 - Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
 - Decide whether external-dns should publish the wildcard record that the
