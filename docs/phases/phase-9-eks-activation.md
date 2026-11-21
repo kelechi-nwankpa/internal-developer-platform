@@ -346,6 +346,58 @@ tags of what the load-balancer controller creates on EKS are assumed
 from documentation, so the first real teardown must be watched, and the
 audit is the backstop.
 
+### 11. Teardown timer (built and tested; NOT switched on, NOT deployed)
+
+The one guard that needs nobody at the keyboard. A rule runs a small
+Lambda every 15 minutes. With no workload stacks it does nothing. Once
+the oldest stack is 4 hours old it asks CloudFormation to delete the
+stacks, group by group, and keeps asking until they are gone. It emails
+about 30 minutes before, when it acts, once a day if stuck, and when
+everything is gone.
+
+Design choices:
+
+- **No arming step.** The clock is the stack's own creation time, so a
+  hand-run `cdk deploy` is covered. A step that can be skipped is the
+  failure this exists to remove.
+- **`make aws-extend HOURS=n`** writes a later deadline, capped at 12
+  hours after creation so a typo cannot switch the timer off. There is
+  no off switch.
+- **Narrow rights.** It may describe and delete six named stacks, use
+  one parameter, publish to its own topic and write its own logs. It
+  holds no direct right to delete a cluster or a VPC.
+- **Lives in CostStack**, which is never torn down and whose absence
+  already fails the audit.
+- **Rejected:** running the full `make aws-down` in CodeBuild at the
+  deadline. Complete, but a standing role with broad delete rights that
+  runs whatever is on the main branch of a public repository.
+
+Known limit, with its price: it does not remove what the cluster's
+controllers created. Deleting the stacks stops the cluster, Fargate and
+NAT (about 90% of the hourly cost); a load balancer can leave the VPC
+stack in DELETE_FAILED at about $0.04/h ($0.90/day) until `make aws-down`
+is run. The email says so.
+
+Tested: `make timer-test` (29 cases: the decision rules, then whole
+sessions ticked every 15 minutes against fake AWS; eleven deliberate
+breakages all caught) and 12 CDK tests on the permissions.
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-18 | **First version: one stuck stack held back all the others.** A DNS stack that could not be deleted would have kept the VPC stack, and so the NAT gateway, alive. Found in review before any test existed. | A group with only stuck stacks left no longer blocks the next group; stuck stacks are retried every run. |
+
+Open, for the owner:
+
+- **Switching it on needs six linter exceptions.** The right "delete
+  stack X" must end in a wildcard, because a stack's unique id changes
+  on every deploy. cdk-nag requires a written exception per wildcard.
+  Until that is approved, `infra/bin/idp.ts` does not pass
+  `teardownStackGroups`, so nothing changes in the deployed app.
+- **Deploying it** is an update to CostStack: $0, but an AWS write.
+- **Not proven:** that CloudFormation accepts a delete from this role
+  without `iam:PassRole` (it should: the stack keeps the role it was
+  deployed with), and the email confirmation click.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
@@ -386,7 +438,9 @@ Four older faults then surfaced.
 
 - Unseal a restored Vault backup once, on a throwaway Vault, and read a
   secret from it (needs the owner's unseal keys).
-- Teardown ordering, audit script, auto-teardown timer.
+- Teardown timer: approve the six linter exceptions, switch it on in
+  `infra/bin/idp.ts`, deploy CostStack ($0), confirm the email
+  subscription.
 
 ## Deferred until the cap is raised
 

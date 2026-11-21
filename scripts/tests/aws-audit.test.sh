@@ -76,6 +76,8 @@ expect "EKS log group is reported; another project's is not" "/aws/eks/idp/clust
 expect "tag catch-all ignores CostStack and budgets, reports the rest" \
   "arn:aws:ec2:eu-west-1:111122223333:security-group/sg-1" \
   "$(f tagged '{"ResourceTagMappingList":[{"ResourceARN":"arn:aws:cloudformation:eu-west-1:111122223333:stack/CostStack/abc"},{"ResourceARN":"arn:aws:budgets::111122223333:budget/idp-5usd-actual"},{"ResourceARN":"arn:aws:ec2:eu-west-1:111122223333:security-group/sg-1"}]}')"
+expect "the teardown timer's own resources (in CostStack) are kept, not reported" "" \
+  "$(f tagged '{"ResourceTagMappingList":[{"ResourceARN":"arn:aws:lambda:eu-west-1:111122223333:function:CostStack-TeardownTimerFn-ABC"},{"ResourceARN":"arn:aws:sns:eu-west-1:111122223333:CostStack-TeardownTimerTopic-ABC"},{"ResourceARN":"arn:aws:logs:eu-west-1:111122223333:log-group:CostStack-TeardownTimerLogs-ABC"}]}')"
 expect "CDK bootstrap bucket and repository are never reported" "" \
   "$(printf '%s\n' cdk-hnb659fds-assets-111122223333-eu-west-1 cdk-hnb659fds-container-assets-111122223333-eu-west-1 | drop_kept "")"
 expect "a name that merely starts with cdk- is still reported" "cdk-demo-bucket" "$(echo cdk-demo-bucket | drop_kept "")"

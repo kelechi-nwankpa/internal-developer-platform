@@ -124,7 +124,8 @@ What this means for the cap: the planned session fits in roughly $3, but
 a safe margin for one retry plus a mistake is **about $10–12 of
 headroom** (i.e. a cap of roughly $40). The two controls that keep it at
 the low end are (1) a Kubernetes version in standard support, verified
-before deploy, and (2) the automatic teardown timer.
+before deploy, and (2) the automatic teardown timer (built in Phase 9; see the phase
+log for what it stops and the ~$0.04/h it can leave behind).
 
 ---
 

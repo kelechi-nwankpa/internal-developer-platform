@@ -80,8 +80,9 @@ findings() {
     loggroups)  prog='.logGroups[] | select(.logGroupName | test("^/aws/(eks|containerinsights)/|idp")) | "\(.logGroupName) bytes=\(.storedBytes // 0)"' ;;
     # Catch-all: anything still carrying the project tag. The tagging API
     # can list a resource for a while after it is deleted, so this is
-    # only ever a warning. Budgets and CostStack are kept on purpose.
-    tagged)     prog='.ResourceTagMappingList[] | .ResourceARN | select(test(":stack/CostStack/|:budgets:|:ce:|:sns:.*CostStack") | not)' ;;
+    # only ever a warning. Budgets and everything CostStack owns (alarms,
+    # the teardown timer) are kept on purpose.
+    tagged)     prog='.ResourceTagMappingList[] | .ResourceARN | select(test("CostStack|:budgets:|:ce:") | not)' ;;
     *) echo "unknown check: $1" >&2; return 2 ;;
   esac
   jq -r "$prog"

@@ -181,6 +181,18 @@ aws-down-plan: ## show what the teardown sweep would delete right now (changes n
 down-test: ## unit-test the teardown order and its safety rules (no AWS calls)
 	@bash scripts/tests/aws-down.test.sh
 
+.PHONY: aws-extend
+aws-extend: ## move the automatic teardown to HOURS from now (default 1). The timer caps it at 12h after deploy
+	@H=$${HOURS:-1}; \
+	D=$$(jq -rn --arg h "$$H" '($$h | tonumber) as $$n | if $$n < 0 or $$n > 12 then error("out of range") else (now + $$n * 3600 | todate) end') \
+		|| { printf "$(RED)==> HOURS must be a number from 0 to 12$(RESET)\n"; exit 1; }; \
+	aws ssm put-parameter --region $(AWS_REGION) --name /idp/teardown/deadline --value "$$D" --type String --overwrite >/dev/null \
+		&& printf "$(GREEN)==> Automatic teardown moved to $$D (UTC).$(RESET)\n"
+
+.PHONY: timer-test
+timer-test: ## unit-test the teardown timer's logic (no AWS calls)
+	@python3 -m unittest discover -s infra/lambda/teardown-timer -p 'test_*.py'
+
 .PHONY: aws-nuke
 aws-nuke: ## destroy EVERYTHING including CostStack. Use only when tearing down for good
 	@printf "$(RED)==> This will destroy EVERY stack INCLUDING CostStack (guardrails).$(RESET)\n"

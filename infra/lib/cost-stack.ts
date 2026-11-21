@@ -2,6 +2,7 @@ import { Stack, StackProps } from 'aws-cdk-lib';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
 import { CfnAnomalyMonitor, CfnAnomalySubscription } from 'aws-cdk-lib/aws-ce';
 import { Construct } from 'constructs';
+import { TeardownTimer } from './teardown-timer';
 
 /**
  * Properties for the {@link CostStack}.
@@ -34,6 +35,15 @@ export interface CostStackProps extends StackProps {
    * @default 1
    */
   readonly anomalyThresholdUsd?: number;
+
+  /**
+   * Workload stacks the teardown timer deletes when a session is left
+   * running, in dependency groups (see {@link TeardownTimer}). The timer
+   * lives here because this stack is never torn down between sessions.
+   *
+   * @default - no timer
+   */
+  readonly teardownStackGroups?: string[][];
 }
 
 /**
@@ -132,5 +142,16 @@ export class CostStack extends Stack {
         },
       }),
     });
+
+    // -----------------------------------------------------------------
+    // Teardown timer — the one guard that needs nobody at the keyboard.
+    // Budgets above tell you money was spent; this stops the spending.
+    // -----------------------------------------------------------------
+    if (props.teardownStackGroups) {
+      new TeardownTimer(this, 'TeardownTimer', {
+        stackGroups: props.teardownStackGroups,
+        notificationEmail: props.notificationEmail,
+      });
+    }
   }
 }
