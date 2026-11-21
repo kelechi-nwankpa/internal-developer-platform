@@ -173,7 +173,7 @@ spec:
               # The ${...} placeholders are resolved by Backstage's
               # config loader from the container env at boot (the chart
               # sets them; the password comes from the Secret
-              # backstage-postgresql). No secret value lands in Git or
+              # backstage-postgresql-auth). No secret value lands in Git or
               # in the ConfigMap.
               #
               # Alternative rejected: passing the image's
@@ -513,11 +513,25 @@ spec:
         postgresql:
           enabled: true
           auth:
-            # Auto-generate a random password on first install (chart
-            # writes to a Secret). Same rotation discipline as ArgoCD
-            # + Grafana admin credentials would apply if we ever rotated.
-            # For MVP: accept chart-generated + never touch it.
-            password: ""
+            # Passwords come from Vault, not from the chart (Phase 9).
+            #
+            # WHY: with no existingSecret the chart generates a random
+            # password on every render. Under ArgoCD each render is
+            # "fresh", so a new password was written over the real one
+            # and locked the database out (2026-11-21, P9-5).
+            #
+            # The Secret is created by
+            # platform/backstage/rbac/externalsecret-postgresql.yaml from
+            # Vault secret/backstage/postgres. With existingSecret set the
+            # chart generates no Secret; Backstage, Postgres and the
+            # metrics exporter all read keys `user-password` /
+            # `admin-password` from this one.
+            #
+            # Alternative rejected: keep the chart Secret and tell ArgoCD
+            # to ignore it (the stopgap this replaces). It worked, but
+            # the password then existed only in the cluster, with no
+            # source of truth to restore from.
+            existingSecret: backstage-postgresql-auth
             database: backstage
             username: backstage
           # Metrics exporter sidecar (Phase 9, alert routing).
@@ -601,24 +615,6 @@ spec:
     server: https://kubernetes.default.svc
     namespace: backstage
 
-  # NEVER let ArgoCD rewrite the Postgres password Secret.
-  # The chart generates a random password whenever it renders without
-  # cluster access (Helm `lookup` returns nothing under ArgoCD), so every
-  # fresh render produced a NEW password and auto-sync applied it. The
-  # database keeps the password from its first init, so the Secret and the
-  # database silently diverged; the next container restart re-read the
-  # Secret and locked Backstage out (found 2026-11-21, Phase 9).
-  # ignoreDifferences alone only hides the diff; RespectIgnoreDifferences
-  # (below) is what stops the sync from applying it.
-  # Follow-up: source this password from Vault via ExternalSecret
-  # (auth.existingSecret) so it is not chart-generated at all.
-  ignoreDifferences:
-    - group: ""
-      kind: Secret
-      name: backstage-postgresql
-      jsonPointers:
-        - /data
-
   syncPolicy:
     automated:
       prune: true
@@ -628,9 +624,6 @@ spec:
       # Backstage chart resources aren't especially large — SSA is still
       # good defensive default per our established pattern (ADR-0014).
       - ServerSideApply=true
-      # Required for the ignoreDifferences above to protect the Postgres
-      # Secret during sync, not just hide it in the diff.
-      - RespectIgnoreDifferences=true
     # Phase 8 Wave 2 Task 8W2.7 — Pod Security Standards labels on the
     # namespace via ArgoCD's managed-namespace-metadata. `restricted` is
     # the strictest profile; works for backstage because:
