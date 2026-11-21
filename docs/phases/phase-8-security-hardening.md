@@ -1230,3 +1230,306 @@ as superseding only if its own CI run succeeded or is still running
 - **Repo-restore runbook:** after a restore, re-enable Actions,
   Dependabot alerts + security updates, secret scanning, and push
   protection (bug 14).
+
+---
+
+## Phase 8 Wave 4 — Drift cleanup (which turned out to be outage cleanup)
+
+**Status:** ✅ Shipped 2026-11-20 → 2026-11-21.
+
+**Primary deliverable:** every ArgoCD Application Synced/Healthy (27/27,
+the first fully clean board this cluster has had), three hidden outages
+fixed at the root, the golden path's "self-serve bucket" promise actually
+delivered, and an alert that turns any future drift into a signal.
+
+### What we expected vs what we found
+
+The wave was scoped as cosmetic "OutOfSync" cleanup. The inventory showed
+three real outages behind the noise, all invisible for weeks:
+
+| What was broken | For how long | Cause |
+|---|---|---|
+| platform-hello not deployed (namespace absent) | weeks | Crossplane self-deadlock → `ObjectBucket` XRD never applied → platform-hello sync aborted |
+| Loki crash-looping (6,762 restarts) | ~37 days | MinIO image pull failing (MinIO stopped publishing images) |
+| Tempo pods Pending | ~37 days | Loki chart's anti-affinity locked Tempo out of the single node |
+
+The noise is what hid them: two Applications were *permanently*
+OutOfSync while healthy, so platform-hello's real "Missing" looked like
+more of the same and was filed as cosmetic.
+
+### Design decisions (user-confirmed A1/B1/C1/D1)
+
+- **A1 — MinIO: diagnose first**; replacement chosen only after evidence.
+- **B1 — Crossplane: sync waves + targeted `SkipDryRunOnMissingResource`.**
+- **C1 — Diff noise: server-side diff first**, ignore rules only as a last resort.
+- **D1 — Alerting: PrometheusRule + Grafana now**, human routing with Phase 9.
+- During the wave: **fresh MinIO volume** (stale data), **finish the
+  Phase 4 bucket convergence properly** instead of re-creating hand-made
+  Secrets, and **ADR-0033** (no Ingress until Gateway API).
+
+### What shipped (Wave 4)
+
+**8W4.1 — MinIO + Loki/Tempo (0134e4f, 77354a0, 0afd2d8):**
+
+- Upstream MinIO chart removed; owned manifests in `platform/minio/` on
+  `cgr.dev/chainguard/minio` + `minio-client`, digest-pinned, nonroot,
+  read-only root filesystem, PostSync bucket Job (`mc mb --ignore-existing`).
+- Loki: `affinity: null` on all 8 deployed components, replacing a lost
+  manual `kubectl patch`; the `ignoreDifferences` that hid it removed.
+
+**8W4.2 — Crossplane + golden-path convergence (ac10f52, 18ecc00, ed00b44,
+67cb64f, a022304; platform-hello 09153fb, 3b7da48; template ac2a2b9):**
+
+- Sync waves: providers/functions (0), XRD + creds (1), ProviderConfig +
+  Compositions (2); `provider-family-aws` at wave −1.
+- MinIO Composition now creates, per claim, a **Bucket, a Policy
+  (`allowBucket`) and a User**, and writes the 5-key connection Secret; the
+  XRD declares those keys as `connectionSecretKeys`.
+- provider-minio's secret-key logging suppressed (`LOG_LEVEL=-1`) before
+  any user existed.
+- platform-hello reads the Crossplane-managed Secret; unused Vault config
+  dependency removed; template's config `envFrom` made optional.
+
+**8W4.3 — Tempo scheduling:** absorbed by the 8W4.1 affinity fix.
+
+**8W4.4 — Diff noise + Ingress (b3ec205, 80cf3e8, 3bbfd37; platform-hello
+77b9e04, 719a850):**
+
+- Server-side diff via the `argocd.argoproj.io/compare-options` annotation
+  on 7 Applications + the template's Application.
+- Duplicate Certificate removed (explicit Certificate vs ingress-shim).
+- Dead Ingress + Certificate removed (ADR-0033).
+- Leftover manual `force-sync` annotations removed.
+
+**8W4.5 — Alerting (9db9ef6):** `PrometheusRule argocd-app-health`
+(DegradedOrMissing 15m critical, NotHealthyOrSynced 30m warning,
+MetricsAbsent 15m critical), Grafana dashboard "ArgoCD — Application
+health", and promtool unit tests in `platform/monitoring/tests/`.
+
+### End-to-end verified
+
+- `/hello` on platform-hello: S3 write + read-back on the per-service
+  MinIO user (not root), **6-span trace in Tempo**, and the request's log
+  lines in Loki carrying the same `trace_id`.
+- 27/27 Applications Synced/Healthy.
+- Alert rules `health=ok`, `state=inactive`; promtool tests pass in both
+  directions (fires when it should, quiet when it shouldn't).
+- Loki search for the leaked-credential log line: 0 matches.
+
+### Bugs banked (Wave 4)
+
+Numbered `W4-n` to keep them apart from Wave 3's numbering.
+
+#### W4-1. MinIO community images no longer exist
+
+**Symptom:** MinIO in ImagePullBackOff for 37 days. **Cause:**
+quay.io/minio/minio returns 401 and docker.io/minio/minio is gone; the
+chart's `mc` image too. The chart hardcodes `/bin/sh -ce
+docker-entrypoint.sh`, which shell-less images can't run. **Fix:** owned
+manifests on Chainguard MinIO. **Lesson:** an upstream that stops
+publishing is a supply-chain failure mode too; image availability is
+worth monitoring, not assuming.
+
+#### W4-2. Two charts locked each other out with shared component labels
+
+**Symptom:** Tempo Pending 37 days; restarting Loki flipped it. **Cause:**
+Loki's chart renders REQUIRED anti-affinity keyed only on
+`app.kubernetes.io/component`; Tempo uses the same names. Phase 3 removed
+it with `kubectl patch` + `ignoreDifferences`; the patch was lost when the
+workloads were recreated, and the ignore rule hid it. **Fix:**
+`affinity: null` in Git. **Lessons:** Helm deep-merges maps, so `{}` keeps
+chart defaults and `null` deletes them; a manual fix plus an ignore rule is
+a time bomb with its alarm switched off.
+
+#### W4-3. Crossplane providers and their ProviderConfig deadlocked in one Application
+
+**Symptom:** no providers installed; app retried forever. **Cause:**
+ArgoCD validates all resources before applying any; the ProviderConfig's
+CRD comes from a provider in the same app. **Fix:** sync waves, plus
+`SkipDryRunOnMissingResource` on that one resource only.
+
+#### W4-4. Duplicate family provider corrupted Crossplane's dependency lock
+
+**Symptom:** every package `Healthy=Unknown` ("node … already exists").
+**Cause:** s3/iam resolved their dependency before our explicit
+`provider-family-aws` existed, so Crossplane auto-installed a second copy.
+**Fix:** family provider one wave earlier; kept explicit for Phase 9 IRSA.
+
+#### W4-5. provider-minio logs every user's secret key
+
+**Symptom:** found by reading the provider source before creating users.
+**Cause:** v0.4.5 (latest, unfixed) `log.Info`s access key + secret on
+every reconcile. **Fix:** `LOG_LEVEL=-1` via DeploymentRuntimeConfig,
+shipped before the first user. **Lesson:** read what a component logs
+before handing it credentials when its logs feed a shared store.
+
+#### W4-6. The managed-bucket path had never been exercised
+
+**Symptom:** after the convergence, `/hello` → `NoSuchBucket`. **Cause:**
+vshn's provider ignores `crossplane.io/external-name` and names buckets
+from `forProvider.bucketName`; since Phase 4 the Policy and Secret pointed
+at a bucket that didn't exist. Nothing noticed because nothing used it.
+**Fix:** explicit `bucketName`. **Lesson:** a feature with no consumer is
+untested; every golden-path capability needs a check that uses it.
+
+#### W4-7. A service depended on state outside Git
+
+**Symptom:** platform-hello couldn't start after the resets. **Cause:** a
+hand-made bucket + Secret and a Vault entry holding only a placeholder.
+**Fix:** Crossplane-delivered credentials; unused config dependency
+removed. **Lesson:** "if it isn't in Git, it doesn't exist" applies to the
+state a service *needs*, not just its manifests.
+
+#### W4-8. `ServerSideDiff=true` as a sync option is a no-op
+
+**Symptom:** server-side diff "enabled" yet OutOfSync persisted. **Cause:**
+it must be the Application annotation
+`argocd.argoproj.io/compare-options: ServerSideDiff=true`; the syncOption
+had been copied into 8 files since Phase 3. Found via
+`argocd app diff --core --server-side-diff`'s warning. **Lesson:** a
+config line that does nothing looks exactly like one that works; verify
+the effect, not the presence.
+
+#### W4-9. Two controllers wrote the same Certificate
+
+**Cause:** the Ingress's `cert-manager.io/cluster-issuer` annotation made
+ingress-shim manage a copy of the explicit Certificate. **Fix:** one
+mechanism (the explicit Certificate), until ADR-0033 removed both.
+
+#### W4-10. An Ingress no controller ever served
+
+**Cause:** "enable once Phase 8 installs nginx-ingress" never happened;
+ingress-nginx has since been retired. Kept every service Progressing.
+**Fix:** removed; Gateway API with Phase 9 (ADR-0033).
+
+### What I got wrong along the way (kept honest)
+
+- Reported "0 leak matches" from a label selector that matched no pods,
+  and "0 spans" from a port-forward to the wrong port (twice); both were
+  caught and re-checked before being relied on. Habit: an empty result
+  needs a positive control (does this query find *anything*?).
+- Claimed `ServerSideDiff` was enabled when it wasn't (W4-8).
+- For `backstage-rbac`, removed an annotation and hard-refreshed at once,
+  so the fix can't be attributed to either alone.
+
+### Business value delivered (Wave 4)
+
+- **Trustworthy status.** Green now means healthy; an alert means
+  something real, and blind alerting is itself alerted on.
+- **Golden path works as promised.** A bucket claim yields least-privilege
+  credentials automatically; no hand-made Secrets, no root account.
+- **Observability triangle restored** after a month with two of three legs down.
+- **Fewer moving parts we don't control:** an abandoned chart replaced by
+  ~100 lines we own; a retired ingress controller never adopted.
+
+### Interview talking points (Wave 4)
+
+1. *"What looked like cosmetic GitOps drift was hiding three outages. The
+    fix wasn't one bug, it was the false-alarm noise: once two apps were
+    permanently OutOfSync, a real 'Missing' looked normal. I got the board
+    to 27/27 green and then added alerting, in that order, because alerts
+    on a noisy board just train people to ignore them."*
+2. *"Before giving a Crossplane provider per-service credentials, I read
+    its source and found it logged every user's secret key at info level.
+    I suppressed that with a runtime config before the first user existed,
+    then proved it with a Loki search."*
+3. *"Our Loki and Tempo charts deadlocked each other on a single node
+    through over-broad anti-affinity. Phase 3 had hidden it with a manual
+    patch plus an ignore rule. I fixed it in Git, and learned that in Helm
+    `{}` and `null` mean very different things."*
+4. *"I test alert rules like code: promtool unit tests check each alert
+    fires when it should and stays quiet when it shouldn't, including an
+    alert for the metrics themselves going missing."*
+
+### Recruiter Q&A (Wave 4)
+
+- *"How do you know your platform is healthy?"* Every Application has to
+  be Synced and Healthy, and an alert fires if one isn't for 15–30
+  minutes. Before that, I removed every false alarm, because a dashboard
+  that's always a bit red is one people stop looking at.
+- *"What happens when a vendor stops shipping something you depend on?"*
+  It happened here: MinIO stopped publishing images. I replaced its
+  abandoned chart with a small set of manifests on a maintained build of
+  the same server, so nothing that used it had to change.
+- *"How do services get cloud credentials?"* They claim a bucket; the
+  platform creates a user that can only touch that bucket and hands its
+  credentials to the service as a Secret. Nobody creates them by hand.
+
+### Loose ends (carried to Phase 9 / 10)
+
+- Alert routing to a human (Slack/email) — Phase 9 (D1).
+- Gateway API edge routing + TLS + DNS — Phase 9 (ADR-0033).
+- S3/EKS Composition must fulfil the 5-key connection contract, with IRSA.
+- Remove `LOG_LEVEL=-1` when provider-minio stops logging secrets.
+- Fastify `logController` deprecations; ~30 medium/low portal alerts.
+- Automated image-availability check (W4-1).
+
+### See also (Wave 4)
+
+- [ADR-0033](../adr/0033-edge-routing-via-gateway-api.md) — edge routing via Gateway API
+- [platform/minio/](../../platform/minio/) — owned MinIO manifests
+- [platform/crossplane/](../../platform/crossplane/) — waves, runtime config, Composition
+- [platform/monitoring/](../../platform/monitoring/) — alert rules, dashboard, rule tests
+
+---
+
+## Phase 8 close-out
+
+**Status:** ✅ Phase 8 complete (Waves 1–4), 2026-11-11 → 2026-11-21.
+
+### Summary
+
+Phase 8 took the platform from "works on the happy path" to "secure by
+default and honest about its state": real sign-in and least-privilege
+service accounts (W1), admission-time policy and network isolation (W2), a
+hardened supply chain (W3), and a cluster whose status can be trusted,
+backed by alerting (W4).
+
+### Key concepts
+
+OAuth vs App identities · ArgoCD RBAC layers · Kyverno audit→enforce ·
+NetworkPolicy ratchet · Pod Security Standards · distroless/Wolfi images ·
+CVE triage (fix > override > documented ignore) · SHA-pinned CI ·
+Dependabot grouping by release unit · Crossplane sync ordering and
+connection secrets · server-side diff · alert-rule unit testing.
+
+### Tech touched
+
+Backstage, ArgoCD, Kyverno, Crossplane (+ vshn provider-minio, Upbound AWS
+family), Chainguard/Wolfi, Trivy, cosign, Dependabot, Prometheus,
+Grafana, Loki, Tempo, cert-manager, external-dns, MinIO.
+
+### Business value delivered (whole phase)
+
+- No anonymous or admin access paths left in the portal.
+- Insecure workloads rejected at admission, not caught in review.
+- 45 → 11 documented CVE exceptions; CI dependencies immutable and kept fresh.
+- Self-serve, least-privilege storage credentials for every service.
+- A platform that tells you when it's broken.
+
+### Suggested commit
+
+`docs(phase-8): close out Wave 4 and Phase 8`
+
+### Diagram updates needed
+
+- Add the alerting path (ArgoCD metrics → Prometheus rule → Grafana) to
+  the observability diagram.
+- Update the ObjectBucket flow: claim → Bucket + Policy + User →
+  connection Secret → service.
+- Remove the Ingress from the service diagram; note Gateway API (Phase 9).
+
+### LinkedIn post idea
+
+"My Kubernetes platform said 'mostly green' for a month. Behind the noise:
+three outages, a provider logging credentials, and a deadlock. The lesson
+wasn't a tool — it was that a dashboard that's always a little red is
+worse than no dashboard. How I got to 27/27 green, and why alerting came
+*after*."
+
+### YouTube video idea
+
+"Debugging a GitOps platform that lied to me": a screen-recorded walk
+through the root-cause chain — dead image registry → crash-looping Loki →
+chart anti-affinity deadlock → Crossplane self-deadlock → the
+never-exercised bucket path — ending with the alert rule and its unit test.
