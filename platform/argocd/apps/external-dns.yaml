@@ -57,12 +57,19 @@ spec:
         # Sources — which Kubernetes objects to watch for DNS annotations
         # ─────────────────────────────────────────────────────────────
         sources:
-          # Ingress objects with external-dns.alpha.kubernetes.io/hostname
-          # annotations. Primary source for Phase 6+ workloads.
-          - ingress
+          # HTTPRoute objects attached to a Gateway (ADR-0033). The record
+          # name comes from the route's `hostnames`, the target from the
+          # parent Gateway's status address. Replaces the `ingress` source:
+          # the platform ships no Ingress objects. The chart adds the
+          # Gateway API RBAC for this source itself.
+          #
+          # On kind the Gateway's address is a ClusterIP, so the (in-memory)
+          # record is not routable — it only proves the loop. On EKS the
+          # address is the NLB hostname.
+          - gateway-httproute
           # Service objects of type LoadBalancer. Useful when a service
           # is exposed directly without an Ingress in front (rare on our
-          # platform; ~all traffic will go through Ingress + ALB).
+          # platform; ~all traffic goes through the shared Gateway).
           - service
 
         # ─────────────────────────────────────────────────────────────
