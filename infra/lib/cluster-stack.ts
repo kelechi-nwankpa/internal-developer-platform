@@ -13,7 +13,7 @@ import {
   Role,
 } from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
-import { KubectlV31Layer } from '@aws-cdk/lambda-layer-kubectl-v31';
+import { KubectlV36Layer } from '@aws-cdk/lambda-layer-kubectl-v36';
 import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
 
@@ -46,7 +46,14 @@ export interface ClusterStackProps extends StackProps {
    * Kubernetes version. Pin explicitly so `cdk diff` surfaces upgrades
    * for review rather than following the latest CDK enum silently.
    *
-   * @default KubernetesVersion.V1_31
+   * MUST be a version in EKS *standard* support. Extended support adds
+   * $0.50/h on top of the $0.10/h control plane: Phase 1 ran 1.31 after
+   * its standard support had ended and that surcharge was 43% of the
+   * bill (docs/COST.md incident log). 1.36 matches the kind cluster
+   * (v1.36.x) and is in standard support until 2027-08-02. Re-check with
+   * `aws eks describe-cluster-versions` before every deploy.
+   *
+   * @default KubernetesVersion.V1_36
    */
   readonly kubernetesVersion?: KubernetesVersion;
 }
@@ -55,7 +62,7 @@ export interface ClusterStackProps extends StackProps {
  * The Amazon EKS control plane for the IDP.
  *
  * Design (see docs/adr/0010-fargate-only-eks-cluster.md):
- * - Managed control plane, K8s 1.31 by default.
+ * - Managed control plane, K8s 1.36 by default (same minor as kind).
  * - Fargate profiles cover `kube-system` (for coreDNS) and `default`
  *   (for user workloads). No managed node group; no worker EC2 instances.
  * - Envelope encryption of Kubernetes Secrets uses KmsStack's CMK.
@@ -77,7 +84,7 @@ export class ClusterStack extends Stack {
     super(scope, id, props);
 
     const clusterName = props.clusterName ?? 'idp';
-    const version = props.kubernetesVersion ?? KubernetesVersion.V1_31;
+    const version = props.kubernetesVersion ?? KubernetesVersion.V1_36;
 
     // ---------------------------------------------------------------
     // Cluster admin role. Anyone in the account can `sts:AssumeRole`
@@ -114,7 +121,7 @@ export class ClusterStack extends Stack {
         ClusterLoggingTypes.CONTROLLER_MANAGER,
         ClusterLoggingTypes.SCHEDULER,
       ],
-      kubectlLayer: new KubectlV31Layer(this, 'KubectlLayer'),
+      kubectlLayer: new KubectlV36Layer(this, 'KubectlLayer'),
     });
 
     // ---------------------------------------------------------------
@@ -214,7 +221,7 @@ export class ClusterStack extends Stack {
         {
           id: 'AwsSolutions-L1',
           reason:
-            'Runtime pinned by CDK (@aws-cdk/lambda-layer-kubectl-v31 and the aws-eks L2). ' +
+            'Runtime pinned by CDK (@aws-cdk/lambda-layer-kubectl-v36 and the aws-eks L2). ' +
             'Overriding the runtime would break the kubectl layer contract. Runtime bumps ' +
             'arrive via Dependabot on those packages.',
         },

@@ -30,7 +30,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
         },
         {
           "id": "AwsSolutions-L1",
-          "reason": "Runtime pinned by CDK (@aws-cdk/lambda-layer-kubectl-v31 and the aws-eks L2). Overriding the runtime would break the kubectl layer contract. Runtime bumps arrive via Dependabot on those packages.",
+          "reason": "Runtime pinned by CDK (@aws-cdk/lambda-layer-kubectl-v36 and the aws-eks L2). Overriding the runtime would break the kubectl layer contract. Runtime bumps arrive via Dependabot on those packages.",
         },
         {
           "id": "AwsSolutions-SF1",
@@ -199,7 +199,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               "Arn",
             ],
           },
-          "version": "1.31",
+          "version": "1.36",
         },
         "ServiceToken": {
           "Fn::GetAtt": [
@@ -671,7 +671,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
         "ClientIDList": [
           "sts.amazonaws.com",
         ],
-        "CodeHash": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d",
+        "CodeHash": "8fefc46b7a95598bbe46da69916e535333bc7d3258fc9c124ada1a0589b59bfb",
         "RejectUnauthorized": false,
         "ServiceToken": {
           "Fn::GetAtt": [
@@ -863,7 +863,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
       "Properties": {
         "Code": {
           "S3Bucket": "cdk-hnb659fds-assets-123456789012-eu-west-1",
-          "S3Key": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d.zip",
+          "S3Key": "8fefc46b7a95598bbe46da69916e535333bc7d3258fc9c124ada1a0589b59bfb.zip",
         },
         "Handler": "__entrypoint__.handler",
         "MemorySize": 128,
@@ -925,9 +925,9 @@ exports[`ClusterStack matches the snapshot 1`] = `
       "Properties": {
         "Content": {
           "S3Bucket": "cdk-hnb659fds-assets-123456789012-eu-west-1",
-          "S3Key": "77675805670406a68c1baf43392c7e699bee435fe9b667ef4f9f1134b8c41d0e.zip",
+          "S3Key": "1bafa5cc7c5715cb55d1b3fa2755b20db63c75d154ba9a23604c103568491420.zip",
         },
-        "Description": "/opt/kubectl/kubectl 1.31.9; /opt/helm/helm 3.17.3",
+        "Description": "/opt/kubectl/kubectl 1.36.3; /opt/helm/helm 4.2.3",
         "LicenseInfo": "Apache-2.0",
       },
       "Type": "AWS::Lambda::LayerVersion",
@@ -943,7 +943,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               {
                 "Ref": "AWS::URLSuffix",
               },
-              "/cdk-hnb659fds-assets-123456789012-eu-west-1/cff3a88bbfbd09eaa1a4d98058aa9a8c7562212aa0b1f1b84ff6412ed1f8fee1.json",
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/0a6909450224bad5b310c16a7b67585e9e03a7bfd14c63d31fd7c70ddfec7067.json",
             ],
           ],
         },
@@ -983,7 +983,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               {
                 "Ref": "AWS::URLSuffix",
               },
-              "/cdk-hnb659fds-assets-123456789012-eu-west-1/2e1153ae7267f1569f4ef9c9993f98e8dab66832db053ce6d10ab9e8be168b29.json",
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/6c71a521ac28ad223e322e38d7e3dacbcd0f402db58f791ca5bbb217f3db4f16.json",
             ],
           ],
         },
