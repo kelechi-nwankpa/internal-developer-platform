@@ -102,3 +102,33 @@ Gateway API controller, decided then), and the template will gain an
 ## References
 
 - Kubernetes Gateway API: <https://gateway-api.sigs.k8s.io/>
+
+## Update 2026-11-21 — implemented on kind in Phase 9
+
+The Gateway API edge now exists (`platform/gateway/`, Applications
+`envoy-gateway` and `gateway`). Decisions taken at implementation:
+
+- **Controller: Envoy Gateway 1.9.4.** Same behaviour on kind and EKS.
+  The AWS Gateway controller works only on AWS (nothing to test locally);
+  Istio and Cilium bring a mesh or a CNI swap this platform does not need.
+- **One shared Gateway** (`gateway/edge`), owned by the platform. Teams
+  own an `HTTPRoute` in their own namespace.
+- **Deny-by-default attachment.** Only namespaces labelled
+  `edge.idp.seniormankelz.dev/allow-routes: "true"` may attach, and only
+  to the HTTPS listener. The label is set in the platform repo.
+- **One platform wildcard certificate** (`*.idp.seniormankelz.dev`),
+  explicit `Certificate`, self-signed on kind, DNS-01 on EKS.
+- **HTTP is redirect-only** (301 to HTTPS).
+- **kind exposure: hostPort 80/443** on the proxy pod. This needs Pod
+  Security `privileged` on the `gateway` namespace only; on EKS the proxy
+  sits behind an NLB and the namespace returns to `restricted`.
+
+**Correction to Option B above.** It says kind "would likely be
+recreated" to add host port mappings. That was wrong:
+`platform/kind/kind-config.yaml` has mapped ports 80 and 443 since the
+cluster was created. No recreation was needed. The other reason for
+deferring (a large new component inside a cleanup wave) still stands.
+
+Verified: `curl -k --resolve platform-hello.idp.seniormankelz.dev:443:127.0.0.1
+https://platform-hello.idp.seniormankelz.dev/hello` returns 200 with the
+S3 round-trip; plain HTTP returns 301.
