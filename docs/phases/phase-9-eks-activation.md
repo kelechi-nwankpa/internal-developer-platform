@@ -180,6 +180,34 @@ copies sit in the node under `/var/local-path-provisioner/_backups/`;
 neither survives losing the node. The static volume is cluster state, not
 in Git, like every dynamically provisioned volume.
 
+### 5. Backstage's Postgres passwords now come from Vault
+
+Closes the follow-up left by P9-5. The stopgap (ArgoCD told to ignore the
+chart-generated Secret) is gone.
+
+- Vault `secret/backstage/postgres` is the source of truth. An
+  ExternalSecret copies it into `backstage-postgresql-auth`; the chart is
+  pointed at it with `postgresql.auth.existingSecret` and generates
+  nothing. The old Secret was pruned.
+- Done in two commits so each step could be checked alone: first the
+  ExternalSecret (nothing reads it, nothing can break), then the switch,
+  only after both values matched the live Secret by hash.
+- Verified after: Backstage, Postgres and the exporter all read the new
+  Secret; both database logins work; 15 plugin databases in use; catalog
+  intact; `pg_up` 1; 29 of 29 Applications Synced/Healthy.
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-12 | **Backstage does not recover if it starts while Postgres is restarting.** The switch rolled both at once. The new Backstage pod hit "database system is shutting down", failed plugin start-up and stayed at readiness 503 for good. No outage: the old pod kept serving because the new one never became ready. | Deleted the stuck pod; its replacement started clean. Not yet fixed in Git: see "Still to do". |
+
+**What I got wrong.** I pushed the ExternalSecret before the values were
+in Vault, on an ambiguous "go on". It failed with "Secret does not
+exist" and was reverted (`5488e5e`) before anything consumed it.
+
+**Rotation is two steps, in order:** change the password in Postgres,
+then write the same value to Vault and restart Backstage. Postgres never
+re-reads the Secret.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
@@ -219,7 +247,7 @@ Four older faults then surfaced.
 ## Still to do (all $0 on kind)
 
 - An off-node backup of Vault's data (or accept re-issuing the secrets).
-- Move the Backstage Postgres password to Vault + ExternalSecret.
+- Make Backstage survive starting while Postgres is restarting (P9-12).
 - Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
 - Decide whether external-dns should publish the wildcard record that the
   redirect route produces (`*.idp.seniormankelz.dev`).
