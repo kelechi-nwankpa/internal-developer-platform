@@ -23,8 +23,15 @@ const env: cdk.Environment = {
 // Tag every resource so Cost Explorer, AWS Budgets, and IAM condition
 // keys can gate on `Project=idp`. Required for the CostStack budgets
 // to filter this project's spend.
-cdk.Tags.of(app).add('Project', 'idp');
-cdk.Tags.of(app).add('ManagedBy', 'cdk');
+//
+// Budgets are left untagged, as they have been since Phase 1. Newer CDK
+// versions can tag a Budget, and CloudFormation reports that adding the
+// tags "may replace" it. The budget alarms are the guardrail; a deploy
+// that adds something else must never risk replacing them. A budget
+// costs nothing, so there is no spend to trace with a tag anyway.
+const tagOptions = { excludeResourceTypes: ['AWS::Budgets::Budget'] };
+cdk.Tags.of(app).add('Project', 'idp', tagOptions);
+cdk.Tags.of(app).add('ManagedBy', 'cdk', tagOptions);
 
 // cdk-nag AwsSolutions ruleset applied to every stack in this app.
 // Findings surface at `cdk synth` and block deploy. Any suppression

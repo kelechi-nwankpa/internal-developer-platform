@@ -73,7 +73,8 @@ findings() {
     # buckets: the account also holds other projects' buckets.
     buckets)    prog='.[] | select(.Project == "idp") | .Name' ;;
     # Prints "armed" when the budget-alarm stack is deployed and healthy.
-    guardrail)  prog='[.StackSummaries[] | select(.StackName == "CostStack" and (.StackStatus | test("^(CREATE|UPDATE)_COMPLETE$")))] | if length > 0 then "armed" else empty end' ;;
+    # UPDATE_ROLLBACK_COMPLETE counts: a failed update left it as it was.
+    guardrail)  prog='[.StackSummaries[] | select(.StackName == "CostStack" and (.StackStatus | test("^(CREATE|UPDATE|UPDATE_ROLLBACK)_COMPLETE$")))] | if length > 0 then "armed" else empty end' ;;
     roles)      prog='.Roles[] | select(.RoleName | test("^(idp-|(Vpc|Kms|Iam|Cluster|Registry|Dns)Stack-)")) | .RoleName' ;;
     policies)   prog='.Policies[] | select(.PolicyName | startswith("idp-")) | .PolicyName' ;;
     oidc)       prog='.OpenIDConnectProviderList[] | .Arn | select(test("oidc-provider/oidc\\.eks\\.")) | sub("^.*oidc-provider/"; "")' ;;

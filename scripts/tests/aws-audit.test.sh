@@ -55,6 +55,10 @@ STACKS='{"StackSummaries":[{"StackName":"CostStack","StackStatus":"CREATE_COMPLE
 expect "DELETE_FAILED and in-progress are reported; DELETE_COMPLETE, CostStack, CDKToolkit are not" \
   "VpcStack status=DELETE_FAILED"$'\n'"DnsStack status=DELETE_IN_PROGRESS" "$(f stacks "$STACKS")"
 expect "guardrail: CostStack healthy → armed" "armed" "$(findings guardrail <<<"$STACKS")"
+expect "guardrail: an update that failed and rolled back → still armed" "armed" \
+  "$(findings guardrail <<<'{"StackSummaries":[{"StackName":"CostStack","StackStatus":"UPDATE_ROLLBACK_COMPLETE"}]}')"
+expect "guardrail: an update still rolling back → not armed yet" "" \
+  "$(findings guardrail <<<'{"StackSummaries":[{"StackName":"CostStack","StackStatus":"UPDATE_ROLLBACK_IN_PROGRESS"}]}')"
 expect "guardrail: CostStack deleted → not armed" "" \
   "$(findings guardrail <<<'{"StackSummaries":[{"StackName":"CostStack","StackStatus":"DELETE_COMPLETE"}]}')"
 expect "guardrail: CostStack rolled back → not armed" "" \
