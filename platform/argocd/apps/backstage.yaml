@@ -517,6 +517,24 @@ spec:
     server: https://kubernetes.default.svc
     namespace: backstage
 
+  # NEVER let ArgoCD rewrite the Postgres password Secret.
+  # The chart generates a random password whenever it renders without
+  # cluster access (Helm `lookup` returns nothing under ArgoCD), so every
+  # fresh render produced a NEW password and auto-sync applied it. The
+  # database keeps the password from its first init, so the Secret and the
+  # database silently diverged; the next container restart re-read the
+  # Secret and locked Backstage out (found 2026-11-21, Phase 9).
+  # ignoreDifferences alone only hides the diff; RespectIgnoreDifferences
+  # (below) is what stops the sync from applying it.
+  # Follow-up: source this password from Vault via ExternalSecret
+  # (auth.existingSecret) so it is not chart-generated at all.
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: backstage-postgresql
+      jsonPointers:
+        - /data
+
   syncPolicy:
     automated:
       prune: true
@@ -526,6 +544,9 @@ spec:
       # Backstage chart resources aren't especially large — SSA is still
       # good defensive default per our established pattern (ADR-0014).
       - ServerSideApply=true
+      # Required for the ignoreDifferences above to protect the Postgres
+      # Secret during sync, not just hide it in the diff.
+      - RespectIgnoreDifferences=true
     # Phase 8 Wave 2 Task 8W2.7 — Pod Security Standards labels on the
     # namespace via ArgoCD's managed-namespace-metadata. `restricted` is
     # the strictest profile; works for backstage because:

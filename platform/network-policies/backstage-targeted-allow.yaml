@@ -253,3 +253,38 @@ spec:
       ports:
         - port: 7007
           protocol: TCP
+
+---
+# Ingress to PostgreSQL :5432, from Backstage pods only.
+#
+# MISSING until Phase 9: `deny-default` selects every pod in this
+# namespace for Ingress AND Egress, so Postgres needs its own ingress
+# allow. `allow-egress-postgresql` only covers Backstage's side; without
+# this policy Backstage's connections time out (ETIMEDOUT). Wave 2's
+# check ("the pod kept running") only exercised connections that were
+# already open, so the gap surfaced when the node restarted and every
+# connection had to be made fresh.
+# Lesson: a deny-default needs BOTH ends allowed, and a network policy
+# is only verified by opening a NEW connection after it applies.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-postgresql
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: network-policy-ingress
+    app.kubernetes.io/part-of: platform
+    phase.idp.io/wave: "9.1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backstage
+      ports:
+        - port: 5432
+          protocol: TCP
