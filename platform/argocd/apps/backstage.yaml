@@ -537,6 +537,16 @@ spec:
           #
           # It logs in as the `backstage` user with the existing Secret —
           # no new credential. Cost: one ~20 MB container.
+          #
+          # ONE-OFF, NOT IN GIT: the exporter's WAL collector needs the
+          # read-only `pg_monitor` role, or it logs a permission error on
+          # every scrape. The chart cannot pass `--no-collector.wal` and
+          # only runs init scripts on an empty volume, so this was granted
+          # by hand on 2026-11-21:
+          #   GRANT pg_monitor TO backstage;   (as the postgres superuser)
+          # It lives in the database volume. Re-run it if the volume is
+          # ever recreated; without it the alerts still work, only the log
+          # is noisy.
           metrics:
             enabled: true
             image:
