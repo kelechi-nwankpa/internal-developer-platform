@@ -120,6 +120,37 @@ spec:
               cpu: "1"
               memory: 1Gi
           replicas: 1
+          # Start-up check: "all plugins started", not "HTTP is up"
+          # (Phase 9, fault P9-12).
+          #
+          # WHY: the chart's default startupProbe hits /liveness, which
+          # answers 200 as soon as the HTTP server listens — before any
+          # plugin has reached the database. If Postgres is restarting
+          # at that moment, plugin start-up fails, the process does NOT
+          # exit, liveness stays 200 and the pod sits at readiness 503
+          # for good (2026-11-21). /readiness only turns 200 once every
+          # plugin has started, so pointing the STARTUP probe at it
+          # makes the kubelet restart a container whose start-up never
+          # finished. By then Postgres is back.
+          #
+          # Budget: 24 x 5s = 120s. A normal start takes ~10s.
+          #
+          # Alternatives rejected:
+          #   - initContainer running pg_isready: only proves Postgres
+          #     was up a moment BEFORE Backstage started; the race
+          #     (Postgres goes down during plugin start-up) remains, and
+          #     it needs an extra image.
+          #   - livenessProbe on /readiness: would also kill a healthy
+          #     pod during graceful shutdown, when readiness goes 503 on
+          #     purpose.
+          startupProbe:
+            httpGet:
+              path: /.backstage/health/v1/readiness
+              port: 7007
+              scheme: HTTP
+            periodSeconds: 5
+            failureThreshold: 24
+            timeoutSeconds: 2
           # Mount the backstage-github-app Secret (populated by ESO from
           # Vault at secret/backstage/github-app) as env vars. Prefix
           # GITHUB_APP_ is added so the keys land as GITHUB_APP_APPID etc.
