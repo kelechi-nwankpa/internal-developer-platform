@@ -161,6 +161,32 @@ spec:
               baseUrl: http://localhost:7007
             backend:
               baseUrl: http://localhost:7007
+              # Use the Postgres sub-chart (Phase 9 incident fix).
+              #
+              # WHY this block exists: without `backend.database`
+              # Backstage silently falls back to in-memory SQLite. From
+              # Phase 5 until 2026-11-21 the chart injected POSTGRES_*
+              # env vars but nothing referenced them, so Postgres sat
+              # empty and scaffolder history + sessions were lost on
+              # every restart — while readiness stayed 200.
+              #
+              # The ${...} placeholders are resolved by Backstage's
+              # config loader from the container env at boot (the chart
+              # sets them; the password comes from the Secret
+              # backstage-postgresql). No secret value lands in Git or
+              # in the ConfigMap.
+              #
+              # Alternative rejected: passing the image's
+              # app-config.production.yaml via extra --config args. It
+              # has the same block, but couples the platform manifest
+              # to a file baked into the image.
+              database:
+                client: pg
+                connection:
+                  host: ${POSTGRES_HOST}
+                  port: ${POSTGRES_PORT}
+                  user: ${POSTGRES_USER}
+                  password: ${POSTGRES_PASSWORD}
               listen:
                 port: 7007
               cors:
