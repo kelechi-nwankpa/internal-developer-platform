@@ -69,8 +69,8 @@ On EKS only the first hop changes: an NLB replaces the kind host ports.
 - ArgoCD marks an app `Degraded` when the Gateway refuses its route, so
   the Phase 8 app-health alert covers the edge.
 - Critical alerts are emailed (section 3). Runbooks: `docs/runbooks/`
-  (disk full, repo restore, kind recovery). Not yet done: a rehearsed
-  restore. See "Still to do".
+  (disk full, repo restore, kind recovery). One real restore carried
+  out (section 4).
 
 ## What shipped so far
 
@@ -157,6 +157,29 @@ file is not registered.
   warnings `NodeMemoryMajorPagesFaults` and `NodeClockNotSynchronising`
   are true and are not emailed.
 
+### 4. Runbooks and a real restore
+
+- New runbooks: [disk-full.md](../runbooks/disk-full.md),
+  [github-repo-restore.md](../runbooks/github-repo-restore.md), and
+  Failure Mode 7 in [kind-recovery.md](../runbooks/kind-recovery.md).
+- The rehearsed restore turned out to be a real one:
+
+| # | Fault | Fix |
+|---|---|---|
+| P9-10 | **Vault's storage claim had been `Terminating` since 2026-10-29.** A `delete pvc` during the Phase 5 Vault reset raced with ArgoCD self-heal and landed on the recreated claim. Only the running pod kept it; deleting the pod would have wiped every secret. Nothing reported it. | Volume set to `Retain`; procedure rehearsed on a throwaway StatefulSet; then Vault stopped, old claim released, the same data directory re-attached through a static volume, Vault unsealed. 76 files, checksum identical before and after. No data copied. |
+| P9-11 | **Vault refused every login after its pod was replaced** (403). The original setup stored a copy of the pod's own token as `token_reviewer_jwt`; the token died with the pod. | Config rewritten without it; Vault now uses its current token. Setup command in the runbook corrected. |
+
+**What the rehearsal caught and missed.** It proved the data survives the
+pending deletion and that pre-creating the claim avoids a start-up race.
+It did not cover Vault's login config, so P9-11 only appeared during the
+real run. Workloads were unaffected: their Kubernetes Secrets stayed in
+place throughout.
+
+**Still weak:** Vault's data is one copy on one disk. Two encrypted
+copies sit in the node under `/var/local-path-provisioner/_backups/`;
+neither survives losing the node. The static volume is cluster state, not
+in Git, like every dynamically provisioned volume.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
@@ -195,14 +218,7 @@ Four older faults then surfaced.
 
 ## Still to do (all $0 on kind)
 
-- **OPEN, data at risk (P9-10):** Vault's volume claim `data-vault-0` has
-  been `Terminating` since 2026-10-29 (a delete that raced with the pod
-  during the Phase 5 Vault reset). Only the running pod's protection
-  finalizer keeps it alive: deleting the pod would have deleted every
-  secret. Mitigated on 2026-11-21 (volume set to `Retain`, encrypted
-  in-node copy taken). The repair needs a planned Vault restart and an
-  unseal; it doubles as the rehearsed restore.
-- Runbook for the Vault volume repair, once it has been carried out.
+- An off-node backup of Vault's data (or accept re-issuing the secrets).
 - Move the Backstage Postgres password to Vault + ExternalSecret.
 - Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
 - Decide whether external-dns should publish the wildcard record that the

@@ -323,11 +323,15 @@ vault login
 # Enable Kubernetes auth method:
 vault auth enable kubernetes
 
-# Configure it — reads Vault SA token + CA cert from the pod's own filesystem:
+# Configure it. Do NOT pass a token file as token_reviewer_jwt: that stores a
+# copy of this pod's token, which stops working the moment the pod is
+# replaced (every login then fails with 403 — see Failure Mode 7). Left
+# empty, Vault uses its own current token and re-reads it automatically.
 vault write auth/kubernetes/config \
   kubernetes_host="https://kubernetes.default.svc:443" \
   kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-  token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token
+  token_reviewer_jwt="" \
+  disable_local_ca_jwt=false
 
 # Enable KV v2 engine at path `secret/`:
 vault secrets enable -path=secret -version=2 kv
@@ -659,3 +663,166 @@ make kind-down && make kind-up && make argocd-install && make argocd-bootstrap-r
 - [ADR-0020](../adr/0020-eso-backend-strategy.md) — ESO backend strategy
 - [ADR-0021](../adr/0021-external-dns-install-and-provider-strategy.md) — ExternalDNS inmemory provider
 - [ADR-0022](../adr/0022-aws-load-balancer-controller-defer-to-eks.md) — AWS LBC deferred (why there's no 8th Application to wait for on kind)
+
+---
+
+## Failure Mode 7: Vault's storage claim stuck `Terminating`, or logins fail with 403 after the Vault pod is replaced
+
+Carried out for real on 2026-11-21 (Phase 9 log, P9-10 and P9-11), after a
+rehearsal on a throwaway StatefulSet.
+
+### Symptom
+
+Either or both:
+
+- `kubectl -n vault get pvc` shows `data-vault-0` as `Terminating` while
+  Vault runs normally. ArgoCD shows Vault as Synced/Healthy; nothing
+  alerts.
+- After the `vault-0` pod has been deleted and recreated, the
+  ClusterSecretStore reports `InvalidProviderConfig` and the External
+  Secrets log shows `403 permission denied` on `auth/kubernetes/login`,
+  even though Vault is unsealed.
+
+### Impact
+
+- **Terminating claim:** the secret store is one pod deletion away from
+  being wiped. The claim is only kept by the running pod. With the
+  default reclaim policy `Delete`, deleting the pod deletes every secret.
+- **403 on login:** no ExternalSecret can refresh. Existing Kubernetes
+  Secrets keep their values, so workloads keep running until a secret
+  needs to change.
+
+### Diagnosis
+
+```bash
+kubectl -n vault get pvc data-vault-0 -o jsonpath='{.metadata.deletionTimestamp}{"\n"}'
+kubectl get pv "$(kubectl -n vault get pvc data-vault-0 -o jsonpath='{.spec.volumeName}')" \
+  -o jsonpath='reclaim={.spec.persistentVolumeReclaimPolicy} deleting={.metadata.deletionTimestamp}{"\n"}'
+kubectl get clustersecretstore vault-kv -o jsonpath='{.status.conditions[0].reason}{"\n"}'
+```
+
+A non-empty `deletionTimestamp` confirms the first problem.
+
+### Root cause
+
+- **Terminating claim:** a `kubectl delete pvc` raced with ArgoCD
+  self-heal during the Phase 5 Vault reset. The StatefulSet had already
+  recreated the pod and claim; the delete landed on the new claim and has
+  been pending since.
+- **403:** `auth/kubernetes/config` was written with
+  `token_reviewer_jwt=@<pod token file>`. That token is bound to the pod
+  it was read from and dies with it.
+
+### Remediation
+
+A pending deletion cannot be cancelled. The repair lets the old claim go
+and re-attaches the same data directory through a new, static volume. No
+data is copied. You need the three unseal keys and the root token.
+
+**1. Protect the data first (safe at any time).**
+
+```bash
+PV=$(kubectl -n vault get pvc data-vault-0 -o jsonpath='{.spec.volumeName}')
+P=$(kubectl get pv "$PV" -o jsonpath='{.spec.hostPath.path}')
+kubectl patch pv "$PV" --type merge -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+```
+
+**2. Pause auto-sync on the root app AND the Vault app.** Pausing only
+the Vault app does not hold: the root app restores it.
+
+```bash
+kubectl -n argocd patch application root  --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
+kubectl -n argocd patch application vault --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
+```
+
+**3. Stop Vault and take a consistent copy.** A copy taken while Vault
+runs can catch a file mid-write.
+
+```bash
+kubectl -n vault scale sts vault --replicas=0
+kubectl -n vault wait pod/vault-0 --for=delete --timeout=180s
+docker exec idp-control-plane sh -c "mkdir -p /var/local-path-provisioner/_backups && cp -a $P /var/local-path-provisioner/_backups/vault-data-$(date +%F)-stopped"
+```
+
+**4. Wait for the old claim and volume to disappear, and confirm the
+data is still there.**
+
+```bash
+kubectl -n vault get pvc data-vault-0; kubectl get pv "$PV"     # both: NotFound
+docker exec idp-control-plane sh -c "find $P -type f | wc -l"   # same count as before
+```
+
+**5. Create a static volume on the same directory, and the claim bound
+to it, before starting Vault.**
+
+```bash
+cat <<MANIFEST | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vault-data-restored
+spec:
+  capacity: {storage: 1Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: standard
+  claimRef: {namespace: vault, name: data-vault-0}
+  hostPath: {path: $P, type: Directory}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [idp-control-plane]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: data-vault-0, namespace: vault}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  volumeName: vault-data-restored
+  resources: {requests: {storage: 1Gi}}
+MANIFEST
+kubectl -n vault get pvc data-vault-0     # Bound to vault-data-restored
+```
+
+**6. Start Vault and unseal** (Failure Mode 1). `vault status` must say
+`Initialized true` before you unseal: that proves it found its data.
+
+```bash
+kubectl -n vault scale sts vault --replicas=1
+```
+
+**7. Fix the login config.** This is also the whole fix when the only
+symptom is the 403.
+
+```bash
+read -s "VT?Vault root token: "; echo
+kubectl -n vault exec -i vault-0 -- env VAULT_TOKEN="$VT" \
+  vault write auth/kubernetes/config \
+    kubernetes_host="https://kubernetes.default.svc:443" \
+    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+    token_reviewer_jwt="" disable_local_ca_jwt=false
+unset VT
+```
+
+**8. Re-validate, then resume auto-sync.**
+
+```bash
+kubectl annotate clustersecretstore vault-kv idp/revalidate="$(date +%s)" --overwrite
+kubectl get externalsecret -A        # all SecretSynced
+kubectl -n argocd patch application root --type merge \
+  -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+```
+
+Restoring the root app restores the Vault app's policy from Git.
+
+### Prevention
+
+- Never run `kubectl delete pvc` while auto-sync is on for the owning
+  application: pause the root app and the application first.
+- The static volume `vault-data-restored` uses `Retain`, so a future
+  accidental delete of the claim no longer deletes the data.
+- The setup command in Failure Mode 4 no longer stores a pod-bound token.
+- Vault's data is still a single copy on one disk. The real fix is a
+  backup kept off the node, or (on EKS) a managed secret store.
