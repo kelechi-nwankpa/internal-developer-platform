@@ -198,7 +198,7 @@ chart-generated Secret) is gone.
 
 | # | Fault | Fix |
 |---|---|---|
-| P9-12 | **Backstage does not recover if it starts while Postgres is restarting.** The switch rolled both at once. The new Backstage pod hit "database system is shutting down", failed plugin start-up and stayed at readiness 503 for good. No outage: the old pod kept serving because the new one never became ready. | Deleted the stuck pod; its replacement started clean. Not yet fixed in Git: see "Still to do". |
+| P9-12 | **Backstage does not recover if it starts while Postgres is restarting.** The switch rolled both at once. The new Backstage pod hit "database system is shutting down", failed plugin start-up and stayed at readiness 503 for good. No outage: the old pod kept serving because the new one never became ready. | Deleted the stuck pod; its replacement started clean. Then fixed (`c8a50bc`): the chart's start-up probe checked `/liveness`, which answers 200 before any plugin has reached the database. It now checks `/readiness`, so the kubelet restarts a container whose start-up never finished (budget 120s). Proved by restarting Postgres and Backstage together: the new pod stuck, was restarted once at ~125s and was ready at 138s; the old pod served throughout. |
 
 **What I got wrong.** I pushed the ExternalSecret before the values were
 in Vault, on an ambiguous "go on". It failed with "Secret does not
@@ -247,7 +247,6 @@ Four older faults then surfaced.
 ## Still to do (all $0 on kind)
 
 - An off-node backup of Vault's data (or accept re-issuing the secrets).
-- Make Backstage survive starting while Postgres is restarting (P9-12).
 - Kyverno rule limiting the `gateway` namespace to hostPorts 80/443.
 - Decide whether external-dns should publish the wildcard record that the
   redirect route produces (`*.idp.seniormankelz.dev`).
