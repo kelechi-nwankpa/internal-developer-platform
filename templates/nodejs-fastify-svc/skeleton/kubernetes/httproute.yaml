@@ -1,0 +1,35 @@
+---
+# httproute.yaml — ${{ values.name }}
+#
+# Publishes this service at https://${{ values.name }}.idp.seniormankelz.dev
+# through the platform's shared Gateway (platform ADR-0033).
+#
+# This file is all a service owns at the edge. TLS, the wildcard
+# certificate, the HTTP->HTTPS redirect and DNS belong to the platform.
+#
+# It only takes effect once the platform has labelled this namespace
+#   edge.idp.seniormankelz.dev/allow-routes: "true"
+# That label is part of the ArgoCD Application in the platform-repo PR this
+# template opens, so merging that PR is the platform approving the exposure.
+# Until then the Gateway refuses the route (NotAllowedByListeners).
+#
+# sectionName: https — attach to the TLS listener only. The plain-HTTP
+# listener accepts nothing but the platform's redirect.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ${{ values.name }}
+  labels:
+    app: ${{ values.name }}
+    app.kubernetes.io/component: api
+spec:
+  parentRefs:
+    - name: edge
+      namespace: gateway
+      sectionName: https
+  hostnames:
+    - ${{ values.name }}.idp.seniormankelz.dev
+  rules:
+    - backendRefs:
+        - name: ${{ values.name }}
+          port: 3000

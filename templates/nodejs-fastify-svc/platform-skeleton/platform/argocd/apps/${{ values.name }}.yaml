@@ -68,6 +68,14 @@ spec:
       prune: true
       # Auto-revert manual `kubectl edit` — enforces GitOps.
       selfHeal: true
+    # Edge access grant (ADR-0033). The shared Gateway only accepts
+    # HTTPRoutes from namespaces carrying this label. It lives in this
+    # file — i.e. in the platform repo, arriving by pull request — so a
+    # platform reviewer approves the exposure by merging. Delete these
+    # three lines before merging for a service that must stay internal.
+    managedNamespaceMetadata:
+      labels:
+        edge.idp.seniormankelz.dev/allow-routes: "true"
     syncOptions:
       # Auto-create the namespace if missing (first install convenience).
       - CreateNamespace=true

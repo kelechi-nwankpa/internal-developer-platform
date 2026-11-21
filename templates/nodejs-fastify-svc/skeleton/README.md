@@ -59,7 +59,7 @@ The [`kubernetes/`](kubernetes/) directory has all resources needed:
 - `servicemonitor.yaml` — Prometheus scrape config (labels match kube-prometheus-stack's selector after the ADR-0024 postscript fix)
 - `externalsecret.yaml` — ESO CR pulling app config from Vault at `secret/${{ values.owner }}/${{ values.name }}`
 - `objectbucket.yaml` — Crossplane XRC that provisions the S3 bucket + writes connection secret
-- No Ingress/Certificate yet: edge routing arrives via Gateway API with EKS (ADR-0033). On kind, reach the service with `kubectl port-forward svc/<name> 3000:3000`.
+- Edge routing: `kubernetes/httproute.yaml` attaches to the platform's shared Gateway (ADR-0033); TLS and the certificate are the platform's. On kind: `curl -k --resolve ${{ values.name }}.idp.seniormankelz.dev:443:127.0.0.1 https://${{ values.name }}.idp.seniormankelz.dev/hello`.
 
 Deploy via ArgoCD:
 

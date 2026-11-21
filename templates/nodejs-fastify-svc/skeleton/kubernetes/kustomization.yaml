@@ -27,3 +27,4 @@ resources:
   - servicemonitor.yaml
   - externalsecret.yaml
   - objectbucket.yaml
+  - httproute.yaml
