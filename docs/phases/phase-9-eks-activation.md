@@ -233,6 +233,23 @@ each denied by this policy and the real proxy was still admitted.
 **Lesson.** A test that has never been seen to fail proves nothing. Break
 the thing under test before trusting a green result.
 
+### 7. Two owner decisions, carried out
+
+- **No wildcard DNS record** (`eac2ff7`). The hostname-less redirect route
+  made external-dns want `*.idp.seniormankelz.dev`. The route is now
+  marked as not managed by external-dns. Checked: external-dns went from
+  two wanted records to one (`platform-hello`), and the 301 redirect
+  still works. Deny by default: only names with a real service resolve.
+- **Vault backup off the node** (`make vault-backup`). Vault's data was
+  one copy inside the kind node. The script copies it to
+  `~/idp-backups/vault` while Vault runs, and proves consistency by
+  fingerprinting the folder before and after the copy. It refuses to
+  write inside a Git repository. Restore steps: Failure Mode 8 in
+  [kind-recovery.md](../runbooks/kind-recovery.md).
+- **Restore check:** a throwaway Vault started on the backup and
+  reported initialised, sealed, 5 shares, threshold 3. Unsealing a
+  restored copy is not tested yet; it needs the owner's keys.
+
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
 The Mac's Docker VM disk filled up; recovering it restarted the kind node.
@@ -271,9 +288,8 @@ Four older faults then surfaced.
 
 ## Still to do (all $0 on kind)
 
-- An off-node backup of Vault's data (or accept re-issuing the secrets).
-- Decide whether external-dns should publish the wildcard record that the
-  redirect route produces (`*.idp.seniormankelz.dev`).
+- Unseal a restored Vault backup once, on a throwaway Vault, and read a
+  secret from it (needs the owner's unseal keys).
 - S3/IRSA Composition meeting the five-key bucket contract, tested
   offline with `crossplane render`.
 - Teardown ordering, audit script, auto-teardown timer.

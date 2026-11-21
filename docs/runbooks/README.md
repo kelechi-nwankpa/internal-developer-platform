@@ -20,7 +20,7 @@ Every runbook in this directory follows the same shape:
 | Runbook | Introduced in | Trigger |
 |---|---|---|
 | [dns-delegation.md](dns-delegation.md) | Phase 1 (Task 1.8) | After every `cdk deploy DnsStack` — copy Route53 nameservers into Namecheap |
-| [kind-recovery.md](kind-recovery.md) | Phase 2 (Task 2.8), extended Phase 4 | 7 failure modes for the local kind cluster: Vault sealed (with ESO backoff addendum), ArgoCD CLI JWT expired, single Application stuck, full cluster rebuild, chart-generated Secret drift after post-install rotation, CRD default-field drift, Vault storage claim stuck `Terminating` / 403 on Vault login (Phase 9) |
+| [kind-recovery.md](kind-recovery.md) | Phase 2 (Task 2.8), extended Phase 4 | 8 failure modes for the local kind cluster: Vault sealed (with ESO backoff addendum), ArgoCD CLI JWT expired, single Application stuck, full cluster rebuild, chart-generated Secret drift after post-install rotation, CRD default-field drift, Vault storage claim stuck `Terminating` / 403 on Vault login, Vault data lost / restore from backup (Phase 9) |
 | [disk-full.md](disk-full.md) | Phase 9 | Alert `NodeDiskUsageHigh` / `NodeDiskUsageCritical`, or `No space left on device`. Includes the Prometheus and Tempo log repairs that follow a full disk |
 | [github-repo-restore.md](github-repo-restore.md) | Phase 9 | After restoring a deleted GitHub repository: re-enable Actions, Dependabot and secret scanning, which come back off |
 

@@ -826,3 +826,82 @@ Restoring the root app restores the Vault app's policy from Git.
 - The setup command in Failure Mode 4 no longer stores a pod-bound token.
 - Vault's data is still a single copy on one disk. The real fix is a
   backup kept off the node, or (on EKS) a managed secret store.
+
+---
+
+## Failure Mode 8: Vault's data is gone (node deleted, Docker disk reset, volume wiped)
+
+### Symptom
+
+After a rebuild, `vault status` says `Initialized false`, or the Vault
+data folder on the node is empty. Every ExternalSecret fails.
+
+### Impact
+
+No secret can be read or refreshed. On a rebuilt cluster nothing that
+needs a secret starts.
+
+### Before it happens: take backups
+
+```bash
+make vault-backup
+```
+
+Saves `~/idp-backups/vault/vault-data-<time>.tar.gz` (override with
+`VAULT_BACKUP_DIR`). Vault keeps running; the script proves the copy is
+consistent by fingerprinting the folder before and after. Take one after
+every change to a secret. The file is encrypted by Vault and useless
+without the unseal keys: keep the keys somewhere else.
+
+### Remediation: restore the latest backup
+
+You need the three unseal keys that were valid when the backup was taken.
+
+**1. Pause auto-sync on the root app AND the Vault app** (Failure Mode 7,
+step 2), then stop Vault.
+
+```bash
+kubectl -n vault scale sts vault --replicas=0
+kubectl -n vault wait pod/vault-0 --for=delete --timeout=180s
+```
+
+**2. Put the backup in place of the data folder.** The old folder is
+moved aside, not deleted.
+
+```bash
+B=$(ls -t ~/idp-backups/vault/vault-data-*.tar.gz | head -1); echo "$B"
+P=$(kubectl get pv "$(kubectl -n vault get pvc data-vault-0 -o jsonpath='{.spec.volumeName}')" \
+  -o jsonpath='{.spec.hostPath.path}')
+docker exec idp-control-plane sh -c "mv '$P' '$P.before-restore-$(date +%s)' && mkdir -p '$P'"
+docker exec -i idp-control-plane tar -C "$P" -xzf - < "$B"
+docker exec idp-control-plane sh -c "find '$P' -type f | wc -l"   # matches files= in fingerprints.txt
+```
+
+On a brand-new cluster there is no claim yet: let the Vault app create
+it first, then run this step.
+
+**3. Start Vault and unseal** (Failure Mode 1). `vault status` must say
+`Initialized true` before you unseal.
+
+```bash
+kubectl -n vault scale sts vault --replicas=1
+```
+
+**4. Re-validate and resume auto-sync** (Failure Mode 7, step 8).
+
+### What has and has not been tested
+
+- Tested 2026-11-21: a throwaway Vault (same image, on the Mac, no
+  network) started on an extracted backup and reported `Initialized true`,
+  `Sealed true`, 5 shares, threshold 3.
+- NOT tested: unsealing a restored copy and reading a secret from it.
+  That needs the unseal keys. Do it once, on a throwaway Vault, before
+  relying on this.
+
+### Prevention
+
+- Anything changed in Vault after the latest backup is lost on restore.
+  Re-enter it from its source.
+- The backup is one copy on one laptop. For a real platform use a
+  managed secret store (AWS Secrets Manager on EKS) or Vault's own
+  replicated storage with snapshots.
