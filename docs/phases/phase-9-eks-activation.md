@@ -346,7 +346,7 @@ tags of what the load-balancer controller creates on EKS are assumed
 from documentation, so the first real teardown must be watched, and the
 audit is the backstop.
 
-### 11. Teardown timer (built, tested, switched on in code; NOT deployed)
+### 11. Teardown timer (deployed 2026-11-21)
 
 The one guard that needs nobody at the keyboard. A rule runs a small
 Lambda every 15 minutes. With no workload stacks it does nothing. Once
@@ -395,13 +395,45 @@ name, `stack/ClusterStack*` and `parameter/*` all still fail the linter.
 `infra/bin/idp.ts` now passes the stack groups; `cdk synth --all` is
 clean; 73 CDK tests pass.
 
-Still open:
+**Deployed 2026-11-21 (owner approved), $0.** CostStack went to
+`UPDATE_COMPLETE` with nine new resources. Checked afterwards: the four
+budget alarms are unchanged; the function is `Active` on `python3.15`;
+the rule is `rate(15 minutes)`, enabled; one real invocation returned
+`idle`, which also shows the "stack does not exist" and "parameter not
+found" answers from real AWS are read correctly.
 
-- **Deploying it** is an update to CostStack: $0, but an AWS write, so
-  it waits for the owner's go-ahead.
-- **Not proven until then:** that CloudFormation accepts a delete from
-  this role without `iam:PassRole` (it should: the stack keeps the role
-  it was deployed with), and the email confirmation click.
+| # | Fault | Fix |
+|---|---|---|
+| P9-19 | **The deploy preview showed the four budget alarms "may be replaced".** The newer aws-cdk-lib can tag a Budget, so the app-level `Project`/`ManagedBy` tags would have been added to them. A change meant to add a timer would have touched the guardrail itself. Found only because the change was previewed before deploying. | Budgets are excluded from tagging (`a7ad7e5`); the update became nine additions and no changes. The audit now also accepts a rolled-back update as "armed". |
+
+Still open: the email subscription is `PendingConfirmation` until the
+owner clicks the link AWS sent. Until then the timer still deletes on
+time; it just cannot email. Not proven until a real session: that
+CloudFormation accepts a delete from this role without `iam:PassRole`.
+
+### 12. Leftover removed; AWS is clean
+
+The Phase 1 log group (P9-16) was deleted with the owner's approval.
+`make aws-audit`: "Clean: nothing billing, nothing left over", budget
+alarms armed. `make aws-down-plan`: nothing.
+
+### 13. A brand-new service from the template (offline)
+
+Rendered the template for a pretend service `demo-orders` and checked,
+without creating anything:
+
+- every manifest passes the cluster's admission checks (server dry-run,
+  Kyverno included), and so does the generated ArgoCD Application;
+- the generated service installs, builds and passes its 7 tests;
+- the pieces line up: pod ServiceAccount = claim name = `demo-orders`
+  (what the IAM role's trust policy will pin), the token is mounted for
+  `sts.amazonaws.com` at the path `AWS_WEB_IDENTITY_TOKEN_FILE` names,
+  the Deployment loads the Secret the claim writes, and the route
+  attaches to `gateway/edge`.
+
+Not covered: the Backstage "Create" click itself, the new GitHub
+repository and its first CI run. That creates a real public repository,
+so it is the owner's call.
 
 ## Incident 2026-11-21 — node restart exposed four latent faults
 
@@ -536,14 +568,12 @@ Prometheus (promtool), Vault + External Secrets, Crossplane
 
 ### Loose ends
 
-- Deploy the teardown timer (update CostStack, $0) and confirm its email
-  subscription. Needs the owner's go-ahead.
+- Confirm the teardown timer's email subscription (link in the owner's
+  inbox).
 - Unseal a restored Vault backup once, on a throwaway Vault, and read a
   secret from it. Needs the owner's unseal keys.
-- The Phase 1 log group `/aws/eks/idp/cluster` (P9-16): delete it, or
-  let the next `make aws-down` do so.
-- Scaffolding a brand-new service from the template end to end is still
-  untested since the Gateway and IRSA changes.
+- A real Backstage "Create" of a new service since the Gateway and IRSA
+  changes (the offline render passes; see section 13).
 
 ### Suggested commit
 
@@ -580,7 +610,7 @@ The live EKS session. Before it:
 
 - Raise `BUDGET_CAP_USD` in the Makefile and the cap in docs/COST.md in
   one commit (owner's decision; `make aws-preflight` refuses until then).
-- Deploy CostStack with the timer and confirm the email subscription.
+- Confirm the timer's email subscription (the timer itself is deployed).
 
 During it:
 
