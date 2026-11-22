@@ -34,10 +34,12 @@ spec:
     path: platform/crossplane
     # Top-level files only. platform/crossplane/tests/ holds example
     # bucket requests and expected AWS resources for `make
-    # composition-test`; they must never be applied to a cluster. This is
-    # ArgoCD's default, written down so nobody turns recursion on.
-    directory:
-      recurse: false
+    # composition-test`; they must never be applied to a cluster. ArgoCD
+    # does not recurse by default, so do not turn recursion on here.
+    #
+    # No directory.recurse field — see ADR-0015 postscript on the
+    # omitempty drift trap: ArgoCD strips an explicit `recurse: false`
+    # from the live object, which leaves the root app OutOfSync forever.
 
   destination:
     server: https://kubernetes.default.svc
