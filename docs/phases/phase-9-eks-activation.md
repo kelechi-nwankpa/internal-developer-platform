@@ -633,7 +633,7 @@ comes first.
 |---|---|---|---|---|
 | 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
 | 2 | Fargate profiles | `kube-system`, `default` | The eight namespaces of the slice, in three profiles | **Done** (ADR-0010 postscript) |
-| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | To do |
+| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **In progress** (3a role built, ADR-0036; 3b install, 3c Gateway, 3d teardown test to do) |
 | 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
 | 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
 | 6 | Crossplane | MinIO only | provider-aws, IAM limited to `idp-*` | To do |
@@ -688,6 +688,44 @@ schedule pods". So this list decides what the EKS slice is:
   `Progressing`, pods `Pending`. The EKS slice has no Prometheus, so
   nothing alerts; the session runbook must check for Pending pods
   after each install step.
+
+#### Gap 3 — load balancer (in progress)
+
+On kind the proxy borrows ports 80 and 443 on the laptop. Fargate has
+no machine to borrow from, so an NLB sends traffic straight to the
+Envoy pod's IP. The AWS Load Balancer Controller (pinned to v3.6.3)
+creates that NLB. Four tasks: 3a role, 3b install, 3c Gateway on EKS,
+3d teardown test.
+
+**3a — IAM role (built 2026-11-26).**
+[ADR-0036](../adr/0036-trimmed-iam-policy-for-load-balancer-controller.md).
+
+- Not the published policy: that one allows writes on every resource
+  in the account, and the account is shared. Ours is NLB-only (54
+  actions, upstream has 80) and every write is limited to the project
+  VPC or to resources tagged `elbv2.k8s.aws/cluster = idp`.
+- Only `system:serviceaccount:kube-system:aws-load-balancer-controller`
+  can use it (IRSA). CDK does not create the ServiceAccount; ArgoCD
+  will (3b).
+- Facts were checked, not remembered: resources and condition keys
+  from the AWS service authorization reference; the controller's
+  tagging from its source at v3.6.3.
+- Tests: 16. They pin the full policy and compare it with a copy of
+  the published one (IAM accepts a misspelt action silently). Seven
+  deliberate breakages (ServiceAccount check removed, VPC limit
+  removed, `*` resource, a WAF action added, a misspelt action, a
+  fixed `idp-` name, security groups in any VPC) each fail. 101 CDK
+  tests pass.
+- Found and fixed: `ClusterStack` had a stack-wide cdk-nag IAM5
+  exception from Phase 1 that hid every wildcard in the stack,
+  including the five in this role. Owner approved (2026-11-26) five
+  exact exceptions for the role, and narrowing the old one to CDK's
+  own patterns. A careless wildcard now fails `cdk synth` (tried two).
+- Known gap: the role can tag another project's NLB listener in this
+  region as ours (AWS documents no "only while creating" condition
+  for listeners). Narrower than upstream; see the ADR.
+- Not proven until the session: that the trimmed list is enough. A
+  missing action shows as `AccessDenied` in the controller's log.
 
 ### Before the session
 

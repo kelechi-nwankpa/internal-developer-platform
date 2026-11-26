@@ -69,6 +69,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0033](0033-edge-routing-via-gateway-api.md) | Route edge traffic through the Gateway API; ship no Ingress until then | Accepted | 2026-11-20 |
 | [0034](0034-bucket-access-on-aws-via-irsa.md) | Bucket access on AWS through IRSA, not a stored key | Accepted | 2026-11-21 |
 | [0035](0035-nat-gateway-for-eks-sessions.md) | One NAT Gateway for EKS sessions; no Interface endpoints | Accepted | 2026-11-26 |
+| [0036](0036-trimmed-iam-policy-for-load-balancer-controller.md) | A trimmed IAM policy for the AWS Load Balancer Controller | Accepted | 2026-11-26 |
 
 ## References
 

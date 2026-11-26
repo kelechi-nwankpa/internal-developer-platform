@@ -24,9 +24,19 @@ exports[`ClusterStack matches the snapshot 1`] = `
           "reason": "Managed policies flagged here are AWS-required and attached by CDK aws-eks L2 or Provider Framework: AmazonEKSClusterPolicy (cluster service role), AmazonEKSFargatePodExecutionRolePolicy (Fargate profile execution role), AmazonEC2ContainerRegistryPullOnly and AmazonElasticContainerRegistryPublicReadOnly (image pulls, conditionally attached based on ECR type), AWSLambdaBasicExecutionRole and AWSLambdaVPCAccessExecutionRole (CDK custom-resource handler lambdas). None can be replaced without breaking the underlying AWS API contract.",
         },
         {
+          "applies_to": [
+            {
+              "regex": "/^Resource::<[A-Za-z0-9]+\\.Arn>:\\*$/g",
+            },
+            {
+              "regex": "/^Resource::arn:<AWS::Partition>:eks:[a-z0-9-]+:[^:]+:cluster\\/idp\\/\\*$/g",
+            },
+            {
+              "regex": "/^Resource::arn:<AWS::Partition>:eks:[a-z0-9-]+:[^:]+:fargateprofile\\/idp\\/\\*$/g",
+            },
+          ],
           "id": "AwsSolutions-IAM5",
-          "is_reason_encoded": true,
-          "reason": "V2lsZGNhcmRzIGZsYWdnZWQgaGVyZSBhcmUgYWxsIGluc2lkZSBDREstZ2VuZXJhdGVkIGN1c3RvbS1yZXNvdXJjZSBwbHVtYmluZzogPGxhbWJkYS1hcm4+OiogcGF0dGVybnMgYXJlIG5lZWRlZCB0byBpbnZva2UgYW55IHB1Ymxpc2hlZCB2ZXJzaW9uIG9mIHRoZSBDREsgUHJvdmlkZXIgRnJhbWV3b3JrIGxhbWJkYXMgKE9uRXZlbnRIYW5kbGVyLCBJc0NvbXBsZXRlSGFuZGxlciwgZnJhbWV3b3JrLmlzQ29tcGxldGUsIGZyYW1ld29yay5vblRpbWVvdXQsIEhhbmRsZXIpLiBla3M6Y2x1c3Rlci9pZHAvKiBhbmQgZWtzOmZhcmdhdGVwcm9maWxlL2lkcC8qIHdpbGRjYXJkcyBzY29wZSBwZXJtaXNzaW9ucyB0byBzdWItcmVzb3VyY2VzIG9mIG91ciBzcGVjaWZpYyBjbHVzdGVyIChub2RlZ3JvdXBzLCBhZGRvbnMsIHRhZ3MpIHJhdGhlciB0aGFuIHRvIGFsbCBjbHVzdGVycyBpbiB0aGUgYWNjb3VudC4gUmVzb3VyY2U6OiogaXMgb24gdGhlIFByb3ZpZGVyIEZyYW1ld29yayBsb2ctd3JpdGluZyBwb2xpY3kg4oCUIGJvdW5kZWQgYnkgdGhlIGNsdXN0ZXIgc3VidHJlZS4=",
+          "reason": "CDK-generated custom-resource plumbing only. <lambda-arn>:* lets the Provider Framework invoke any published version of its own handler lambdas (OnEventHandler, IsCompleteHandler, framework.isComplete, framework.onTimeout, Handler). eks:cluster/idp/* and eks:fargateprofile/idp/* are sub-resources of this one named cluster (addons, tags, profiles), not all clusters in the account.",
         },
         {
           "id": "AwsSolutions-L1",
@@ -106,6 +116,18 @@ exports[`ClusterStack matches the snapshot 1`] = `
         "Ref": "Cluster9EE0221C",
       },
     },
+    "LoadBalancerControllerRoleArn": {
+      "Description": "IAM role for the AWS Load Balancer Controller. Goes on its ServiceAccount as the eks.amazonaws.com/role-arn annotation.",
+      "Export": {
+        "Name": "TestClusterStack-LoadBalancerControllerRoleArn",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "LoadBalancerControllerRole0BFA3E00",
+          "Arn",
+        ],
+      },
+    },
     "OidcProviderArn": {
       "Description": "IRSA OIDC provider ARN (used by later stacks to bind K8s SAs to IAM roles)",
       "Export": {
@@ -124,6 +146,50 @@ exports[`ClusterStack matches the snapshot 1`] = `
     },
   },
   "Resources": {
+    "AWSCDKCfnUtilsProviderCustomResourceProviderHandlerCF82AA57": {
+      "DependsOn": [
+        "AWSCDKCfnUtilsProviderCustomResourceProviderRoleFE0EE867",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": "cdk-hnb659fds-assets-123456789012-eu-west-1",
+          "S3Key": "0f9ba37e959a44fec66494f0055b633ee8c198be61d538a0b9d8e47305ae4af6.zip",
+        },
+        "Handler": "__entrypoint__.handler",
+        "MemorySize": 128,
+        "Role": {
+          "Fn::GetAtt": [
+            "AWSCDKCfnUtilsProviderCustomResourceProviderRoleFE0EE867",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs24.x",
+        "Timeout": 900,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "AWSCDKCfnUtilsProviderCustomResourceProviderRoleFE0EE867": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:\${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
     "Cluster9EE0221C": {
       "DeletionPolicy": "Delete",
       "DependsOn": [
@@ -403,6 +469,19 @@ exports[`ClusterStack matches the snapshot 1`] = `
       "Type": "AWS::IAM::Role",
     },
     "ClusterCreationRoleDefaultPolicyE8BDFC7B": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Policy generated by the CDK aws-eks construct for the role that creates the cluster. We cannot reshape it without vendoring the construct. The role is used only by CDK custom-resource lambdas during deploy. Approved 2026-11-26.",
+            },
+          ],
+        },
+      },
       "Properties": {
         "PolicyDocument": {
           "Statement": [
@@ -1036,6 +1115,624 @@ exports[`ClusterStack matches the snapshot 1`] = `
       },
       "Type": "AWS::Lambda::LayerVersion",
     },
+    "LoadBalancerControllerRole0BFA3E00": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Read-only Describe/Get calls. AWS does not support resource-level permissions for them, so "*" is the only valid form; limited to one region by condition. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:security-group\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Security group ids do not exist until creation. Every statement on this ARN is limited by the project VPC or by the cluster tag. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:loadbalancer\\/net\\/\\*\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "NLB names and ids are chosen at creation. Limited by the cluster tag. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:targetgroup\\/\\*\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Target group names and ids are chosen at creation. Limited by the cluster tag. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:listener\\/net\\/\\*\\/\\*\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Listener ids are chosen at creation. Limited by the cluster tag (one gap: ADR-0036). Approved 2026-11-26.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "Fn::GetAtt": [
+                    "LoadBalancerControllerTrustConditionsECA76CFE",
+                    "Value",
+                  ],
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+                },
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Description": "AWS Load Balancer Controller on the idp EKS cluster (ADR-0036)",
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "LoadBalancerControllerRoleDefaultPolicy03FE8CD0": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Read-only Describe/Get calls. AWS does not support resource-level permissions for them, so "*" is the only valid form; limited to one region by condition. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:security-group\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Security group ids do not exist until creation. Every statement on this ARN is limited by the project VPC or by the cluster tag. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:loadbalancer\\/net\\/\\*\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "NLB names and ids are chosen at creation. Limited by the cluster tag. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:targetgroup\\/\\*\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Target group names and ids are chosen at creation. Limited by the cluster tag. Approved 2026-11-26.",
+            },
+            {
+              "applies_to": [
+                {
+                  "regex": "/^Resource::arn:<AWS::Partition>:[a-z0-9]+:[a-z0-9-]+:[^:]+:listener\\/net\\/\\*\\/\\*\\/\\*$/g",
+                },
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Listener ids are chosen at creation. Limited by the cluster tag (one gap: ADR-0036). Approved 2026-11-26.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "ec2:DescribeAccountAttributes",
+                "ec2:DescribeAddresses",
+                "ec2:DescribeAvailabilityZones",
+                "ec2:DescribeCoipPools",
+                "ec2:DescribeInstances",
+                "ec2:DescribeInternetGateways",
+                "ec2:DescribeIpamPools",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DescribeRouteTables",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeTags",
+                "ec2:DescribeVpcPeeringConnections",
+                "ec2:DescribeVpcs",
+                "ec2:GetCoipPoolUsage",
+                "ec2:GetSecurityGroupsForVpc",
+                "elasticloadbalancing:DescribeCapacityReservation",
+                "elasticloadbalancing:DescribeListenerAttributes",
+                "elasticloadbalancing:DescribeListenerCertificates",
+                "elasticloadbalancing:DescribeListeners",
+                "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                "elasticloadbalancing:DescribeLoadBalancers",
+                "elasticloadbalancing:DescribeRules",
+                "elasticloadbalancing:DescribeSSLPolicies",
+                "elasticloadbalancing:DescribeTags",
+                "elasticloadbalancing:DescribeTargetGroupAttributes",
+                "elasticloadbalancing:DescribeTargetGroups",
+                "elasticloadbalancing:DescribeTargetHealth",
+                "elasticloadbalancing:DescribeTrustStores",
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "eu-west-1",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": "*",
+              "Sid": "ReadInRegion",
+            },
+            {
+              "Action": "iam:CreateServiceLinkedRole",
+              "Condition": {
+                "StringEquals": {
+                  "iam:AWSServiceName": "elasticloadbalancing.amazonaws.com",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":iam::123456789012:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+                  ],
+                ],
+              },
+              "Sid": "CreateElbServiceLinkedRole",
+            },
+            {
+              "Action": "ec2:CreateSecurityGroup",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":ec2:eu-west-1:123456789012:security-group/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":ec2:eu-west-1:123456789012:vpc/",
+                      {
+                        "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessVpc77FD6DD86C65DD85",
+                      },
+                    ],
+                  ],
+                },
+              ],
+              "Sid": "CreateSecurityGroupInProjectVpc",
+            },
+            {
+              "Action": "ec2:CreateTags",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "idp",
+                  "ec2:CreateAction": "CreateSecurityGroup",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ec2:eu-west-1:123456789012:security-group/*",
+                  ],
+                ],
+              },
+              "Sid": "TagSecurityGroupOnCreate",
+            },
+            {
+              "Action": [
+                "ec2:CreateTags",
+                "ec2:DeleteTags",
+              ],
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                },
+                "StringEquals": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "idp",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ec2:eu-west-1:123456789012:security-group/*",
+                  ],
+                ],
+              },
+              "Sid": "RetagOwnSecurityGroups",
+            },
+            {
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+              ],
+              "Condition": {
+                "ArnEquals": {
+                  "ec2:Vpc": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition",
+                        },
+                        ":ec2:eu-west-1:123456789012:vpc/",
+                        {
+                          "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessVpc77FD6DD86C65DD85",
+                        },
+                      ],
+                    ],
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ec2:eu-west-1:123456789012:security-group/*",
+                  ],
+                ],
+              },
+              "Sid": "SecurityGroupRulesInProjectVpc",
+            },
+            {
+              "Action": "ec2:DeleteSecurityGroup",
+              "Condition": {
+                "StringEquals": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "idp",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ec2:eu-west-1:123456789012:security-group/*",
+                  ],
+                ],
+              },
+              "Sid": "DeleteOwnSecurityGroups",
+            },
+            {
+              "Action": [
+                "elasticloadbalancing:CreateLoadBalancer",
+                "elasticloadbalancing:CreateTargetGroup",
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "idp",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:loadbalancer/net/*/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:targetgroup/*/*",
+                    ],
+                  ],
+                },
+              ],
+              "Sid": "CreateNlbTaggedForThisCluster",
+            },
+            {
+              "Action": "elasticloadbalancing:AddTags",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "idp",
+                  "elasticloadbalancing:CreateAction": [
+                    "CreateLoadBalancer",
+                    "CreateTargetGroup",
+                  ],
+                },
+              },
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:loadbalancer/net/*/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:targetgroup/*/*",
+                    ],
+                  ],
+                },
+              ],
+              "Sid": "TagNlbOnCreate",
+            },
+            {
+              "Action": "elasticloadbalancing:AddTags",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "idp",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":elasticloadbalancing:eu-west-1:123456789012:listener/net/*/*/*",
+                  ],
+                ],
+              },
+              "Sid": "TagListenerOnCreate",
+            },
+            {
+              "Action": [
+                "elasticloadbalancing:AddTags",
+                "elasticloadbalancing:RemoveTags",
+              ],
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                },
+                "StringEquals": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "idp",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:loadbalancer/net/*/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:targetgroup/*/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:listener/net/*/*/*",
+                    ],
+                  ],
+                },
+              ],
+              "Sid": "RetagOwnElbResources",
+            },
+            {
+              "Action": [
+                "elasticloadbalancing:CreateListener",
+                "elasticloadbalancing:DeleteListener",
+                "elasticloadbalancing:DeleteLoadBalancer",
+                "elasticloadbalancing:DeleteTargetGroup",
+                "elasticloadbalancing:DeregisterTargets",
+                "elasticloadbalancing:ModifyListener",
+                "elasticloadbalancing:ModifyListenerAttributes",
+                "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                "elasticloadbalancing:ModifyTargetGroup",
+                "elasticloadbalancing:ModifyTargetGroupAttributes",
+                "elasticloadbalancing:RegisterTargets",
+                "elasticloadbalancing:SetIpAddressType",
+                "elasticloadbalancing:SetSecurityGroups",
+                "elasticloadbalancing:SetSubnets",
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "idp",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:loadbalancer/net/*/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:targetgroup/*/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":elasticloadbalancing:eu-west-1:123456789012:listener/net/*/*/*",
+                    ],
+                  ],
+                },
+              ],
+              "Sid": "ManageOwnElbResources",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "LoadBalancerControllerRoleDefaultPolicy03FE8CD0",
+        "Roles": [
+          {
+            "Ref": "LoadBalancerControllerRole0BFA3E00",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "LoadBalancerControllerTrustConditionsECA76CFE": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "AWSCDKCfnUtilsProviderCustomResourceProviderHandlerCF82AA57",
+            "Arn",
+          ],
+        },
+        "Value": {
+          "Fn::Join": [
+            "",
+            [
+              "{"",
+              {
+                "Fn::Select": [
+                  1,
+                  {
+                    "Fn::Split": [
+                      ":oidc-provider/",
+                      {
+                        "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+                      },
+                    ],
+                  },
+                ],
+              },
+              ":aud":"sts.amazonaws.com","",
+              {
+                "Fn::Select": [
+                  1,
+                  {
+                    "Fn::Split": [
+                      ":oidc-provider/",
+                      {
+                        "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+                      },
+                    ],
+                  },
+                ],
+              },
+              ":sub":"system:serviceaccount:kube-system:aws-load-balancer-controller"}",
+            ],
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDKCfnJson",
+      "UpdateReplacePolicy": "Delete",
+    },
     "awscdkawseksClusterResourceProviderNestedStackawscdkawseksClusterResourceProviderNestedStackResource9827C454": {
       "DeletionPolicy": "Delete",
       "Properties": {
@@ -1047,7 +1744,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               {
                 "Ref": "AWS::URLSuffix",
               },
-              "/cdk-hnb659fds-assets-123456789012-eu-west-1/0a6909450224bad5b310c16a7b67585e9e03a7bfd14c63d31fd7c70ddfec7067.json",
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/0a5f6622625d5bf48c94cc03ce71bcd35b4807f7a69787537322ca993fde5065.json",
             ],
           ],
         },
@@ -1087,7 +1784,7 @@ exports[`ClusterStack matches the snapshot 1`] = `
               {
                 "Ref": "AWS::URLSuffix",
               },
-              "/cdk-hnb659fds-assets-123456789012-eu-west-1/6c71a521ac28ad223e322e38d7e3dacbcd0f402db58f791ca5bbb217f3db4f16.json",
+              "/cdk-hnb659fds-assets-123456789012-eu-west-1/60d41a35fa637b27008dd958a12f5f07b0aed568c9ba90e8c445f864e0f63dd0.json",
             ],
           ],
         },
