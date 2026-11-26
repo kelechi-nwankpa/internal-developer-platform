@@ -1,7 +1,9 @@
 # Cost — projected and actual
 
-- **Hard cap:** $30 total AWS spend across the entire project.
-- **Target:** $15.
+- **Hard cap:** $40 total AWS spend across the entire project.
+  Raised from $30 by the owner on 2026-11-26, for one live EKS session
+  in Phase 9 (reasoning under "Projected cost of one live EKS session" below).
+- **Original target:** $15. Missed: Phase 1 alone cost $27.17.
 - **Rationale:** [ADR-0005 — Local-first development with kind](adr/0005-local-first-development-with-kind.md).
 
 ---
@@ -17,10 +19,12 @@
 Updated after every session that touches AWS. Figures are from Cost
 Explorer (`aws ce get-cost-and-usage`, $0.01 per request), not estimates.
 
-**Status (2026-11-21): $27.19 of the $30 cap spent; about $2.80 left.**
-Per the "$25 alarm" runbook below, AWS work is paused: Phase 9 is being
-completed at $0 on kind (offline EKS-readiness proofs). A live EKS
-session needs the owner to raise the cap first.
+**Status (2026-11-26): $27.19 of the $40 cap spent; about $12.80 left.**
+The cap was $30 until 2026-11-26. AWS work was paused at $27.19 and
+Phase 9's $0 work was finished on kind first (offline EKS-readiness
+proofs, teardown, audit, timer). The extra $10 is for one planned live
+session (~$2.30), one retry, and one mistake. It is not a new baseline:
+`make aws-preflight` still refuses any deploy that does not fit.
 
 ### Where Phase 1's $27.17 went (Cost Explorer, July 2026)
 
@@ -60,7 +64,7 @@ This is the approximate monthly cost of the **always-on** version of the platfor
 
 ---
 
-## How we stay under $30
+## How we stay under the cap
 
 1. **Local `kind` cluster for Phases 2–9.** Everything in-cluster (ArgoCD, Crossplane, cert-manager, ESO, observability, Backstage) develops against a local kind cluster. Zero AWS cost.
 2. **`cdk synth` + unit tests, not `cdk deploy`.** Phase 1's CDK code is developed and tested locally. AWS resources exist only for validation runs.
@@ -122,7 +126,8 @@ Fixed costs per session: Route 53 zone $0.50, KMS ~$0.10, NAT data
 
 What this means for the cap: the planned session fits in roughly $3, but
 a safe margin for one retry plus a mistake is **about $10–12 of
-headroom** (i.e. a cap of roughly $40). The two controls that keep it at
+headroom** (i.e. a cap of roughly $40; the owner set $40 on
+2026-11-26). The two controls that keep it at
 the low end are (1) a Kubernetes version in standard support, verified
 before deploy, and (2) the automatic teardown timer (built in Phase 9; see the phase
 log for what it stops and the ~$0.04/h it can leave behind).
@@ -149,7 +154,7 @@ runs at $0 unless the cap is raised, and the Phase 10 recorded demo
 | 8 — Security hardening | $0 | All on local kind |
 | 9 — Cost, DR, ops | ~$2 | Cost Explorer / Budgets validation |
 | 10 — Polish & demo | ~$10 | Full stack up, record, tear down within 24h |
-| **Total projected** | **~$20–30** | Within the hard cap |
+| **Total projected** | **~$20–30** | Original projection; actuals and the current cap are at the top |
 
 ---
 
@@ -181,6 +186,9 @@ Investigate the root cause **before** any further deploys. Log the incident in t
 Pause AWS work. Move remaining phases to synth-only local iteration. Consider deferring the recorded demo until we understand the cost pattern.
 
 ### $30 alarm — full stop
+
+The alarms are monthly budgets and were left at $5/$15/$30/$50 when the
+project cap went to $40: one month reaching $30 is still a full stop.
 
 Shut everything down. Write a short postmortem to `docs/runbooks/cost-overrun.md` capturing: what was left running, why the alarms below $30 didn't catch it, and what guardrail change would prevent recurrence.
 

@@ -36,7 +36,7 @@ CLUSTER_NAME    := idp
 # Budget guard, enforced by scripts/aws-preflight.sh before every deploy.
 # Raising the cap is the owner's decision: change BUDGET_CAP_USD here AND
 # the cap in docs/COST.md in the same commit, so it is reviewed and recorded.
-BUDGET_CAP_USD       := 30
+BUDGET_CAP_USD       := 40
 # One planned ~3h session (~$2.30) plus one failed retry, incl. VAT (docs/COST.md).
 SESSION_ESTIMATE_USD := 4
 # First month with AWS charges; lifetime spend is summed from here.

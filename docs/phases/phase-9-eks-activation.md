@@ -617,8 +617,8 @@ safety checks are removed.
 
 The live EKS session. Before it:
 
-- Raise `BUDGET_CAP_USD` in the Makefile and the cap in docs/COST.md in
-  one commit (owner's decision; `make aws-preflight` refuses until then).
+- ~~Raise the cap.~~ Done 2026-11-26: the owner set $40 (`BUDGET_CAP_USD`
+  in the Makefile, docs/COST.md and CLAUDE.md, one commit).
 - Check the timer topic still has one confirmed email subscription
   (confirmed 2026-11-26).
 

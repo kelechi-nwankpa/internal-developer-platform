@@ -28,7 +28,7 @@ Non-negotiables — every session must honour these.
 
 ## 3. Budget constraint (hard cap)
 
-- **Total AWS spend must stay under $30.** Target: $15.
+- **Total AWS spend must stay under $40** (raised from $30 by the owner on 2026-11-26 for the Phase 9 EKS session; $27.19 already spent — see `docs/COST.md`).
 - **Default all development to a local `kind` or `k3d` cluster.** AWS is opt-in per session, not baseline.
 - **Every `cdk deploy` needs a matching `cdk destroy`** in the same session. Assume the user will forget; design for that.
 - **Cost guardrails go in BEFORE any AWS action** — AWS Budgets alarms at $5/$15/$30, cost anomaly detection, `Project=idp` tags, gitleaks pre-commit hook.
