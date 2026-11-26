@@ -142,6 +142,10 @@ policy-test: ## test Kyverno policies offline against example pods (needs docker
 composition-test: ## test Crossplane Compositions offline: render, schemas, IAM rules (needs docker + crossplane CLI)
 	@scripts/composition-test.sh
 
+.PHONY: eks-apps-test
+eks-apps-test: ## check the EKS-only ArgoCD apps against the CDK code (no cluster, no AWS)
+	@ruby --disable-gems scripts/eks-apps-rules.rb
+
 .PHONY: vault-backup
 vault-backup: ## copy Vault's (encrypted) data off the kind node to ~/idp-backups/vault
 	@scripts/vault-backup.sh

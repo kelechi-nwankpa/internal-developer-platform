@@ -1,0 +1,27 @@
+---
+# ServiceAccount for the AWS Load Balancer Controller. EKS ONLY.
+#
+# NOT synced by ArgoCD. The session bootstrap applies it once, after
+# replacing __LB_CONTROLLER_ROLE_ARN__ with the ClusterStack output
+# `LoadBalancerControllerRoleArn`.
+#
+# WHY outside GitOps: the ARN contains the AWS account id and a role
+# name CloudFormation generates. It is different in every account and
+# cannot be known before the stack exists (ADR-0037). Everything else
+# about the controller is in Git:
+# platform/argocd/apps-eks/aws-load-balancer-controller.yaml
+#
+# The name and namespace are fixed by the IAM role's trust policy
+# (infra/lib/load-balancer-controller-role.ts). Change one, change both;
+# `make eks-apps-test` fails if they differ.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aws-load-balancer-controller
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: aws-load-balancer-controller
+    app.kubernetes.io/managed-by: eks-bootstrap
+  annotations:
+    # EKS swaps this ServiceAccount's token for the role's credentials.
+    eks.amazonaws.com/role-arn: __LB_CONTROLLER_ROLE_ARN__

@@ -633,7 +633,7 @@ comes first.
 |---|---|---|---|---|
 | 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
 | 2 | Fargate profiles | `kube-system`, `default` | The eight namespaces of the slice, in three profiles | **Done** (ADR-0010 postscript) |
-| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **In progress** (3a role built, ADR-0036; 3b install, 3c Gateway, 3d teardown test to do) |
+| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **In progress** (3a role and 3b install built, ADR-0036/0037; 3c Gateway, 3d teardown test to do) |
 | 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
 | 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
 | 6 | Crossplane | MinIO only | provider-aws, IAM limited to `idp-*` | To do |
@@ -726,6 +726,36 @@ creates that NLB. Four tasks: 3a role, 3b install, 3c Gateway on EKS,
   for listeners). Narrower than upstream; see the ADR.
 - Not proven until the session: that the trimmed list is enough. A
   missing action shows as `AccessDenied` in the controller's log.
+
+**3b — install (built 2026-11-26).**
+[`platform/argocd/apps-eks/aws-load-balancer-controller.yaml`](../../platform/argocd/apps-eks/aws-load-balancer-controller.yaml),
+chart and image pinned to 3.6.3 (image by digest).
+
+- New folder `apps-eks/`: the kind root app reads `apps/` only, so
+  this controller is never synced on kind. Gap 7 adds the EKS root app.
+- Fargate has no node metadata, so the region is set and the VPC is
+  found by its `Project=idp` tag. No VPC id in Git. The controller
+  refuses to start if no VPC, or more than one, carries the tag.
+- The ServiceAccount is not in the chart. Its role ARN holds the
+  account id and a generated name, so the bootstrap applies
+  `platform/eks/bootstrap/aws-load-balancer-controller-sa.yaml` with
+  the ARN from the stack output
+  ([ADR-0037](../adr/0037-session-identities-enter-at-bootstrap.md)).
+- One pod, not two. Webhook certificate from cert-manager (the
+  chart's own changes on every render, so ArgoCD would rewrite it on
+  every sync). WAF, Shield, its Gateway API support and reserved
+  capacity are off: the role has no permissions for them.
+- The "make me the default for every LoadBalancer Service" webhook is
+  off. The Envoy Service will ask for this controller by name (3c).
+- Checked by rendering the pinned chart with these values: one
+  Deployment with one replica, the pinned digest, no ServiceAccount,
+  no Secret, no IngressClass.
+- Tests: `make eks-apps-test` compares the app and the template with
+  the CDK code (namespace has a Fargate profile; ServiceAccount name
+  and namespace equal the role's trust policy; cluster name equal).
+  Thirteen deliberate breakages each fail.
+- Not proven until the session: that the pod starts on Fargate, finds
+  the VPC, and assumes the role.
 
 ### Before the session
 

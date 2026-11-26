@@ -1,0 +1,129 @@
+---
+# aws-load-balancer-controller — creates the AWS network load balancer
+# (NLB) in front of the Envoy proxy. EKS ONLY.
+#
+# WHY it exists: on kind the proxy borrows ports 80/443 on the laptop.
+# Fargate has no machine to borrow from, so traffic must reach the Envoy
+# pod's IP directly. Only this controller can register a pod IP with an
+# NLB, and keep it registered when the pod restarts.
+#
+# WHY this folder (apps-eks/) and not apps/: the kind root app reads
+# platform/argocd/apps. This controller cannot start without AWS, so it
+# must never be synced on kind. The EKS root app (Phase 9, gap 7) reads
+# this folder.
+#
+# See: docs/adr/0036-trimmed-iam-policy-for-load-balancer-controller.md
+#      docs/adr/0037-session-identities-enter-at-bootstrap.md
+#      docs/phases/phase-9-eks-activation.md (gap 3, task 3b)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://aws.github.io/eks-charts
+    chart: aws-load-balancer-controller
+    # Pinned to 3.6.3 (2026-11-13). 3.7.0 was two days old when this was
+    # written; a session where every retry costs money is the wrong place
+    # to find a new release's bugs. The IAM policy (ADR-0036) was trimmed
+    # against THIS version: on upgrade, re-check it first.
+    targetRevision: 3.6.3
+    helm:
+      valuesObject:
+        # Must equal the EKS cluster name. The controller writes it as the
+        # tag elbv2.k8s.aws/cluster on everything it creates, and its IAM
+        # role may only touch resources carrying that exact tag.
+        clusterName: idp
+
+        # Normally read from the node's metadata service. Fargate has no
+        # node, so both must be given or the controller exits at startup.
+        region: eu-west-1
+        # Find the VPC by tag, not by id: the id changes every session and
+        # cannot be in Git ahead of time. CDK tags the project VPC. The
+        # controller refuses to start if no VPC or more than one matches.
+        vpcTags:
+          Project: idp
+
+        image:
+          # Tag for people, digest for the machine (multi-arch index).
+          tag: v3.6.3@sha256:bc9bee8bc5b2b9f69fe914c06ed3ddb24ce9c94e234cf101dff1ec04693a6974
+
+        # One pod, not the chart's two. Two give failover, but each
+        # Fargate pod takes about a minute to start and is billed, and a
+        # three-hour session does not need failover. While this pod is
+        # down, existing traffic still flows; only changes wait.
+        replicaCount: 1
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+
+        serviceAccount:
+          # The ServiceAccount carries the IAM role's ARN, which contains
+          # the AWS account id and a generated name. Neither belongs in
+          # Git, so the session bootstrap creates it from the CloudFormation
+          # output (ADR-0037). The name must match the role's trust policy.
+          create: false
+          name: aws-load-balancer-controller
+
+        # Fargate has no instances to register; send traffic to pod IPs.
+        defaultTargetType: ip
+
+        # The webhook needs a TLS certificate. By default the chart makes
+        # a new one on every render, so ArgoCD would rewrite it on every
+        # sync. cert-manager issues one and keeps it stable.
+        enableCertManager: true
+
+        # Off: a webhook that silently makes this controller the default
+        # for every LoadBalancer Service. The Envoy proxy's Service asks
+        # for it by name instead (loadBalancerClass, task 3c), which is
+        # visible in Git and cannot block Service creation while this
+        # controller is still starting.
+        enableServiceMutatorWebhook: false
+
+        # Features the IAM role has no permissions for (ADR-0036). Turned
+        # off here so the controller never tries.
+        enableShield: false
+        enableWaf: false
+        enableWafv2: false
+        createIngressClassResource: false
+        ingressClassParams:
+          create: false
+        controllerConfig:
+          featureGates:
+            # Envoy Gateway owns the Gateway API here. Left on, this
+            # controller would also watch Gateways.
+            NLBGatewayAPI: false
+            ALBGatewayAPI: false
+            GatewayListenerSet: false
+            # Reserved capacity is billed.
+            LBCapacityReservation: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    # kube-system has a Fargate profile (infra/lib/cluster-stack.ts). A
+    # namespace without one leaves the pod Pending for ever.
+    namespace: kube-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # Needs cert-manager's CRDs and webhook first. Rather than order the
+    # apps, retry until they are there.
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - ServerSideApply=true
