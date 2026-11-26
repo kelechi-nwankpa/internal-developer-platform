@@ -894,9 +894,17 @@ kubectl -n vault scale sts vault --replicas=1
 - Tested 2026-11-21: a throwaway Vault (same image, on the Mac, no
   network) started on an extracted backup and reported `Initialized true`,
   `Sealed true`, 5 shares, threshold 3.
-- NOT tested: unsealing a restored copy and reading a secret from it.
-  That needs the unseal keys. Do it once, on a throwaway Vault, before
-  relying on this.
+- Tested 2026-11-26, by the owner with their own keys: the same
+  throwaway Vault, on the backup `vault-data-2026-11-21T220352Z.tar.gz`,
+  unsealed with three of the five keys, accepted the root token, and
+  returned `secret/backstage/postgres` with both expected key names.
+  Only key names were printed. The backup, the unseal keys and the root
+  token therefore belong together and a secret decrypts.
+- NOT tested: the full path of this runbook on the cluster (stopping
+  the real Vault and re-attaching restored data to it). The pieces were
+  each exercised: the re-attach in Failure Mode 7, the unseal here.
+- Repeat the unseal test after re-keying Vault or changing its version:
+  a backup is only proven for the keys and image it was tested with.
 
 ### Prevention
 

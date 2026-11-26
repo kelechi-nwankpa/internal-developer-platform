@@ -247,8 +247,10 @@ the thing under test before trusting a green result.
   write inside a Git repository. Restore steps: Failure Mode 8 in
   [kind-recovery.md](../runbooks/kind-recovery.md).
 - **Restore check:** a throwaway Vault started on the backup and
-  reported initialised, sealed, 5 shares, threshold 3. Unsealing a
-  restored copy is not tested yet; it needs the owner's keys.
+  reported initialised, sealed, 5 shares, threshold 3. On 2026-11-26
+  the owner unsealed that copy with their own keys, logged in, and read
+  `secret/backstage/postgres` (key names only). The backup is proven
+  restorable for the current keys and image.
 
 ### 8. S3 bucket access on AWS through IRSA (offline, $0)
 
@@ -570,8 +572,8 @@ Prometheus (promtool), Vault + External Secrets, Crossplane
 
 - Confirm the teardown timer's email subscription (link in the owner's
   inbox).
-- Unseal a restored Vault backup once, on a throwaway Vault, and read a
-  secret from it. Needs the owner's unseal keys.
+- ~~Unseal a restored Vault backup once and read a secret from it.~~
+  Done 2026-11-26 by the owner; see Failure Mode 8 in the runbook.
 - A real Backstage "Create" of a new service since the Gateway and IRSA
   changes (the offline render passes; see section 13).
 
