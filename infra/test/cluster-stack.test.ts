@@ -3,7 +3,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { KubernetesVersion } from 'aws-cdk-lib/aws-eks';
 import * as kms from 'aws-cdk-lib/aws-kms';
-import { ClusterStack } from '../lib/cluster-stack';
+import { ClusterStack, FARGATE_NAMESPACES } from '../lib/cluster-stack';
 
 /**
  * Helper — builds a synthesised ClusterStack Template.
@@ -110,9 +110,72 @@ describe('ClusterStack', () => {
     });
   });
 
-  it('creates exactly two Fargate profiles (kube-system, default)', () => {
-    const profiles = template.findResources('Custom::AWSCDK-EKS-FargateProfile');
-    expect(Object.keys(profiles)).toHaveLength(2);
+  describe('Fargate profiles', () => {
+    // Every selector of every profile, straight from the template.
+    const selectors = () =>
+      Object.values(template.findResources('Custom::AWSCDK-EKS-FargateProfile')).map(
+        (p) => p.Properties.Config.selectors as { namespace: string; labels?: object }[],
+      );
+    const namespaces = () => selectors().flat().map((s) => s.namespace);
+
+    it('creates exactly three profiles (each one adds minutes to a billed deploy)', () => {
+      expect(selectors()).toHaveLength(3);
+    });
+
+    it('allows pods in exactly the namespaces of the EKS slice, no more', () => {
+      // Written out by hand, not read from FARGATE_NAMESPACES: adding a
+      // namespace that can run billable pods must change this test too.
+      expect(namespaces().sort()).toEqual([
+        'argocd',
+        'cert-manager',
+        'crossplane-system',
+        'envoy-gateway-system',
+        'external-dns',
+        'gateway',
+        'kube-system',
+        'platform-hello',
+      ]);
+    });
+
+    it('lists no namespace twice (two matching profiles is ambiguous)', () => {
+      expect(new Set(namespaces()).size).toBe(namespaces().length);
+    });
+
+    it('uses no wildcard: an unlisted namespace must not be able to run pods', () => {
+      for (const ns of namespaces()) {
+        expect(ns).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
+      }
+    });
+
+    it('does not open the `default` namespace', () => {
+      expect(namespaces()).not.toContain('default');
+    });
+
+    it('keeps every profile within the EKS limit of five selectors', () => {
+      for (const s of selectors()) {
+        expect(s.length).toBeGreaterThan(0);
+        expect(s.length).toBeLessThanOrEqual(5);
+      }
+    });
+
+    it('selects whole namespaces, not labelled pods (a missing label would strand a pod)', () => {
+      for (const s of selectors().flat()) {
+        expect(s.labels).toBeUndefined();
+      }
+    });
+
+    it('creates the profiles one after another (EKS refuses two at once)', () => {
+      const profiles = template.findResources('Custom::AWSCDK-EKS-FargateProfile');
+      const ids = Object.keys(profiles);
+      const waitsOnAnother = ids.filter((id) =>
+        ([] as string[]).concat(profiles[id].DependsOn ?? []).some((d) => ids.includes(d)));
+      expect(waitsOnAnother).toHaveLength(ids.length - 1);
+    });
+
+    it('exports the same list the template uses', () => {
+      const exported = Object.values(FARGATE_NAMESPACES).flat().sort();
+      expect(namespaces().sort()).toEqual(exported);
+    });
   });
 
   it('provisions zero node groups (Fargate-only — ADR-0010)', () => {

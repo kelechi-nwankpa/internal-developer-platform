@@ -632,7 +632,7 @@ comes first.
 | # | Gap | Today | Needed | State |
 |---|---|---|---|---|
 | 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
-| 2 | Fargate profiles | `kube-system`, `default` | One per platform namespace | To do |
+| 2 | Fargate profiles | `kube-system`, `default` | The eight namespaces of the slice, in three profiles | **Done** (ADR-0010 postscript) |
 | 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | To do |
 | 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
 | 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
@@ -660,6 +660,34 @@ ADR-0007. About $0.24/h cheaper than Phase 1's network.
 - Not proven until the session: that the cluster deploys through the
   NAT (Phase 1 failed here once for lack of an endpoint), and the NAT's
   price on our own bill.
+
+#### Gap 2 — Fargate profiles (done 2026-11-26)
+
+A Fargate-only cluster has no nodes. A pod runs only if a profile names
+its namespace; otherwise it stays `Pending` with "no nodes available to
+schedule pods". So this list decides what the EKS slice is:
+
+| Profile | Namespaces |
+|---|---|
+| KubeSystem | `kube-system` (CoreDNS, load balancer controller) |
+| Platform | `argocd`, `cert-manager`, `crossplane-system`, `envoy-gateway-system`, `external-dns` |
+| Workloads | `gateway`, `platform-hello` |
+
+- Explicit list, no wildcard: deny-by-default. The price is that a new
+  service needs a line and a redeploy (ADR-0010 postscript says when a
+  wildcard is the better answer).
+- Three profiles, not eight: EKS creates them one at a time while the
+  control plane bills.
+- `default` is closed. Backstage, Vault and monitoring stay on kind.
+- Tests: 9 for the profiles. Five deliberate breakages (a wildcard,
+  `default` opened, a namespace in two profiles, a service forgotten,
+  an extra namespace) each fail. 85 CDK tests pass; synth is clean.
+- Not proven until the session: how long three profiles take to create,
+  and that every pod of the slice fits a Fargate size.
+- How a forgotten namespace would show up: the ArgoCD app stays
+  `Progressing`, pods `Pending`. The EKS slice has no Prometheus, so
+  nothing alerts; the session runbook must check for Pending pods
+  after each install step.
 
 ### Before the session
 

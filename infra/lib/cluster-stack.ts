@@ -18,6 +18,35 @@ import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
 
 /**
+ * Namespaces whose pods may run on this cluster, grouped into Fargate
+ * profiles. A Fargate-only cluster has no nodes: a pod runs only if a
+ * profile names its namespace. Anything else stays Pending for ever,
+ * with the event "no nodes available to schedule pods".
+ *
+ * This list is the EKS slice of the platform (Phase 9): enough to serve
+ * one golden-path service over HTTPS with a bucket. Backstage, Vault and
+ * the monitoring stack are not here on purpose: they need volumes and
+ * DaemonSets, which Fargate does not offer (ADR-0010).
+ *
+ * Why three profiles and not one per namespace: EKS creates profiles one
+ * at a time, a few minutes each, while the control plane is already
+ * billing. Why not one profile: a profile holds at most five selectors.
+ *
+ * Why no wildcard (`*`): it would be simpler, and every new service
+ * would just work. But then any namespace anyone creates can start
+ * billable pods. An explicit list is deny-by-default; the price is that
+ * a new service needs a line here and a redeploy of the profile.
+ */
+export const FARGATE_NAMESPACES = {
+  /** CoreDNS and the AWS Load Balancer Controller. */
+  system: ['kube-system'],
+  /** Controllers that make up the platform slice. */
+  platform: ['argocd', 'cert-manager', 'crossplane-system', 'envoy-gateway-system', 'external-dns'],
+  /** The shared edge proxy, and the services behind it. */
+  workloads: ['gateway', 'platform-hello'],
+} as const;
+
+/**
  * Properties for the {@link ClusterStack}.
  */
 export interface ClusterStackProps extends StackProps {
@@ -64,8 +93,8 @@ export interface ClusterStackProps extends StackProps {
  *
  * Design (see docs/adr/0010-fargate-only-eks-cluster.md):
  * - Managed control plane, K8s 1.36 by default (same minor as kind).
- * - Fargate profiles cover `kube-system` (for coreDNS) and `default`
- *   (for user workloads). No managed node group; no worker EC2 instances.
+ * - Fargate profiles cover exactly the namespaces in
+ *   FARGATE_NAMESPACES. No managed node group; no worker EC2 instances.
  * - Envelope encryption of Kubernetes Secrets uses KmsStack's CMK.
  * - Endpoint access is PUBLIC_AND_PRIVATE — you can `kubectl` from your
  *   laptop and pods use the private endpoint inside the VPC. Hardening
@@ -129,17 +158,24 @@ export class ClusterStack extends Stack {
     });
 
     // ---------------------------------------------------------------
-    // Fargate profiles — one per namespace we're using.
+    // Fargate profiles — see FARGATE_NAMESPACES for what and why.
     //
-    // Order matters: EKS evaluates profiles in creation order and uses
-    // the first that matches. Add new namespaces (argocd, cert-manager,
-    // etc.) as additional profiles in future tasks.
+    // No namespace may appear in two profiles: when two profiles match a
+    // pod, EKS picks one by profile name, which is easy to get wrong and
+    // hard to see. The unit tests assert there is no overlap.
+    //
+    // Profiles cannot be edited in place. Changing a list replaces that
+    // profile, and pods already running under it keep running until they
+    // are restarted.
     // ---------------------------------------------------------------
     this.cluster.addFargateProfile('KubeSystem', {
-      selectors: [{ namespace: 'kube-system' }],
+      selectors: FARGATE_NAMESPACES.system.map((namespace) => ({ namespace })),
     });
-    this.cluster.addFargateProfile('Default', {
-      selectors: [{ namespace: 'default' }],
+    this.cluster.addFargateProfile('Platform', {
+      selectors: FARGATE_NAMESPACES.platform.map((namespace) => ({ namespace })),
+    });
+    this.cluster.addFargateProfile('Workloads', {
+      selectors: FARGATE_NAMESPACES.workloads.map((namespace) => ({ namespace })),
     });
 
     // ---------------------------------------------------------------

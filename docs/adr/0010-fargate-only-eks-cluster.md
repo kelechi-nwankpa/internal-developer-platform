@@ -68,7 +68,7 @@ We accept that a workload later in the project might legitimately need a node gr
 
 - **Positive:** No OS patching. No AMI upgrades. No autoscaling policy. No node draining. Empty cluster = only EKS control-plane cost ($0.10/hour). Fargate profiles are declarative in CDK and versionable. Strong "the platform is managed all the way down" interview story.
 - **Negative:** Pod startup ~30–60s. No DaemonSets — anything that wants to run on every node (e.g., traditional log shippers, node-exporter) needs a Fargate-friendly equivalent. Continuous-workload cost per pod exceeds a spot node group. If workloads later become CPU-heavy 24/7, Fargate becomes 2–3× more expensive than a right-sized node group.
-- **Neutral:** Two Fargate profiles at Phase 1 (kube-system, default). Every additional namespace we add (argocd, cert-manager, external-secrets, external-dns) needs its own profile (or a shared multi-selector profile).
+- **Neutral:** Two Fargate profiles at Phase 1 (kube-system, default); three since Phase 9, see the second postscript. Every additional namespace we add (argocd, cert-manager, external-secrets, external-dns) needs its own profile (or a shared multi-selector profile).
 
 ## When to revisit
 
@@ -118,3 +118,44 @@ kubectl rollout restart -n kube-system deployment coredns
 ```
 
 **Interview framing:** *"EKS Fargate-only clusters have a subtle bootstrap dependency: coredns ships with an annotation that pins it to EC2, so pods deadlock on a Fargate-only cluster. CDK's coreDnsComputeType prop patches this at provisioning time. Missing it is one of the top 'why isn't my Fargate cluster working' issues."*
+
+## Postscript — which namespaces get a profile (2026-11-26, Phase 9)
+
+Phase 1 had two profiles, `kube-system` and `default`. Phase 9 runs a
+slice of the platform on EKS, so the list had to grow. On a Fargate-only
+cluster the list of profiles is also the list of what may run at all.
+
+**Options:**
+
+- **A — one wildcard profile (`*`).** Every namespace works, including
+  ones created later by the golden path. Simplest. But any namespace
+  anyone creates can start billable pods, and a typo'd or unwanted
+  namespace runs instead of failing.
+- **B — one profile per namespace.** Clear, but EKS creates profiles one
+  at a time, a few minutes each, while the control plane is billing.
+  Eight namespaces would add roughly 15 to 20 minutes to every deploy.
+- **C — an explicit list, grouped into three profiles (chosen).**
+  `kube-system`; five platform controllers; the edge proxy and the
+  services. A profile holds at most five selectors, hence the grouping.
+
+**Decision: C.** Deny-by-default, and two fewer profiles to wait for
+than the minimum B would need. The list lives in `FARGATE_NAMESPACES`
+in `infra/lib/cluster-stack.ts`; a unit test spells the namespaces out
+by hand, so adding one is a visible, reviewed change.
+
+**The cost of this choice:** a new golden-path service does not run on
+EKS until its namespace is added and the profile is redeployed. Its pods
+stay `Pending` with the event "no nodes available to schedule pods".
+That is acceptable for a session with one service. It is not acceptable
+for a platform whose promise is a ten-minute self-service onboarding.
+
+**When A (or a prefix) is right:** a long-lived cluster with real teams.
+Then use a wildcard on a naming convention, for example every service
+namespace starts `svc-` and one selector matches `svc-*`, and control
+who may create such namespaces with admission policy (Kyverno) instead
+of with the profile list. Better still, leave Fargate for a managed node
+group or Karpenter, where scheduling does not depend on a list.
+
+**Not in the list on purpose:** `default` (nothing of ours belongs
+there), and `backstage`, `vault`, `monitoring`, which need volumes and
+DaemonSets that Fargate does not offer. They stay on kind.
