@@ -633,7 +633,7 @@ comes first.
 |---|---|---|---|---|
 | 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
 | 2 | Fargate profiles | `kube-system`, `default` | The eight namespaces of the slice, in three profiles | **Done** (ADR-0010 postscript) |
-| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **In progress** (3a role and 3b install built, ADR-0036/0037; 3c Gateway, 3d teardown test to do) |
+| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **In progress** (3a role, 3b install, 3c Gateway built; ADR-0036/0037, ADR-0033 update; 3d teardown test to do) |
 | 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
 | 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
 | 6 | Crossplane | MinIO only | provider-aws, IAM limited to `idp-*` | To do |
@@ -756,6 +756,32 @@ chart and image pinned to 3.6.3 (image by digest).
   Thirteen deliberate breakages each fail.
 - Not proven until the session: that the pod starts on Fargate, finds
   the VPC, and assumes the role.
+
+**3c — Gateway on EKS (built 2026-11-26).**
+[ADR-0033 update](../adr/0033-edge-routing-via-gateway-api.md).
+
+- Two files differ from kind, in `platform/gateway-eks/`: the proxy's
+  Service becomes a `LoadBalancer` that asks for the controller by
+  class (internet-facing NLB, pod IPs as targets, no host ports), and
+  the namespace enforces Pod Security `restricted`.
+- Everything else is the same files. The EKS `gateway` app
+  (`platform/argocd/apps-eks/gateway.yaml`) takes `platform/gateway`
+  minus the kind-only files, plus `platform/gateway-eks`.
+- TLS still ends at Envoy; the NLB forwards TCP.
+- The controller now tags what it creates with `Project=idp`, so the
+  budget alarms and the teardown audit can see the load balancer.
+- Checked: the EKS proxy settings pass a server-side dry run against
+  the Envoy Gateway 1.9.4 schema on kind (nothing changed there). The
+  proxy running on kind meets every `restricted` rule but host ports.
+- Tests: `make eks-apps-test` now covers the gateway; eleven
+  deliberate breakages each fail. One new CDK test pins the
+  `kubernetes.io/role/elb` tag on public subnets. The controller picks
+  subnets by it, and it comes from the EKS construct, not from a line
+  of ours. 102 CDK tests pass.
+- Cost: about $0.03/h (NLB plus three public addresses), already in
+  `docs/COST.md`.
+- Not proven until the session: that the NLB is created, gets
+  healthy targets, and that `curl` from the internet reaches Envoy.
 
 ### Before the session
 

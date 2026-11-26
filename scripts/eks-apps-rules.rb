@@ -45,16 +45,18 @@ files.each do |f|
     next unless a.is_a?(Hash) && a['kind'] == 'Application'
 
     apps[a.dig('metadata', 'name')] = a
-    s = a.dig('spec', 'source') || {}
     ns = a.dig('spec', 'destination', 'namespace')
     bad << "#{name}: namespace #{ns.inspect} has no Fargate profile; its pods would stay Pending" unless fargate.include?(ns)
-    if s['chart']
-      rev = s['targetRevision'].to_s
-      bad << "#{name}: chart version #{rev.inspect} is not an exact version" unless rev =~ /\Av?\d+\.\d+\.\d+\z/
+    # An app has either one `source` or a list of `sources`.
+    ([a.dig('spec', 'source')] + (a.dig('spec', 'sources') || [])).compact.each do |s|
+      if s['chart']
+        rev = s['targetRevision'].to_s
+        bad << "#{name}: chart version #{rev.inspect} is not an exact version" unless rev =~ /\Av?\d+\.\d+\.\d+\z/
+      end
+      tag = s.dig('helm', 'valuesObject', 'image', 'tag')
+      bad << "#{name}: image tag #{tag.inspect} has no sha256 digest" if tag && tag !~ /@sha256:[0-9a-f]{64}\z/
+      bad << "#{name}: image tag is latest" if tag.to_s.start_with?('latest')
     end
-    tag = s.dig('helm', 'valuesObject', 'image', 'tag')
-    bad << "#{name}: image tag #{tag.inspect} has no sha256 digest" if tag && tag !~ /@sha256:[0-9a-f]{64}\z/
-    bad << "#{name}: image tag is latest" if tag.to_s.start_with?('latest')
   end
 end
 
@@ -79,6 +81,8 @@ if (lbc = apps['aws-load-balancer-controller'])
     'Gateway API feature gates must be off: Envoy Gateway owns Gateways' =>
       %w[NLBGatewayAPI ALBGatewayAPI GatewayListenerSet].all? { |k| gates[k] == false },
     'LBCapacityReservation must be off: reserved capacity is billed' => gates['LBCapacityReservation'] == false,
+    'defaultTags must include Project=idp (budgets and the teardown audit look for it)' =>
+      v.dig('defaultTags', 'Project') == 'idp',
   }.each { |msg, ok| bad << "aws-load-balancer-controller: #{msg}" unless ok }
 else
   bad << 'aws-load-balancer-controller: Application not found'
@@ -92,6 +96,61 @@ bad << "bootstrap SA: name must be #{sa_name}" unless sa.dig('metadata', 'name')
 bad << "bootstrap SA: namespace must be #{sa_ns}" unless sa.dig('metadata', 'namespace') == sa_ns
 bad << 'bootstrap SA: role-arn must be the placeholder, not a real ARN' unless arn == '__LB_CONTROLLER_ROLE_ARN__'
 bad << 'bootstrap SA: contains something that looks like an AWS account id' if sa_text =~ /\b\d{12}\b/
+
+# --- the gateway on EKS --------------------------------------------------
+# Shared folder minus kind-only files, plus the EKS folder.
+docs_in = lambda do |dir, skip = []|
+  files_in = Dir[File.join(root, dir, '*.yaml')].sort
+  files_in.reject! { |f| skip.any? { |g| File.fnmatch(g, File.basename(f)) } }
+  files_in.flat_map { |f| YAML.load_stream(File.read(f)).compact }
+end
+if (gw = apps['gateway'])
+  srcs = gw.dig('spec', 'sources') || []
+  shared = srcs.find { |x| x['path'] == 'platform/gateway' }
+  eks = srcs.find { |x| x['path'] == 'platform/gateway-eks' }
+  bad << 'gateway: must have the two sources platform/gateway and platform/gateway-eks' unless shared && eks
+  globs = shared.to_h.dig('directory', 'exclude').to_s.delete('{}').split(',')
+  kind_only = Dir[File.join(root, 'platform/gateway/*-kind.yaml')].map { |f| File.basename(f) }
+  (kind_only + ['namespace.yaml']).each do |f|
+    bad << "gateway: kind-only file #{f} is not excluded from the EKS app" unless globs.any? { |g| File.fnmatch(g, f) }
+  end
+
+  objs = docs_in.call('platform/gateway', globs) + docs_in.call('platform/gateway-eks')
+  ids = objs.map { |o| [o['kind'], o.dig('metadata', 'namespace'), o.dig('metadata', 'name')] }
+  ids.group_by { |i| i }.each { |i, n| bad << "gateway: #{i.compact.join('/')} is defined #{n.size} times" if n.size > 1 }
+  bad << 'gateway: a host port is requested; Fargate has no host to bind it on' if objs.to_s =~ /hostPort|hostNetwork/
+
+  nsobj = objs.find { |o| o['kind'] == 'Namespace' }
+  bad << 'gateway: no Namespace in the EKS set' unless nsobj
+  level = nsobj.to_h.dig('metadata', 'labels', 'pod-security.kubernetes.io/enforce')
+  bad << "gateway: namespace enforces Pod Security #{level.inspect}, expected restricted" unless level == 'restricted'
+
+  gc = objs.find { |o| o['kind'] == 'GatewayClass' }
+  ep = objs.find { |o| o['kind'] == 'EnvoyProxy' }
+  if gc && ep
+    ref = gc.dig('spec', 'parametersRef') || {}
+    same = ref['name'] == ep.dig('metadata', 'name') && ref['namespace'] == ep.dig('metadata', 'namespace')
+    bad << 'gateway: GatewayClass.parametersRef does not point at the EKS EnvoyProxy' unless same
+    svc = ep.dig('spec', 'provider', 'kubernetes', 'envoyService') || {}
+    ann = svc['annotations'] || {}
+    {
+      'Service type must be LoadBalancer' => svc['type'] == 'LoadBalancer',
+      'loadBalancerClass must be service.k8s.aws/nlb (else the built-in code targets nodes; Fargate has none)' =>
+        svc['loadBalancerClass'] == 'service.k8s.aws/nlb',
+      'scheme must be internet-facing (the default is internal)' =>
+        ann['service.beta.kubernetes.io/aws-load-balancer-scheme'] == 'internet-facing',
+      'target type must be ip: Fargate has no instances' =>
+        ann['service.beta.kubernetes.io/aws-load-balancer-nlb-target-type'] == 'ip',
+    }.each { |msg, ok| bad << "gateway: EnvoyProxy #{msg}" unless ok }
+  else
+    bad << 'gateway: GatewayClass or EnvoyProxy missing from the EKS set'
+  end
+  %w[Gateway Certificate HTTPRoute].each do |k|
+    bad << "gateway: no #{k} in the EKS set (was a shared file excluded by mistake?)" unless objs.any? { |o| o['kind'] == k }
+  end
+else
+  bad << 'gateway: Application not found'
+end
 
 if bad.empty?
   puts "eks-apps-test: OK (#{files.size} app(s), #{fargate.size} Fargate namespaces)"

@@ -1,0 +1,24 @@
+---
+# Namespace for the shared edge Gateway and its Envoy proxy. EKS ONLY.
+#
+# WHY a second copy: on kind this namespace must enforce Pod Security
+# `privileged`, because the proxy binds host ports 80/443
+# (platform/gateway/namespace.yaml). On EKS a load balancer brings the
+# traffic, the proxy needs no host port, and the exception is not needed.
+#
+# `restricted` is the strictest level. Checked against the running proxy
+# on kind (2026-11-26): both containers run as non-root, drop all
+# capabilities, forbid privilege escalation and use the default seccomp
+# profile. The host ports were the only thing over the line.
+#
+# There is no Kyverno on the EKS slice, so Pod Security is the only
+# admission control here. That is why it is at the strictest level.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/part-of: platform-edge
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

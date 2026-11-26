@@ -74,6 +74,14 @@ spec:
           create: false
           name: aws-load-balancer-controller
 
+        # Added to everything the controller creates (load balancer,
+        # target groups, security groups). The budget alarms and the
+        # teardown audit find this project's resources by Project=idp;
+        # without it the load balancer would be invisible to both.
+        defaultTags:
+          Project: idp
+          ManagedBy: aws-load-balancer-controller
+
         # Fargate has no instances to register; send traffic to pod IPs.
         defaultTargetType: ip
 

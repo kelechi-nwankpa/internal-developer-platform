@@ -1,0 +1,80 @@
+---
+# How the Envoy proxy pods are run and reached. EKS ONLY.
+#
+# Same name as the kind version (platform/gateway/envoyproxy-kind.yaml),
+# so the GatewayClass, the Gateway and every HTTPRoute are shared
+# unchanged. This is the only file where the two clusters differ in how
+# traffic arrives:
+#
+#   kind:  Mac port 443 -> node host port -> Envoy pod
+#   EKS:   internet -> AWS network load balancer (NLB) -> Envoy pod IP
+#
+# The NLB only forwards TCP. TLS still ends at Envoy, with the same
+# certificate Secret, so the Gateway's listeners do not change.
+#
+# See: docs/adr/0033-edge-routing-via-gateway-api.md (postscript)
+#      docs/phases/phase-9-eks-activation.md (gap 3, task 3c)
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: edge-proxy
+  namespace: gateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        # Ask for the AWS Load Balancer Controller by name. Without a
+        # class, Kubernetes' built-in AWS code would try to make a classic
+        # load balancer that targets nodes, and Fargate has none.
+        loadBalancerClass: service.k8s.aws/nlb
+        annotations:
+          # The default is `internal` (reachable only inside the VPC).
+          service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+          # Send to the pod's IP, not to a node. Also the controller's
+          # default (apps-eks/aws-load-balancer-controller.yaml); repeated
+          # here so this file can be read alone.
+          service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+          # The NLB has one address per zone but there is one Envoy pod,
+          # in one zone. Without this, the two addresses in the other
+          # zones lead nowhere.
+          service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true
+      envoyDeployment:
+        # One pod. Each Fargate pod is billed and a three-hour demo does
+        # not need failover. Raise to 2+ (one per zone) for anything real.
+        replicas: 1
+        # No strategy override: without host ports the default rolling
+        # update works (the kind version needs Recreate).
+        pod:
+          labels:
+            app.kubernetes.io/part-of: platform-edge
+        # Fargate sizes the pod from the requests of all containers, so
+        # both get explicit ones (smallest size: 0.25 vCPU, 0.5 GB).
+        container:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              template:
+                spec:
+                  containers:
+                    # The shutdown sidecar has no resources field in the
+                    # EnvoyProxy API.
+                    - name: shutdown-manager
+                      resources:
+                        requests:
+                          cpu: 10m
+                          memory: 32Mi
+                        limits:
+                          cpu: 50m
+                          memory: 64Mi

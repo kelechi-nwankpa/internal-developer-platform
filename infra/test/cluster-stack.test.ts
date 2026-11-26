@@ -40,15 +40,16 @@ function synthClusterStack(overrides: Partial<ClusterStackCtorProps> = {}) {
     ...overrides,
   });
 
-  return { stack, template: Template.fromStack(stack) };
+  return { stack, template: Template.fromStack(stack), vpcTemplate: Template.fromStack(scaffoldStack) };
 }
 
 describe('ClusterStack', () => {
   let template: Template;
   let stack: ClusterStack;
+  let vpcTemplate: Template;
 
   beforeAll(() => {
-    ({ stack, template } = synthClusterStack());
+    ({ stack, template, vpcTemplate } = synthClusterStack());
   });
 
   // Cluster and Fargate profiles are wrapped in CDK's Lambda-backed custom
@@ -176,6 +177,28 @@ describe('ClusterStack', () => {
       const exported = Object.values(FARGATE_NAMESPACES).flat().sort();
       expect(namespaces().sort()).toEqual(exported);
     });
+  });
+
+  // The AWS Load Balancer Controller picks subnets for an internet-facing
+  // NLB by this tag. The EKS construct adds it to the VPC's subnets; no
+  // line of ours does. If a CDK upgrade stopped doing that, the Gateway
+  // would get no load balancer and nothing else would fail first.
+  it('tags public subnets for internet-facing load balancers, private ones for internal', () => {
+    const subnets = Object.values(vpcTemplate.findResources('AWS::EC2::Subnet'));
+    const tagsOf = (r: { [key: string]: any }): Record<string, string> =>
+      Object.fromEntries(((r.Properties.Tags ?? []) as { Key: string; Value: string }[]).map((t) => [t.Key, t.Value]));
+    const pub = subnets.filter((r) => tagsOf(r)['aws-cdk:subnet-type'] === 'Public');
+    const priv = subnets.filter((r) => tagsOf(r)['aws-cdk:subnet-type'] === 'Private');
+    expect(pub).toHaveLength(3);
+    expect(priv).toHaveLength(3);
+    for (const r of pub) {
+      expect(tagsOf(r)['kubernetes.io/role/elb']).toBe('1');
+      expect(tagsOf(r)['kubernetes.io/role/internal-elb']).toBeUndefined();
+    }
+    for (const r of priv) {
+      expect(tagsOf(r)['kubernetes.io/role/internal-elb']).toBe('1');
+      expect(tagsOf(r)['kubernetes.io/role/elb']).toBeUndefined();
+    }
   });
 
   it('provisions zero node groups (Fargate-only — ADR-0010)', () => {

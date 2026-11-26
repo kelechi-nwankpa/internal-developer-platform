@@ -136,3 +136,39 @@ deferring (a large new component inside a cleanup wave) still stands.
 Verified: `curl -k --resolve platform-hello.idp.seniormankelz.dev:443:127.0.0.1
 https://platform-hello.idp.seniormankelz.dev/hello` returns 200 with the
 S3 round-trip; plain HTTP returns 301.
+
+## Update 2026-11-26 — the EKS side, prepared (Phase 9, gap 3)
+
+Nothing is deployed yet; this records how the edge differs on EKS.
+
+- **Only two files differ.** `platform/gateway-eks/envoyproxy.yaml`
+  (the proxy's Service is a `LoadBalancer` with
+  `loadBalancerClass: service.k8s.aws/nlb`, internet-facing, IP
+  targets; no host ports) and `platform/gateway-eks/namespace.yaml`
+  (Pod Security `restricted`). GatewayClass, Gateway, certificate
+  and redirect are the same files as on kind.
+- **How they are combined.** The EKS `gateway` Application has two
+  sources: `platform/gateway` minus `*-kind.yaml` and
+  `namespace.yaml`, plus `platform/gateway-eks`. Rejected: a second
+  copy of every file (drift), and Kustomize base + overlays (right
+  once more than two files differ; today it would move every file of
+  a working kind setup).
+- **TLS still ends at Envoy.** The NLB forwards TCP only, so the
+  listeners and the certificate Secret do not change, and the NLB
+  needs no certificate permissions
+  ([ADR-0036](0036-trimmed-iam-policy-for-load-balancer-controller.md)).
+  Rejected: TLS at the NLB with an ACM certificate. It would put a
+  second certificate system next to cert-manager and send plain HTTP
+  inside the VPC.
+- **Explicit load balancer class**, not the controller's "make me the
+  default" webhook: the choice is visible in Git and cannot block
+  Service creation while the controller is starting.
+- **`restricted` was checked, not assumed.** The proxy running on
+  kind already meets every `restricted` rule except the host ports.
+- **Cross-zone on.** One Envoy pod lives in one zone; the NLB has an
+  address in each of three. Without cross-zone the other two
+  addresses lead nowhere.
+- **Open to the internet on 80/443**, on purpose: it is a public
+  demo. Narrow with `loadBalancerSourceRanges` for anything else.
+- **Cost:** about $0.03/h for the NLB and its three public
+  addresses, already counted in `docs/COST.md`.

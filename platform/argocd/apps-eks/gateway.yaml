@@ -1,0 +1,65 @@
+---
+# gateway — the shared edge Gateway, as it runs on EKS.
+#
+# WHY two sources: everything about the edge is the same on kind and EKS
+# (GatewayClass, Gateway, certificate, HTTP redirect) except two files:
+# how the proxy is reached, and the namespace's Pod Security level.
+# So this app takes the shared folder minus its two kind-only files, and
+# adds the EKS versions of those two from platform/gateway-eks/.
+#
+# Alternatives rejected:
+#   - Copy all six files: two copies of the Gateway drift apart, and the
+#     point of the project is "same manifests on kind and EKS".
+#   - Kustomize base + overlays: the usual answer, and the right one once
+#     more than two files differ. Today it would move every file of a
+#     working kind setup to change two.
+#
+# `make eks-apps-test` fails if a kind-only file is not excluded here.
+#
+# See: docs/adr/0033-edge-routing-via-gateway-api.md (postscript)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  sources:
+    # Shared with kind.
+    - repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+      targetRevision: HEAD
+      path: platform/gateway
+      directory:
+        # Any file named *-kind.yaml is kind-only by convention.
+        # namespace.yaml is kind-only by content (privileged).
+        exclude: '{*-kind.yaml,namespace.yaml}'
+    # EKS-only replacements for the two excluded files.
+    - repoURL: https://github.com/kelechi-nwankpa/internal-developer-platform.git
+      targetRevision: HEAD
+      path: platform/gateway-eks
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # The Gateway needs Envoy Gateway's CRDs, the certificate needs
+    # cert-manager, and the load balancer needs its controller. Retry
+    # until they are all there.
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - ServerSideApply=true
