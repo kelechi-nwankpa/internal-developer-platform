@@ -40,7 +40,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0004](0004-single-region-with-multi-region-readiness.md) | Single region deployment, multi-region-ready design | Accepted | 2026-07-03 |
 | [0005](0005-local-first-development-with-kind.md) | Local-first development with kind | Accepted | 2026-07-03 |
 | [0006](0006-gitignore-cdk-context-json.md) | Git-ignore `cdk.context.json` | Accepted | 2026-07-03 |
-| [0007](0007-vpc-endpoints-instead-of-nat-gateway.md) | VPC Interface endpoints instead of a NAT Gateway | Accepted | 2026-07-08 |
+| [0007](0007-vpc-endpoints-instead-of-nat-gateway.md) | VPC Interface endpoints instead of a NAT Gateway | Superseded by [0035](0035-nat-gateway-for-eks-sessions.md) | 2026-07-08 |
 | [0008](0008-customer-managed-kms-keys.md) | Customer-managed KMS keys, one per data domain | Accepted | 2026-07-09 |
 | [0009](0009-github-oidc-federation.md) | GitHub Actions authenticates to AWS via OIDC, not long-lived keys | Accepted | 2026-07-09 |
 | [0010](0010-fargate-only-eks-cluster.md) | Fargate-only EKS cluster (no managed node group) | Accepted | 2026-07-11 |
@@ -68,6 +68,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0032](0032-cicd-pipeline-reusable-workflow-oidc-cosign.md) | CI/CD pipeline: reusable workflow + OIDC + semver/SHA tags + CI-commits-manifest + Trivy/cosign | Accepted | 2026-10-10 |
 | [0033](0033-edge-routing-via-gateway-api.md) | Route edge traffic through the Gateway API; ship no Ingress until then | Accepted | 2026-11-20 |
 | [0034](0034-bucket-access-on-aws-via-irsa.md) | Bucket access on AWS through IRSA, not a stored key | Accepted | 2026-11-21 |
+| [0035](0035-nat-gateway-for-eks-sessions.md) | One NAT Gateway for EKS sessions; no Interface endpoints | Accepted | 2026-11-26 |
 
 ## References
 

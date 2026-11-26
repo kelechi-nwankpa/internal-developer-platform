@@ -54,7 +54,8 @@ new CostStack(app, 'CostStack', {
   ],
 });
 
-// Network foundation — VPC with no NAT, VPC endpoints only (ADR-0007).
+// Network foundation — VPC with one NAT Gateway and the two free
+// Gateway endpoints; no Interface endpoints (ADR-0035).
 const vpcStack = new VpcStack(app, 'VpcStack', {
   env,
 });

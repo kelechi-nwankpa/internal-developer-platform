@@ -22,8 +22,9 @@ import { Construct } from 'constructs';
  */
 export interface ClusterStackProps extends StackProps {
   /**
-   * VPC produced by VpcStack. The cluster lives in the private isolated
-   * subnets and never routes to the internet (see ADR-0007).
+   * VPC produced by VpcStack. The cluster lives in the private subnets,
+   * which reach the internet only outbound, through one NAT Gateway
+   * (see ADR-0035).
    */
   readonly vpc: ec2.IVpc;
 
@@ -103,7 +104,10 @@ export class ClusterStack extends Stack {
       clusterName,
       version,
       vpc: props.vpc,
-      vpcSubnets: [{ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }],
+      // Private subnets with a route to the NAT (ADR-0035). Fargate pods
+      // may only run in private subnets, and the platform's pods need the
+      // internet (GitHub, ghcr.io, cgr.dev, Let's Encrypt).
+      vpcSubnets: [{ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }],
       defaultCapacity: 0,                          // no managed node group
       endpointAccess: EndpointAccess.PUBLIC_AND_PRIVATE,
       mastersRole: this.clusterAdminRole,

@@ -1,6 +1,6 @@
 # 0007 — VPC Interface endpoints instead of a NAT Gateway
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0035](0035-nat-gateway-for-eks-sessions.md) on 2026-11-26. Kept for its reasoning: it was right while the cluster ran no workloads.
 - **Date:** 2026-07-08
 - **Deciders:** project owner
 - **Consulted:** —

@@ -613,22 +613,69 @@ read-only audit that can, and the ordered teardown tested against a fake
 AWS that records every delete, including the tests failing when the
 safety checks are removed.
 
-## Wave 2 — deferred until the cap is raised
+## Wave 2 — the live EKS session
 
-The live EKS session. Before it:
+**Status 2026-11-26:** cap raised to $40; timer email confirmed; Vault
+restore test passed. The session itself is NOT ready to start.
+
+### What I got wrong
+
+Wave 1's close-out said everything that costs $0 was done. It was not.
+Wave 1 built the safety side (preflight, teardown, audit, timer) and
+proved IRSA offline. It did not change the AWS code, which still
+described the Phase 1 cluster: no internet egress, two Fargate
+profiles, nothing to install a platform with. That work is also $0 and
+comes first.
+
+### Preparation ($0, nothing deployed), one task per gap
+
+| # | Gap | Today | Needed | State |
+|---|---|---|---|---|
+| 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
+| 2 | Fargate profiles | `kube-system`, `default` | One per platform namespace | To do |
+| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | To do |
+| 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
+| 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
+| 6 | Crossplane | MinIO only | provider-aws, IAM limited to `idp-*` | To do |
+| 7 | Install path | One root app (kind) | A smaller root app for EKS | To do |
+
+Then: a session runbook with every command, its expected output and the
+abort point for each step.
+
+#### Gap 1 — network (done 2026-11-26)
+
+`VpcStack` now has one NAT Gateway shared by three private subnets, the
+two free Gateway endpoints, and no Interface endpoints.
+[ADR-0035](../adr/0035-nat-gateway-for-eks-sessions.md) supersedes
+ADR-0007. About $0.24/h cheaper than Phase 1's network.
+
+- Given up: "a compromised pod cannot reach the internet". Accepted for
+  a three-hour session with no data; the ADR says when it would not be.
+- Tests: 13 for the VPC, including that no private subnet routes
+  straight to the internet gateway and nothing gets a public address.
+  Six deliberate breakages (three NATs, no NAT, private subnets made
+  public, public addresses on, an Interface endpoint back, the S3
+  endpoint dropped) each fail at least one test. 77 CDK tests pass;
+  `cdk synth --all` is clean under cdk-nag.
+- Not proven until the session: that the cluster deploys through the
+  NAT (Phase 1 failed here once for lack of an endpoint), and the NAT's
+  price on our own bill.
+
+### Before the session
 
 - ~~Raise the cap.~~ Done 2026-11-26: the owner set $40 (`BUDGET_CAP_USD`
   in the Makefile, docs/COST.md and CLAUDE.md, one commit).
 - Check the timer topic still has one confirmed email subscription
   (confirmed 2026-11-26).
+- Open design point: create the DNS zone ahead of the cluster, so the
+  Namecheap delegation can spread while nothing bills by the hour. The
+  timer counts from the oldest session stack, so the zone must not
+  start its clock.
 
-During it:
+### During the session
 
-- NLB in place of host ports, Let's Encrypt DNS-01 for the wildcard,
-  Route53 provider for external-dns.
-- Create the `idp-cluster` EnvironmentConfig, limit the Crossplane
-  provider's IAM rights to `role/idp-*` and `policy/idp-*`, switch the
-  XRD's default Composition to S3.
+- Create the `idp-cluster` EnvironmentConfig; switch the XRD's default
+  Composition to S3.
 - First-run checks: a pod reads its bucket with no stored key; the
   load-balancer controller's names and tags match what the teardown
   sweep expects; `make aws-down` ends "complete and verified".

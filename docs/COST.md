@@ -122,7 +122,7 @@ Fixed costs per session: Route 53 zone $0.50, KMS ~$0.10, NAT data
 | One failed attempt + retry (6 h) | ~$3.70 |
 | Session forgotten for 24 h | ~$12 |
 | Same 24 h on an extended-support version | ~$27 |
-| If interface endpoints are kept as well (18 ENIs) | add ~$0.24/h |
+| If interface endpoints had been kept as well (9 endpoints × 3 AZs) | add ~$0.30/h |
 
 What this means for the cap: the planned session fits in roughly $3, but
 a safe margin for one retry plus a mistake is **about $10–12 of

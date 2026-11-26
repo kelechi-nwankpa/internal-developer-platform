@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Template } from 'aws-cdk-lib/assertions';
 import { VpcStack } from '../lib/vpc-stack';
 
 describe('VpcStack', () => {
@@ -27,39 +27,72 @@ describe('VpcStack', () => {
     template.resourceCountIs('AWS::EC2::Subnet', 6);
   });
 
-  it('creates ZERO NAT Gateways (ADR-0007)', () => {
-    template.resourceCountIs('AWS::EC2::NatGateway', 0);
-    template.resourceCountIs('AWS::EC2::EIP', 0);
+  it('creates exactly ONE NAT Gateway with one Elastic IP (ADR-0035)', () => {
+    // One per AZ would triple the hourly cost for redundancy a
+    // three-hour session does not need.
+    template.resourceCountIs('AWS::EC2::NatGateway', 1);
+    template.resourceCountIs('AWS::EC2::EIP', 1);
   });
 
-  it('creates the two free Gateway endpoints (S3, DynamoDB)', () => {
-    const endpoints = template.findResources('AWS::EC2::VPCEndpoint', {
+  it('puts the NAT Gateway in a public subnet', () => {
+    const publicSubnets = Object.entries(template.findResources('AWS::EC2::Subnet'))
+      .filter(([, r]) => r.Properties.Tags.some(
+        (t: { Key: string; Value: string }) => t.Key === 'aws-cdk:subnet-type' && t.Value === 'Public'))
+      .map(([id]) => id);
+    expect(publicSubnets).toHaveLength(3);
+    const [nat] = Object.values(template.findResources('AWS::EC2::NatGateway'));
+    expect(publicSubnets).toContain(nat.Properties.SubnetId.Ref);
+  });
+
+  it('gives every private subnet a default route to that one NAT Gateway', () => {
+    const [natId] = Object.keys(template.findResources('AWS::EC2::NatGateway'));
+    const routes = Object.values(template.findResources('AWS::EC2::Route'));
+    const viaNat = routes.filter((r) => r.Properties.NatGatewayId !== undefined);
+    expect(viaNat).toHaveLength(3);
+    for (const r of viaNat) {
+      expect(r.Properties.DestinationCidrBlock).toBe('0.0.0.0/0');
+      expect(r.Properties.NatGatewayId.Ref).toBe(natId);
+    }
+  });
+
+  it('never gives a private subnet a direct route to the internet gateway', () => {
+    const tables = template.findResources('AWS::EC2::RouteTable');
+    const isPrivate = (tableId: string) => tables[tableId].Properties.Tags.some(
+      (t: { Key: string; Value: string }) => t.Key === 'aws-cdk:subnet-type' && t.Value === 'Private');
+    const viaIgw = Object.values(template.findResources('AWS::EC2::Route'))
+      .filter((r) => r.Properties.GatewayId !== undefined);
+    expect(viaIgw).toHaveLength(3);
+    for (const r of viaIgw) {
+      expect(isPrivate(r.Properties.RouteTableId.Ref)).toBe(false);
+    }
+  });
+
+  it('does not hand out public IPs to anything launched in a public subnet', () => {
+    const subnets = Object.values(template.findResources('AWS::EC2::Subnet'));
+    for (const s of subnets) {
+      expect(s.Properties.MapPublicIpOnLaunch).toBe(false);
+    }
+  });
+
+  it('keeps the two free Gateway endpoints (S3, DynamoDB) on the private route tables', () => {
+    const endpoints = Object.values(template.findResources('AWS::EC2::VPCEndpoint', {
       Properties: { VpcEndpointType: 'Gateway' },
-    });
-    expect(Object.keys(endpoints)).toHaveLength(2);
+    }));
+    expect(endpoints).toHaveLength(2);
+    for (const e of endpoints) {
+      expect(e.Properties.RouteTableIds.length).toBeGreaterThanOrEqual(3);
+    }
   });
 
-  it('creates the 9 required Interface endpoints (Fargate + kubectl handler + Phase 2 ALB)', () => {
-    // 5 runtime endpoints (Fargate pod ops): ECR api, ECR dkr, Logs, STS, KMS
-    // 3 deploy-time endpoints (CDK kubectl handler in isolated subnets): EC2, EKS, Lambda
-    // 1 Phase 2 anticipation: ELB
-    const endpoints = template.findResources('AWS::EC2::VPCEndpoint', {
-      Properties: { VpcEndpointType: 'Interface' },
-    });
-    expect(Object.keys(endpoints)).toHaveLength(9);
+  it('creates NO Interface endpoints: with a NAT they are a second, paid route (ADR-0035)', () => {
+    const all = template.findResources('AWS::EC2::VPCEndpoint');
+    const notGateway = Object.values(all).filter((e) => e.Properties.VpcEndpointType !== 'Gateway');
+    expect(notGateway).toHaveLength(0);
+    expect(Object.keys(all)).toHaveLength(2);
   });
 
-  it('scopes the endpoint security group to the VPC CIDR only (no wildcard)', () => {
-    template.hasResourceProperties('AWS::EC2::SecurityGroup', {
-      SecurityGroupIngress: Match.arrayWith([
-        Match.objectLike({
-          CidrIp: '10.0.0.0/16',
-          FromPort: 443,
-          ToPort: 443,
-          IpProtocol: 'tcp',
-        }),
-      ]),
-    });
+  it('creates no security group of its own (the endpoint group went with the endpoints)', () => {
+    template.resourceCountIs('AWS::EC2::SecurityGroup', 0);
   });
 
   it('enables VPC Flow Logs to a customer-owned CloudWatch log group', () => {
@@ -73,7 +106,6 @@ describe('VpcStack', () => {
 
   it('exposes the VPC as a stack member for downstream stacks', () => {
     expect(stack.vpc).toBeDefined();
-    expect(stack.endpointSecurityGroup).toBeDefined();
   });
 
   it('matches the snapshot', () => {

@@ -34,13 +34,20 @@ export interface VpcStackProps extends StackProps {
 /**
  * The network foundation for the IDP platform.
  *
- * Design (see docs/adr/0007-vpc-endpoints-instead-of-nat-gateway.md):
- * - 3 AZs, one public and one private-isolated subnet per AZ.
- * - No NAT Gateway. All egress to AWS services goes through Gateway
- *   endpoints (S3, DynamoDB — free) or Interface endpoints (ECR api,
- *   ECR dkr, CloudWatch Logs, STS, KMS — priced per AZ-hour).
- * - Endpoint security group only accepts 443/tcp from the VPC CIDR —
- *   no wildcard sources.
+ * Design (see docs/adr/0035-nat-gateway-for-eks-sessions.md, which
+ * replaces ADR-0007's "no NAT" decision):
+ * - 3 AZs, one public and one private subnet per AZ.
+ * - ONE NAT Gateway, in one public subnet. Every private subnet routes
+ *   internet-bound traffic through it. The platform needs the internet:
+ *   ArgoCD pulls from GitHub, images come from ghcr.io and cgr.dev,
+ *   cert-manager talks to Let's Encrypt. Endpoints cannot provide that.
+ * - One, not one per AZ: an AZ outage would cut egress for all three
+ *   AZs, which a three-hour session accepts and production would not.
+ * - Gateway endpoints for S3 and DynamoDB stay. They are free, and image
+ *   layers from ECR travel through S3, so that traffic skips the NAT's
+ *   per-gigabyte charge.
+ * - No Interface endpoints. With a NAT they would be a second, paid
+ *   route to the same AWS services (~$0.30/h for the nine we had).
  * - VPC Flow Logs stream to a customer-owned CloudWatch log group with
  *   one-month retention.
  *
@@ -51,9 +58,6 @@ export class VpcStack extends Stack {
   /** The VPC created by this stack. */
   public readonly vpc: ec2.Vpc;
 
-  /** The security group attached to every Interface endpoint. */
-  public readonly endpointSecurityGroup: ec2.SecurityGroup;
-
   constructor(scope: Construct, id: string, props: VpcStackProps = {}) {
     super(scope, id, props);
 
@@ -62,48 +66,36 @@ export class VpcStack extends Stack {
     const flowLogRetention = props.flowLogRetention ?? logs.RetentionDays.ONE_MONTH;
 
     // -----------------------------------------------------------------
-    // VPC — public + private-isolated subnets in each AZ, no NAT.
+    // VPC — public + private subnets in each AZ, one shared NAT Gateway.
     // -----------------------------------------------------------------
     this.vpc = new ec2.Vpc(this, 'Vpc', {
       ipAddresses: ec2.IpAddresses.cidr(cidr),
       maxAzs,
-      natGateways: 0,                              // ADR-0007
+      natGateways: 1,                              // ADR-0035: one, shared by all AZs
       restrictDefaultSecurityGroup: true,           // deny-by-default on the default SG
       subnetConfiguration: [
         {
           name: 'public',
           subnetType: ec2.SubnetType.PUBLIC,
-          cidrMask: 24,                             // /24 — 256 IPs, plenty for ALBs
+          cidrMask: 24,                             // /24 — 256 IPs: load balancers + the NAT
           mapPublicIpOnLaunch: false,               // no automatic public IPs; opt-in per resource
         },
         {
           name: 'private',
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, // default route → the NAT
           cidrMask: 20,                             // /20 — ~4k IPs, headroom for Pods
         },
       ],
     });
 
     // -----------------------------------------------------------------
-    // Security group for Interface endpoints.
-    // Rule: 443/tcp from the VPC CIDR only. No wildcard.
-    // -----------------------------------------------------------------
-    this.endpointSecurityGroup = new ec2.SecurityGroup(this, 'EndpointSecurityGroup', {
-      vpc: this.vpc,
-      description: 'Ingress to VPC Interface endpoints from workloads in this VPC only',
-      allowAllOutbound: false,
-    });
-    // Use the literal `cidr` string (not `this.vpc.vpcCidrBlock`, which
-    // resolves to an Fn::GetAtt token). cdk-nag's AwsSolutions-EC23 rule
-    // needs a literal at synth time to prove there is no wildcard.
-    this.endpointSecurityGroup.addIngressRule(
-      ec2.Peer.ipv4(cidr),
-      ec2.Port.tcp(443),
-      'HTTPS from workloads in the VPC',
-    );
-
-    // -----------------------------------------------------------------
     // Gateway endpoints — free. Route table entries; no ENIs, no cost.
+    // Kept alongside the NAT on purpose: S3 traffic (which includes ECR
+    // image layers) takes this route and is not billed per GB by the NAT.
+    //
+    // No Interface endpoints: see the class comment and ADR-0035. If the
+    // platform ever runs always-on, add them back for the busiest AWS
+    // services and keep the NAT for everything else.
     // -----------------------------------------------------------------
     this.vpc.addGatewayEndpoint('S3GatewayEndpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
@@ -111,55 +103,6 @@ export class VpcStack extends Stack {
     this.vpc.addGatewayEndpoint('DynamoDbGatewayEndpoint', {
       service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
     });
-
-    // -----------------------------------------------------------------
-    // Interface endpoints — one ENI per AZ per endpoint.
-    //
-    // Runtime endpoints (Fargate + IRSA + CloudWatch):
-    //   - ecr.api  : image manifest / auth flow
-    //   - ecr.dkr  : image layer downloads (rides on the S3 Gateway endpoint)
-    //   - logs     : Fargate log shipping
-    //   - sts      : IRSA token vending
-    //   - kms      : EKS secrets envelope encryption, ECR image layer decryption
-    //
-    // Deploy-time endpoints (CDK's aws-eks L2 kubectl handler runs in these
-    // isolated subnets; without these, the Provider Framework's SDK calls to
-    // waitUntilFunctionActive / describeCluster / ENI provisioning time out
-    // — this exact failure took ClusterStack down on our first deploy):
-    //   - ec2      : Lambda ENI provisioning + describe operations
-    //   - eks      : eks:DescribeCluster + token vending for kubectl auth
-    //   - lambda   : waitUntilFunctionActive waiter that reaches Lambda API
-    //
-    // Phase 2 anticipation — added now to avoid another VpcStack redeploy:
-    //   - elb      : AWS Load Balancer Controller (ALB provisioning)
-    //
-    // See ADR-0007 for the trade-off (per-AZ endpoint cost vs no-NAT posture).
-    // -----------------------------------------------------------------
-    const interfaceServices: Record<string, ec2.InterfaceVpcEndpointAwsService> = {
-      EcrApiEndpoint: ec2.InterfaceVpcEndpointAwsService.ECR,
-      EcrDkrEndpoint: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
-      LogsEndpoint: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-      StsEndpoint: ec2.InterfaceVpcEndpointAwsService.STS,
-      KmsEndpoint: ec2.InterfaceVpcEndpointAwsService.KMS,
-      Ec2Endpoint: ec2.InterfaceVpcEndpointAwsService.EC2,
-      EksEndpoint: ec2.InterfaceVpcEndpointAwsService.EKS,
-      LambdaEndpoint: ec2.InterfaceVpcEndpointAwsService.LAMBDA,
-      ElbEndpoint: ec2.InterfaceVpcEndpointAwsService.ELASTIC_LOAD_BALANCING,
-    };
-
-    for (const [id, service] of Object.entries(interfaceServices)) {
-      this.vpc.addInterfaceEndpoint(id, {
-        service,
-        privateDnsEnabled: true,
-        securityGroups: [this.endpointSecurityGroup],
-        subnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-        // `open: false` prevents CDK from auto-adding a duplicate ingress
-        // rule that references `vpc.vpcCidrBlock` as a CloudFormation token
-        // (Fn::GetAtt). The single ingress rule we added on the SG above
-        // uses a literal CIDR, which cdk-nag AwsSolutions-EC23 can inspect.
-        open: false,
-      });
-    }
 
     // -----------------------------------------------------------------
     // VPC Flow Logs → customer-owned CloudWatch log group.

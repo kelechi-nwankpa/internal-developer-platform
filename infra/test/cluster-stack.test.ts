@@ -25,9 +25,10 @@ function synthClusterStack(overrides: Partial<ClusterStackCtorProps> = {}) {
   });
   const vpc = new ec2.Vpc(scaffoldStack, 'HarnessVpc', {
     maxAzs: 3,
-    natGateways: 0,
+    natGateways: 1,
     subnetConfiguration: [
-      { name: 'p', subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 20 },
+      { name: 'pub', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+      { name: 'p', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 20 },
     ],
   });
   const eksSecretsKey = new kms.Key(scaffoldStack, 'HarnessKey');
