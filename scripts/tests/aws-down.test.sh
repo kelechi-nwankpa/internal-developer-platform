@@ -8,6 +8,11 @@
 # Part 3: the whole teardown against a fake `aws` and a fake `npx cdk`
 #         that record every changing call. The record must equal the
 #         expected list exactly, in order.
+#         The fake account holds what the AWS Load Balancer Controller
+#         creates for the Gateway (names and tags as in its source,
+#         v3.6.3): one network load balancer, two target groups, two
+#         security groups. Another project has the same things, with
+#         the same tags, in its own VPC.
 
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -36,6 +41,9 @@ expect "network interface: ours and unused only (in-use and other VPCs are skipp
 expect "security group: controller-made in our VPC; not default, not CloudFormation's, not other VPCs" \
   "aws ec2 delete-security-group --region eu-west-1 --group-id sg-k8s" \
   "$(plan sgs eu-west-1 "$VPCS" <<<'{"SecurityGroups":[{"GroupId":"sg-k8s","GroupName":"k8s-elb","VpcId":"vpc-ours"},{"GroupId":"sg-def","GroupName":"default","VpcId":"vpc-ours"},{"GroupId":"sg-cfn","GroupName":"x","VpcId":"vpc-ours","Tags":[{"Key":"aws:cloudformation:stack-name","Value":"VpcStack"}]},{"GroupId":"sg-shop","GroupName":"y","VpcId":"vpc-shop"}]}')"
+expect "security group: the controller's two are planned; a look-alike with the same tags in another VPC is not" \
+  "aws ec2 delete-security-group --region eu-west-1 --group-id sg-front"$'\n'"aws ec2 delete-security-group --region eu-west-1 --group-id sg-back" \
+  "$(plan sgs eu-west-1 "$VPCS" <<<'{"SecurityGroups":[{"GroupId":"sg-front","GroupName":"k8s-gateway-envoygat-0a1b2c3d4e","VpcId":"vpc-ours","Tags":[{"Key":"elbv2.k8s.aws/cluster","Value":"idp"},{"Key":"service.k8s.aws/resource","Value":"ManagedLBSecurityGroup"},{"Key":"Project","Value":"idp"}]},{"GroupId":"sg-back","GroupName":"k8s-traffic-idp-0a1b2c3d4e","VpcId":"vpc-ours","Tags":[{"Key":"elbv2.k8s.aws/cluster","Value":"idp"},{"Key":"elbv2.k8s.aws/resource","Value":"backend-sg"},{"Key":"Project","Value":"idp"}]},{"GroupId":"sg-shop","GroupName":"k8s-traffic-idp-ffffffffff","VpcId":"vpc-shop","Tags":[{"Key":"elbv2.k8s.aws/cluster","Value":"idp"},{"Key":"Project","Value":"idp"}]}]}')"
 expect "DNS: extra records are planned; the zone's own NS and SOA are not" \
   'delete_record Z1 {"Name":"platform-hello.idp.seniormankelz.dev.","Type":"A","TTL":300,"ResourceRecords":[{"Value":"1.2.3.4"}]}'$'\n''delete_record Z1 {"Name":"sub.idp.seniormankelz.dev.","Type":"NS","TTL":300}' \
   "$(plan records Z1 idp.seniormankelz.dev. <<<'{"ResourceRecordSets":[{"Name":"idp.seniormankelz.dev.","Type":"NS","TTL":172800},{"Name":"idp.seniormankelz.dev.","Type":"SOA","TTL":900},{"Name":"platform-hello.idp.seniormankelz.dev.","Type":"A","TTL":300,"ResourceRecords":[{"Value":"1.2.3.4"}]},{"Name":"sub.idp.seniormankelz.dev.","Type":"NS","TTL":300}]}')"
@@ -64,6 +72,13 @@ cat >"$FAKE/aws" <<'EOF'
 #!/usr/bin/env bash
 a="$*"
 done_() { grep -qF -- "$1" "$FAKE_LOG" 2>/dev/null; }
+# A security group cannot be deleted while a network interface uses it.
+# The load balancer's interface outlives the load balancer by a while.
+if [[ "$a" == *" delete-security-group "* ]]; then
+  if [[ "${FAKE_SG_STUCK:-}" == 1 ]] || ! done_ delete-network-interface; then
+    echo "An error occurred (DependencyViolation)" >&2; exit 254
+  fi
+fi
 case "$a" in
   *" delete-"* | *" detach-"* | *" change-resource-record-sets "*) echo "aws ${a:0:110}" >>"$FAKE_LOG"; exit 0 ;;
 esac
@@ -71,16 +86,37 @@ case "$a" in
   "sts get-caller-identity"*) echo '{}' ;;
   "ec2 describe-vpcs"*"--filters"*) if done_ "cdk destroy VpcStack"; then echo '[]'; else echo '["vpc-ours"]'; fi ;;
   "elbv2 describe-load-balancers"*)
+    # No other project's load balancer here: the audit reports every load
+    # balancer in the region on purpose. The planner test above covers it.
     if done_ delete-load-balancer; then echo '{"LoadBalancers":[]}'
-    else echo '{"LoadBalancers":[{"LoadBalancerArn":"arn:lb/ours","LoadBalancerName":"ours","Type":"network","VpcId":"vpc-ours"}]}'; fi ;;
-  "elbv2 describe-target-groups"*) echo '{"TargetGroups":[]}' ;;
+    else echo '{"LoadBalancers":[{"LoadBalancerArn":"arn:lb/ours","LoadBalancerName":"k8s-gateway-envoygat-0a1b2c3d4e","Type":"network","Scheme":"internet-facing","VpcId":"vpc-ours"}]}'; fi ;;
+  "elbv2 describe-target-groups"*)
+    # One per listener port (80, 443), both with IP targets.
+    out='{"TargetGroupArn":"arn:tg/shop","TargetType":"ip","VpcId":"vpc-shop"}'
+    for p in 80 443; do
+      done_ "target-group-arn arn:tg/ours-$p" || out="{\"TargetGroupArn\":\"arn:tg/ours-$p\",\"Port\":$p,\"TargetType\":\"ip\",\"VpcId\":\"vpc-ours\"},$out"
+    done
+    echo "{\"TargetGroups\":[$out]}" ;;
   "ec2 describe-network-interfaces"*)
     # Freed only after the load balancer is gone AND one more round passed.
     if done_ delete-network-interface; then echo '{"NetworkInterfaces":[]}'
     elif done_ delete-load-balancer; then echo '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-lb","Status":"available","VpcId":"vpc-ours"}]}'
     else echo '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-lb","Status":"in-use","VpcId":"vpc-ours"}]}'; fi
     ;;
-  "ec2 describe-security-groups"*) echo '{"SecurityGroups":[]}' ;;
+  "ec2 describe-security-groups"*)
+    tag='{"Key":"elbv2.k8s.aws/cluster","Value":"idp"},{"Key":"Project","Value":"idp"}'
+    # Never ours to delete: another project's (same tags, its own VPC),
+    # the VPC's default group, and one CloudFormation made (step 3 removes it).
+    out="{\"GroupId\":\"sg-shop\",\"GroupName\":\"k8s-traffic-idp-ffffffffff\",\"VpcId\":\"vpc-shop\",\"Tags\":[$tag]}"
+    if ! done_ "cdk destroy VpcStack"; then
+      out="$out,{\"GroupId\":\"sg-def\",\"GroupName\":\"default\",\"VpcId\":\"vpc-ours\"}"
+      out="$out,{\"GroupId\":\"sg-cfn\",\"GroupName\":\"x\",\"VpcId\":\"vpc-ours\",\"Tags\":[{\"Key\":\"aws:cloudformation:stack-name\",\"Value\":\"VpcStack\"}]}"
+    fi
+    # The controller's: one in front of the load balancer, one shared
+    # "backend" group that the pods allow traffic from.
+    done_ "group-id sg-back" || out="{\"GroupId\":\"sg-back\",\"GroupName\":\"k8s-traffic-idp-0a1b2c3d4e\",\"VpcId\":\"vpc-ours\",\"Tags\":[$tag,{\"Key\":\"elbv2.k8s.aws/resource\",\"Value\":\"backend-sg\"}]},$out"
+    done_ "group-id sg-front" || out="{\"GroupId\":\"sg-front\",\"GroupName\":\"k8s-gateway-envoygat-0a1b2c3d4e\",\"VpcId\":\"vpc-ours\",\"Tags\":[$tag,{\"Key\":\"service.k8s.aws/resource\",\"Value\":\"ManagedLBSecurityGroup\"}]},$out"
+    echo "{\"SecurityGroups\":[$out]}" ;;
   "route53 list-hosted-zones"*)
     if done_ "cdk destroy VpcStack"; then echo '{"HostedZones":[]}'
     else echo '{"HostedZones":[{"Name":"idp.seniormankelz.dev.","Id":"/hostedzone/Z1"},{"Name":"shop.example.","Id":"/hostedzone/ZSHOP"}]}'; fi ;;
@@ -139,6 +175,8 @@ teardown() { # prints "<exit code>|<last line>"; the call record is in $FAKE_LOG
   printf '%s|%s' "$rc" "$(tail -1 <<<"$out" | sed $'s/\033\\[[0-9;]*m//g')"
 }
 EXPECTED_SWEEP='aws elbv2 delete-load-balancer --region eu-west-1 --load-balancer-arn arn:lb/ours
+aws elbv2 delete-target-group --region eu-west-1 --target-group-arn arn:tg/ours-443
+aws elbv2 delete-target-group --region eu-west-1 --target-group-arn arn:tg/ours-80
 aws route53 change-resource-record-sets --hosted-zone-id Z1 --change-batch {"Changes":[{"Action":"DELETE","Resourc
 aws s3api delete-objects --bucket ours-bucket --delete {"Objects":[{"Key":"a.txt","VersionId":"v1"},{"Key":"b.txt"
 aws s3api delete-bucket --bucket ours-bucket
@@ -146,12 +184,16 @@ aws iam detach-role-policy --role-name idp-x --policy-arn arn:aws:iam::111122223
 aws iam delete-role --role-name idp-x
 aws iam delete-policy --policy-arn arn:aws:iam::111122223333:policy/idp-x
 aws logs delete-log-group --region eu-west-1 --log-group-name /aws/eks/idp/cluster
-aws ec2 delete-network-interface --region eu-west-1 --network-interface-id eni-lb'
+aws ec2 delete-network-interface --region eu-west-1 --network-interface-id eni-lb
+aws ec2 delete-security-group --region eu-west-1 --group-id sg-front
+aws ec2 delete-security-group --region eu-west-1 --group-id sg-back'
 
 expect "normal run → verified, exit 0" "0|Teardown complete and verified." "$(teardown X=0)"
-expect "order: cluster first, sweep (interface freed in round 2), the rest, nothing of the other project" \
+expect "order: cluster first, sweep (interface freed in round 2, security groups only after it), the rest" \
   "npx cdk destroy ClusterStack"$'\n'"$EXPECTED_SWEEP"$'\n'"npx cdk destroy VpcStack KmsStack ClusterStack DnsStack" "$(cat "$FAKE_LOG")"
-expect "no call ever names another project's resource" "0" "$(grep -c -E 'shop|ZSHOP' "$FAKE_LOG")"
+expect "no call ever names another project's resource" "0" "$(grep -c -E 'shop|ZSHOP|sg-def|sg-cfn' "$FAKE_LOG")"
+expect "a security group that never frees → NOT verified, exit 1" \
+  "1|TEARDOWN NOT VERIFIED. Read the audit above; something may still be billing." "$(teardown FAKE_SG_STUCK=1)"
 
 expect "first destroy fails → sweep again, retry, verified" "0|Teardown complete and verified." "$(teardown FAKE_FIRST_DESTROY_FAILS=1)"
 expect "…and the record shows the failed attempt followed by the retry" \
@@ -162,7 +204,7 @@ echo "plan mode changes nothing"
 : >"$FAKE_LOG"
 out=$(AWS_REGION=eu-west-1 CDK_DIR="$FAKE" WORKLOAD_STACKS="VpcStack" ZONE_NAME=idp.seniormankelz.dev CLUSTER_NAME=idp \
   bash "$HERE/../aws-down.sh" --plan 2>&1); rc=$?
-expect "--plan exits 0 and lists 6 items" "0 6" "$rc $(grep -c -E '^  (aws|delete_)' <<<"$out")"
+expect "--plan exits 0 and lists 10 items" "0 10" "$rc $(grep -c -E '^  (aws|delete_)' <<<"$out")"
 expect "--plan made no changing call" "" "$(cat "$FAKE_LOG")"
 expect "no confirmation, no --yes → aborts and changes nothing" "1 " \
   "$(echo n | AWS_REGION=eu-west-1 CDK_DIR="$FAKE" WORKLOAD_STACKS="VpcStack" ZONE_NAME=idp.seniormankelz.dev CLUSTER_NAME=idp bash "$HERE/../aws-down.sh" >/dev/null 2>&1; echo "$? $(cat "$FAKE_LOG")")"

@@ -633,7 +633,7 @@ comes first.
 |---|---|---|---|---|
 | 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
 | 2 | Fargate profiles | `kube-system`, `default` | The eight namespaces of the slice, in three profiles | **Done** (ADR-0010 postscript) |
-| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **In progress** (3a role, 3b install, 3c Gateway built; ADR-0036/0037, ADR-0033 update; 3d teardown test to do) |
+| 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **Built, not yet run** (3a role, 3b install, 3c Gateway, 3d teardown test; ADR-0036/0037, ADR-0033 update) |
 | 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
 | 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
 | 6 | Crossplane | MinIO only | provider-aws, IAM limited to `idp-*` | To do |
@@ -689,7 +689,7 @@ schedule pods". So this list decides what the EKS slice is:
   nothing alerts; the session runbook must check for Pending pods
   after each install step.
 
-#### Gap 3 — load balancer (in progress)
+#### Gap 3 — load balancer (built, not yet run)
 
 On kind the proxy borrows ports 80 and 443 on the laptop. Fargate has
 no machine to borrow from, so an NLB sends traffic straight to the
@@ -782,6 +782,37 @@ chart and image pinned to 3.6.3 (image by digest).
   `docs/COST.md`.
 - Not proven until the session: that the NLB is created, gets
   healthy targets, and that `curl` from the internet reaches Envoy.
+
+**3d — teardown test (built 2026-11-26).**
+
+The controller creates five things CloudFormation has never heard of:
+one NLB, two target groups (ports 80 and 443) and two security groups
+(one in front of the NLB, one shared "backend" group the pods allow
+traffic from). `scripts/aws-down.sh` already swept all of these by VPC;
+what was missing was proof against the controller's real shapes.
+
+- `make down-test` now holds exactly those five in its fake account,
+  with the names and tags from the controller's source (v3.6.3), next
+  to another project's look-alikes carrying the same tags in a
+  different VPC.
+- The fake refuses to delete a security group while the NLB's network
+  interface exists, as AWS does. So the test proves the sweep needs a
+  second round and takes it.
+- A security group that never frees ends in "TEARDOWN NOT VERIFIED",
+  exit 1.
+- WHY find by VPC and not by the controller's tag: the tag is a string
+  anyone can set; the VPC is ours alone. A look-alike with our tags in
+  another VPC is left alone.
+- `make eks-apps-test` now rejects NLB deletion protection, which would
+  make the NLB survive the sweep and keep billing.
+- Seven deliberate breakages of the sweep each fail the test.
+- Known limit: two security groups that reference each other would
+  never delete; the sweep does not remove rules. The controller does
+  not create that shape (its rule sits on the cluster's own group,
+  which goes with the cluster), and the audit would report it.
+- Not proven until the session: how long AWS really takes to free the
+  NLB's interfaces (the sweep allows 4 rounds, 45 s apart, and a second
+  sweep if the VPC destroy fails).
 
 ### Before the session
 

@@ -141,6 +141,8 @@ if (gw = apps['gateway'])
         ann['service.beta.kubernetes.io/aws-load-balancer-scheme'] == 'internet-facing',
       'target type must be ip: Fargate has no instances' =>
         ann['service.beta.kubernetes.io/aws-load-balancer-nlb-target-type'] == 'ip',
+      'must not turn on deletion protection: the teardown could not delete the load balancer and it would keep billing' =>
+        ann.values.join(',') !~ /deletion_protection\.enabled\s*=\s*true/,
     }.each { |msg, ok| bad << "gateway: EnvoyProxy #{msg}" unless ok }
   else
     bad << 'gateway: GatewayClass or EnvoyProxy missing from the EKS set'

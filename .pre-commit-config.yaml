@@ -120,3 +120,6 @@ repos:
     rev: v0.10.0
     hooks:
       - id: shellcheck
+        # -x: follow `source` lines. Without it a test file committed
+        # without the script it sources fails with SC1091.
+        args: [-x]
