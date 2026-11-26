@@ -408,10 +408,17 @@ found" answers from real AWS are read correctly.
 |---|---|---|
 | P9-19 | **The deploy preview showed the four budget alarms "may be replaced".** The newer aws-cdk-lib can tag a Budget, so the app-level `Project`/`ManagedBy` tags would have been added to them. A change meant to add a timer would have touched the guardrail itself. Found only because the change was previewed before deploying. | Budgets are excluded from tagging (`a7ad7e5`); the update became nine additions and no changes. The audit now also accepts a rolled-back update as "armed". |
 
-Still open: the email subscription is `PendingConfirmation` until the
-owner clicks the link AWS sent. Until then the timer still deletes on
-time; it just cannot email. Not proven until a real session: that
-CloudFormation accepts a delete from this role without `iam:PassRole`.
+**Email confirmed 2026-11-26.** The first confirmation email was never
+clicked, and AWS drops an unconfirmed subscription after about two
+days, so by then the topic had no subscriber at all. It was re-created
+with `aws sns subscribe` (so this one sits outside CloudFormation) and
+the owner confirmed it; AWS reports one confirmed subscription. Lesson:
+confirm in the same sitting as the deploy, and check the topic's
+confirmed count, not the stack status. CloudFormation still said
+`UPDATE_COMPLETE` while the timer had nobody to email.
+
+Not proven until a real session: that CloudFormation accepts a delete
+from this role without `iam:PassRole`.
 
 ### 12. Leftover removed; AWS is clean
 
@@ -570,8 +577,8 @@ Prometheus (promtool), Vault + External Secrets, Crossplane
 
 ### Loose ends
 
-- Confirm the teardown timer's email subscription (link in the owner's
-  inbox).
+- ~~Confirm the teardown timer's email subscription.~~ Done 2026-11-26;
+  see section 11.
 - ~~Unseal a restored Vault backup once and read a secret from it.~~
   Done 2026-11-26 by the owner; see Failure Mode 8 in the runbook.
 - A real Backstage "Create" of a new service since the Gateway and IRSA
@@ -612,7 +619,8 @@ The live EKS session. Before it:
 
 - Raise `BUDGET_CAP_USD` in the Makefile and the cap in docs/COST.md in
   one commit (owner's decision; `make aws-preflight` refuses until then).
-- Confirm the timer's email subscription (the timer itself is deployed).
+- Check the timer topic still has one confirmed email subscription
+  (confirmed 2026-11-26).
 
 During it:
 
