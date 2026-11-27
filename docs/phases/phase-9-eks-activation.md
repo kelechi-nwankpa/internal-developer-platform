@@ -634,7 +634,7 @@ comes first.
 | 1 | Network | No NAT, 9 Interface endpoints | One NAT Gateway, endpoints removed | **Done** (ADR-0035) |
 | 2 | Fargate profiles | `kube-system`, `default` | The eight namespaces of the slice, in three profiles | **Done** (ADR-0010 postscript) |
 | 3 | Load balancer | Host ports on kind | AWS Load Balancer Controller + IAM role | **Built, not yet run** (3a role, 3b install, 3c Gateway, 3d teardown test; ADR-0036/0037, ADR-0033 update) |
-| 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | To do |
+| 4 | Certificates | Self-signed | Let's Encrypt, DNS-01 through Route53 | **In progress** (4a role built, ADR-0038; 4b install and issuers, 4c certificate, 4d fixed nameservers to do) |
 | 5 | DNS | In-memory provider | Route53 provider + IAM role | To do |
 | 6 | Crossplane | MinIO only | provider-aws, IAM limited to `idp-*` | To do |
 | 7 | Install path | One root app (kind) | A smaller root app for EKS | To do |
@@ -814,12 +814,41 @@ what was missing was proof against the controller's real shapes.
   NLB's interfaces (the sweep allows 4 rounds, 45 s apart, and a second
   sweep if the VPC destroy fails).
 
+#### Gap 4 — certificates (in progress)
+
+On EKS the wildcard certificate comes from Let's Encrypt through a
+DNS-01 challenge: cert-manager writes one TXT record into the Route53
+zone. Decided 2026-11-27: Let's Encrypt staging first, then production;
+fixed nameservers for the zone (a Route53 reusable delegation set, free)
+so Namecheap is set once. Four tasks: 4a role, 4b install and issuers,
+4c certificate on EKS, 4d fixed nameservers.
+
+**4a — IAM role for cert-manager (built 2026-11-27).**
+
+- `infra/lib/cert-manager-role.ts`, used by `ClusterStack`; the ARN is
+  the stack output `CertManagerRoleArn`
+  ([ADR-0038](../adr/0038-cert-manager-role-limited-to-challenge-records.md)).
+- The one write, `ChangeResourceRecordSets`, is limited to our zone, to
+  TXT records, and to names starting with `_acme-challenge.`. WHY: a
+  role that can write any record can redirect any hostname.
+- cert-manager finds the zone by name, so no zone id goes into Git.
+- `ClusterStack` now depends on `DnsStack`. The teardown timer deletes
+  `DnsStack` in its second group. `CostStack` holds that list and must
+  be redeployed once before the session.
+- 11 unit tests pin the whole policy.
+- Two cdk-nag exceptions on this role, both read-only, each matching
+  one exact string. Approved by the owner on 2026-11-27.
+- Not proven until the session: that Route53 accepts cert-manager's
+  real requests under the two conditions.
+
 ### Before the session
 
 - ~~Raise the cap.~~ Done 2026-11-26: the owner set $40 (`BUDGET_CAP_USD`
   in the Makefile, docs/COST.md and CLAUDE.md, one commit).
 - Check the timer topic still has one confirmed email subscription
   (confirmed 2026-11-26).
+- Redeploy `CostStack` once: the teardown timer's stack groups changed
+  (gap 4a). Free; needs the owner's yes.
 - Open design point: create the DNS zone ahead of the cluster, so the
   Namecheap delegation can spread while nothing bills by the hour. The
   timer counts from the oldest session stack, so the zone must not

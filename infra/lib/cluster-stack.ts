@@ -13,9 +13,11 @@ import {
   Role,
 } from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import { IHostedZone } from 'aws-cdk-lib/aws-route53';
 import { KubectlV36Layer } from '@aws-cdk/lambda-layer-kubectl-v36';
 import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
+import { CertManagerRole } from './cert-manager-role';
 import { LoadBalancerControllerRole } from './load-balancer-controller-role';
 
 /**
@@ -63,6 +65,16 @@ export interface ClusterStackProps extends StackProps {
    * (from KmsStack; see ADR-0008).
    */
   readonly eksSecretsKey: kms.IKey;
+
+  /**
+   * The project's public DNS zone (from DnsStack). cert-manager's role
+   * may write certificate challenge records into this zone and no other
+   * (ADR-0038).
+   */
+  readonly hostedZone: IHostedZone;
+
+  /** The zone's name as plain text, without a trailing dot. */
+  readonly zoneName: string;
 
   /**
    * EKS cluster name (used as the CloudFormation logical resource name
@@ -191,6 +203,16 @@ export class ClusterStack extends Stack {
     });
 
     // ---------------------------------------------------------------
+    // IAM role for cert-manager (ADR-0038): write certificate challenge
+    // records into the project's DNS zone, nothing else.
+    // ---------------------------------------------------------------
+    const certManager = new CertManagerRole(this, 'CertManager', {
+      cluster: this.cluster,
+      hostedZone: props.hostedZone,
+      zoneName: props.zoneName,
+    });
+
+    // ---------------------------------------------------------------
     // Outputs — the two ARNs a human or a workflow needs to know.
     // ---------------------------------------------------------------
     new CfnOutput(this, 'ClusterName', {
@@ -219,6 +241,14 @@ export class ClusterStack extends Stack {
         'IAM role for the AWS Load Balancer Controller. Goes on its ServiceAccount as the ' +
         'eks.amazonaws.com/role-arn annotation.',
       exportName: `${this.stackName}-LoadBalancerControllerRoleArn`,
+    });
+
+    new CfnOutput(this, 'CertManagerRoleArn', {
+      value: certManager.role.roleArn,
+      description:
+        'IAM role for cert-manager. Goes on its ServiceAccount as the ' +
+        'eks.amazonaws.com/role-arn annotation.',
+      exportName: `${this.stackName}-CertManagerRoleArn`,
     });
 
     // `ManagedPolicy` import kept for future IRSA binding examples; TS

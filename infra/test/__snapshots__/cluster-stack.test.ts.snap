@@ -55,6 +55,18 @@ exports[`ClusterStack matches the snapshot 1`] = `
     },
   },
   "Outputs": {
+    "CertManagerRoleArn": {
+      "Description": "IAM role for cert-manager. Goes on its ServiceAccount as the eks.amazonaws.com/role-arn annotation.",
+      "Export": {
+        "Name": "TestClusterStack-CertManagerRoleArn",
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "CertManagerRole57FFE312",
+          "Arn",
+        ],
+      },
+    },
     "ClusterAdminRoleArn": {
       "Description": "Assume this role to run kubectl. Example: aws eks update-kubeconfig --name idp --role-arn <this-arn> --region <region>",
       "Export": {
@@ -189,6 +201,204 @@ exports[`ClusterStack matches the snapshot 1`] = `
         ],
       },
       "Type": "AWS::IAM::Role",
+    },
+    "CertManagerRole57FFE312": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "route53:ListHostedZonesByName is read-only and AWS supports no resource-level permission for it, so "*" is the only valid form. It lets cert-manager find the zone by name, so no zone id is kept in Git. Approved 2026-11-27.",
+            },
+            {
+              "applies_to": [
+                "Resource::arn:aws:route53:::change/*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "route53:GetChange is read-only. Route53 generates the change id per change, so it cannot be named in advance. Approved 2026-11-27.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "Fn::GetAtt": [
+                    "CertManagerTrustConditionsAD0E38ED",
+                    "Value",
+                  ],
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+                },
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Description": "cert-manager DNS-01 challenges in idp.example.com (ADR-0038)",
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "CertManagerRoleDefaultPolicyDE570DE1": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "route53:ListHostedZonesByName is read-only and AWS supports no resource-level permission for it, so "*" is the only valid form. It lets cert-manager find the zone by name, so no zone id is kept in Git. Approved 2026-11-27.",
+            },
+            {
+              "applies_to": [
+                "Resource::arn:aws:route53:::change/*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "route53:GetChange is read-only. Route53 generates the change id per change, so it cannot be named in advance. Approved 2026-11-27.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "route53:ListHostedZonesByName",
+              "Effect": "Allow",
+              "Resource": "*",
+              "Sid": "FindZoneByName",
+            },
+            {
+              "Action": "route53:ListResourceRecordSets",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":route53:::hostedzone/",
+                    {
+                      "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessZone63F0FD8D52E1497B",
+                    },
+                  ],
+                ],
+              },
+              "Sid": "ListRecordsInProjectZone",
+            },
+            {
+              "Action": "route53:ChangeResourceRecordSets",
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "route53:ChangeResourceRecordSetsRecordTypes": [
+                    "TXT",
+                  ],
+                },
+                "ForAllValues:StringLike": {
+                  "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+                    "_acme-challenge.idp.example.com",
+                    "_acme-challenge.*.idp.example.com",
+                  ],
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":route53:::hostedzone/",
+                    {
+                      "Fn::ImportValue": "ScaffoldStack:ExportsOutputRefHarnessZone63F0FD8D52E1497B",
+                    },
+                  ],
+                ],
+              },
+              "Sid": "WriteAcmeChallengeRecords",
+            },
+            {
+              "Action": "route53:GetChange",
+              "Effect": "Allow",
+              "Resource": "arn:aws:route53:::change/*",
+              "Sid": "ReadChangeStatus",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "CertManagerRoleDefaultPolicyDE570DE1",
+        "Roles": [
+          {
+            "Ref": "CertManagerRole57FFE312",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "CertManagerTrustConditionsAD0E38ED": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "AWSCDKCfnUtilsProviderCustomResourceProviderHandlerCF82AA57",
+            "Arn",
+          ],
+        },
+        "Value": {
+          "Fn::Join": [
+            "",
+            [
+              "{"",
+              {
+                "Fn::Select": [
+                  1,
+                  {
+                    "Fn::Split": [
+                      ":oidc-provider/",
+                      {
+                        "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+                      },
+                    ],
+                  },
+                ],
+              },
+              ":aud":"sts.amazonaws.com","",
+              {
+                "Fn::Select": [
+                  1,
+                  {
+                    "Fn::Split": [
+                      ":oidc-provider/",
+                      {
+                        "Ref": "ClusterOpenIdConnectProviderE7EB0530",
+                      },
+                    ],
+                  },
+                ],
+              },
+              ":sub":"system:serviceaccount:cert-manager:cert-manager"}",
+            ],
+          ],
+        },
+      },
+      "Type": "Custom::AWSCDKCfnJson",
+      "UpdateReplacePolicy": "Delete",
     },
     "Cluster9EE0221C": {
       "DeletionPolicy": "Delete",

@@ -71,6 +71,7 @@ If in doubt: write it. A cheap ADR is better than a lost rationale.
 | [0035](0035-nat-gateway-for-eks-sessions.md) | One NAT Gateway for EKS sessions; no Interface endpoints | Accepted | 2026-11-26 |
 | [0036](0036-trimmed-iam-policy-for-load-balancer-controller.md) | A trimmed IAM policy for the AWS Load Balancer Controller | Accepted | 2026-11-26 |
 | [0037](0037-session-identities-enter-at-bootstrap.md) | Per-session AWS identities enter the cluster at bootstrap, not through Git | Accepted | 2026-11-26 |
+| [0038](0038-cert-manager-role-limited-to-challenge-records.md) | cert-manager's IAM role may write certificate challenge records only | Accepted | 2026-11-27 |
 
 ## References
 

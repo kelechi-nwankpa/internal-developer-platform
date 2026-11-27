@@ -3,6 +3,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { KubernetesVersion } from 'aws-cdk-lib/aws-eks';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import { ClusterStack, FARGATE_NAMESPACES } from '../lib/cluster-stack';
 
 /**
@@ -37,6 +38,8 @@ function synthClusterStack(overrides: Partial<ClusterStackCtorProps> = {}) {
     env: { account: '123456789012', region: 'eu-west-1' },
     vpc,
     eksSecretsKey,
+    hostedZone: new route53.PublicHostedZone(scaffoldStack, 'HarnessZone', { zoneName: 'idp.example.com' }),
+    zoneName: 'idp.example.com',
     ...overrides,
   });
 

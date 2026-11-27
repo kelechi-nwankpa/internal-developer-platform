@@ -5,6 +5,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import { ClusterStack } from '../lib/cluster-stack';
 
 /**
@@ -72,6 +73,8 @@ function synth(clusterName?: string) {
     env: { account: ACCOUNT, region: REGION },
     vpc,
     eksSecretsKey: new kms.Key(scaffold, 'HarnessKey'),
+    hostedZone: new route53.PublicHostedZone(scaffold, 'HarnessZone', { zoneName: 'idp.example.com' }),
+    zoneName: 'idp.example.com',
     ...(clusterName ? { clusterName } : {}),
   });
   const template = Template.fromStack(stack);
@@ -142,9 +145,11 @@ describe('LoadBalancerControllerRole', () => {
 
       // The condition object is built at deploy time by CfnJson (its keys
       // contain the issuer URL), so read what CfnJson was given.
+      // The stack has one CfnJson per IRSA role; take the one this
+      // role's trust policy points at.
+      const [jsonId] = trust.Condition.StringEquals['Fn::GetAtt'] as string[];
       const json = t.template.findResources('Custom::AWSCDKCfnJson');
-      expect(Object.keys(json)).toHaveLength(1);
-      const value = JSON.parse(flat(Object.values(json)[0].Properties.Value) as string);
+      const value = JSON.parse(flat(json[jsonId].Properties.Value) as string);
       expect(value).toEqual({
         '<oidc-issuer>:aud': 'sts.amazonaws.com',
         '<oidc-issuer>:sub': 'system:serviceaccount:kube-system:aws-load-balancer-controller',

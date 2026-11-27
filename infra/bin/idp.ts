@@ -47,10 +47,11 @@ new CostStack(app, 'CostStack', {
   // The session's stacks, deleted by the teardown timer if a session is
   // left running. Must match WORKLOAD_STACKS in the Makefile. Second
   // group: stacks the first group depends on (the cluster lives in the
-  // VPC and uses the KMS keys), so they go once the first group is gone.
+  // VPC, uses the KMS keys and names the DNS zone in cert-manager's
+  // role), so they go once the first group is gone.
   teardownStackGroups: [
-    ['ClusterStack', 'RegistryStack', 'DnsStack', 'IamStack'],
-    ['VpcStack', 'KmsStack'],
+    ['ClusterStack', 'RegistryStack', 'IamStack'],
+    ['VpcStack', 'KmsStack', 'DnsStack'],
   ],
 });
 
@@ -72,25 +73,30 @@ new IamStack(app, 'IamStack', {
   githubRepo: 'internal-developer-platform',
 });
 
-// EKS control plane — Fargate-only (ADR-0010). Consumes the VPC and the
-// EKS secrets key via cross-stack references.
+// Public Route53 zone for the platform subdomain (ADR-0012). Namecheap
+// NS delegation happens post-deploy — see docs/runbooks/dns-delegation.md.
+// Defined before the cluster: cert-manager's role in ClusterStack names
+// this zone (ADR-0038).
+const zoneName = 'idp.seniormankelz.dev';
+const dnsStack = new DnsStack(app, 'DnsStack', {
+  env,
+  zoneName,
+});
+
+// EKS control plane — Fargate-only (ADR-0010). Consumes the VPC, the
+// EKS secrets key and the DNS zone via cross-stack references.
 new ClusterStack(app, 'ClusterStack', {
   env,
   vpc: vpcStack.vpc,
   eksSecretsKey: kmsStack.eksSecretsKey,
+  hostedZone: dnsStack.hostedZone,
+  zoneName,
 });
 
 // Container image registries — 2 seed repos with immutable tags (ADR-0011).
 new RegistryStack(app, 'RegistryStack', {
   env,
   ecrKey: kmsStack.ecrKey,
-});
-
-// Public Route53 zone for the platform subdomain (ADR-0012). Namecheap
-// NS delegation happens post-deploy — see docs/runbooks/dns-delegation.md.
-new DnsStack(app, 'DnsStack', {
-  env,
-  zoneName: 'idp.seniormankelz.dev',
 });
 
 app.synth();
